@@ -89,6 +89,84 @@ function countRows(rows) {
   return { live, baseline, unavailable: PROVIDERS.length - rows.length };
 }
 
+function addCounts(counts, c) {
+  counts.live += c.live;
+  counts.baseline += c.baseline;
+  counts.unavailable += c.unavailable;
+}
+
+/** One service's entry in a region's document. */
+function serviceEntry(serviceId, catalog, rows) {
+  return {
+    serviceId,
+    label: SERVICE_LABELS[serviceId],
+    // The unit the rows are actually in. For a service with rows that is
+    // the benchmark unit every provider converged on; with none, the
+    // catalog's, which is the only unit left to name.
+    unit: rows[0]?.unit ?? catalog.unit,
+    sku: rows[0]?.sku ?? catalog.sku,
+    rows,
+  };
+}
+
+/** Build and write one region's document. `deps` are the refresh's own. */
+async function refreshRegionWith({ store, fetchLivePricing, now, log, defaultSignal }, regionId, { signal: callSignal } = {}) {
+  const activeSignal = callSignal || defaultSignal;
+  const region = regionOption(regionId);
+  if (!region) throw new Error(`unknown region ${regionId}`);
+
+  const services = [];
+  const counts = { live: 0, baseline: 0, unavailable: 0 };
+
+  for (const [serviceId, catalog] of Object.entries(BASELINE_COSTS)) {
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
+    const rows = await fetchLivePricing(serviceId, region.id, fallbackBaselineFor(serviceId), {
+      logger: log,
+      signal: activeSignal,
+    });
+    addCounts(counts, countRows(rows));
+    services.push(serviceEntry(serviceId, catalog, rows));
+  }
+
+  const refreshedAt = now().toISOString();
+  const doc = {
+    id: pricingDocId(region.id),
+    region: region.id,
+    refreshedAt,
+    ttlMinutes: DEFAULT_CACHE_TTL_MINUTES,
+    services,
+    counts,
+  };
+  await store.upsertDoc(CACHE_CONTAINER, doc);
+  return { region: region.id, counts, refreshedAt, services };
+}
+
+/**
+ * The day's snapshot and the change document for one region, from the
+ * services the cache write just stored. Throws on any failure; the caller
+ * decides that a throw here is a warning, not a failed region.
+ *
+ * @returns {Promise<{ '7d': number, '30d': number, sampleDays: number }>}
+ *   item counts per window, for the log line and the job summary
+ */
+async function recordHistory(store, { region, refreshedAt, services }) {
+  const snapshot = buildHistoryDoc({ region, refreshedAt, services });
+  await store.upsertDoc(HISTORY_CONTAINER, snapshot);
+  const changes = await computePriceChanges({
+    store,
+    region,
+    cells: snapshot.cells,
+    refreshedAt,
+  });
+  await store.upsertDoc(CACHE_CONTAINER, changes);
+  return {
+    ...Object.fromEntries(
+      Object.entries(changes.windows).map(([name, w]) => [name, w.items.length])
+    ),
+    sampleDays: changes.sampleDays,
+  };
+}
+
 /**
  * @param {object} deps
  * @param {{ upsertDoc: Function, readDoc: Function }} deps.store - `readDoc`
@@ -106,75 +184,8 @@ export function createPricingRefresh({
   log = {},
   signal: defaultSignal,
 }) {
-  /** Build and write one region's document. */
-  async function refreshRegion(regionId, { signal: callSignal } = {}) {
-    const activeSignal = callSignal || defaultSignal;
-    const region = regionOption(regionId);
-    if (!region) throw new Error(`unknown region ${regionId}`);
-
-    const services = [];
-    const counts = { live: 0, baseline: 0, unavailable: 0 };
-
-    for (const [serviceId, catalog] of Object.entries(BASELINE_COSTS)) {
-      if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
-      const rows = await fetchLivePricing(serviceId, region.id, fallbackBaselineFor(serviceId), {
-        logger: log,
-        signal: activeSignal,
-      });
-      const c = countRows(rows);
-      counts.live += c.live;
-      counts.baseline += c.baseline;
-      counts.unavailable += c.unavailable;
-      services.push({
-        serviceId,
-        label: SERVICE_LABELS[serviceId],
-        // The unit the rows are actually in. For a service with rows that is
-        // the benchmark unit every provider converged on; with none, the
-        // catalog's, which is the only unit left to name.
-        unit: rows[0]?.unit ?? catalog.unit,
-        sku: rows[0]?.sku ?? catalog.sku,
-        rows,
-      });
-    }
-
-    const refreshedAt = now().toISOString();
-    const doc = {
-      id: pricingDocId(region.id),
-      region: region.id,
-      refreshedAt,
-      ttlMinutes: DEFAULT_CACHE_TTL_MINUTES,
-      services,
-      counts,
-    };
-    await store.upsertDoc(CACHE_CONTAINER, doc);
-    return { region: region.id, counts, refreshedAt, services };
-  }
-
-  /**
-   * The day's snapshot and the change document for one region, from the
-   * services the cache write just stored. Throws on any failure; the caller
-   * decides that a throw here is a warning, not a failed region.
-   *
-   * @returns {Promise<{ '7d': number, '30d': number, sampleDays: number }>}
-   *   item counts per window, for the log line and the job summary
-   */
-  async function recordHistory({ region, refreshedAt, services }) {
-    const snapshot = buildHistoryDoc({ region, refreshedAt, services });
-    await store.upsertDoc(HISTORY_CONTAINER, snapshot);
-    const changes = await computePriceChanges({
-      store,
-      region,
-      cells: snapshot.cells,
-      refreshedAt,
-    });
-    await store.upsertDoc(CACHE_CONTAINER, changes);
-    return {
-      ...Object.fromEntries(
-        Object.entries(changes.windows).map(([name, w]) => [name, w.items.length])
-      ),
-      sampleDays: changes.sampleDays,
-    };
-  }
+  const deps = { store, fetchLivePricing, now, log, defaultSignal };
+  const refreshRegion = (regionId, options) => refreshRegionWith(deps, regionId, options);
 
   return {
     refreshRegion,
@@ -215,7 +226,7 @@ export function createPricingRefresh({
         const { services, ...result } = summary;
         let changes = null;
         try {
-          changes = await recordHistory({
+          changes = await recordHistory(store, {
             region: regionId,
             refreshedAt: result.refreshedAt,
             services,

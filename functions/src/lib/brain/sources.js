@@ -61,18 +61,32 @@ const newsletterText = (doc) =>
     .filter((v) => typeof v === 'string')
     .join('\n\n');
 
+// A document that is gone, or was never ours to index.
+const isRemoved = (doc) =>
+  isSoftDeleted(doc) ||
+  doc.archived === true ||
+  doc.deleted === true ||
+  Boolean(doc.deletedAt);
+const isNewsItem = (container, doc) =>
+  container === 'content' && (doc.type === 'news' || doc.source === 'rss');
+const skipped = (container, doc) =>
+  !sourceMap.has(container) ||
+  !doc ||
+  isRemoved(doc) ||
+  isNewsItem(container, doc);
+
+// The recording a transcript or recording reference points at, if any.
+function recordingIdOf(container, doc) {
+  if (container === 'recordings') return doc.id;
+  if (container !== 'podcast_transcripts') return null;
+  return text(
+    doc.recordingId || doc.sourceRecordingId || doc.storedRecordingId,
+    128,
+  );
+}
+
 export function referenceOf(container, doc) {
-  if (
-    !sourceMap.has(container) ||
-    !doc ||
-    isSoftDeleted(doc) ||
-    doc.archived === true ||
-    doc.deleted === true ||
-    doc.deletedAt
-  )
-    return null;
-  if (container === 'content' && (doc.type === 'news' || doc.source === 'rss'))
-    return null;
+  if (skipped(container, doc)) return null;
   const body = firstText(
     getPrimaryContentBody(doc),
     doc.body,
@@ -104,15 +118,7 @@ export function referenceOf(container, doc) {
     container === 'content'
       ? `/admin/editor/${encodeURIComponent(doc.id)}`
       : sourceMap.get(container);
-  const recordingId =
-    container === 'recordings'
-      ? doc.id
-      : container === 'podcast_transcripts'
-        ? text(
-            doc.recordingId || doc.sourceRecordingId || doc.storedRecordingId,
-            128,
-          )
-        : null;
+  const recordingId = recordingIdOf(container, doc);
   return {
     id: sourceKey(container, doc.id),
     type: 'reference',
@@ -144,113 +150,137 @@ export function indexDocument(item) {
   };
 }
 
-export function createSourceService(repo) {
-  async function current(index) {
-    if (index.source) {
-      if (!sourceMap.has(index.source.container)) return null;
-      const doc = await repo.store.readDoc(
-        index.source.container,
-        index.source.id,
-      );
-      return referenceOf(index.source.container, doc);
-    }
-    const item = await repo.read(index.id);
-    return item &&
-      ['note', 'topic', 'project', 'conflict'].includes(item.type) &&
-      !item.archived
-      ? item
-      : null;
-  }
-  async function search({ q = '', cursor = null, limit = 30, kind = '' } = {}) {
-    const terms = tokens(q).slice(0, 12);
-    const params = [];
-    const clauses = ['c.ownerId = @owner', 'c.type = "search-item"'];
-    if (kind) {
-      clauses.push('c.itemType = @kind');
-      params.push({ name: '@kind', value: kind });
-    }
-    if (terms.length) {
-      clauses.push(
-        `(${terms.map((_, i) => `CONTAINS(c.searchable, @t${i})`).join(' OR ')})`,
-      );
-      terms.forEach((term, i) => params.push({ name: `@t${i}`, value: term }));
-    }
-    const page = await repo.searchPage(
-      `SELECT * FROM c WHERE ${clauses.join(' AND ')} ORDER BY c.id`,
-      params,
-      { maxItemCount: limit, continuationToken: cursor },
+const OWN_TYPES = ['note', 'topic', 'project', 'conflict'];
+
+// The item an index entry stands for, read again from where it lives, or
+// null when it is gone, archived or not an allowed source.
+async function currentOf(repo, index) {
+  if (index.source) {
+    if (!sourceMap.has(index.source.container)) return null;
+    const doc = await repo.store.readDoc(
+      index.source.container,
+      index.source.id,
     );
-    const items = (await Promise.all(page.resources.map(current)))
-      .filter(Boolean)
-      .filter(
-        (item) =>
-          !terms.length ||
-          terms.some((term) =>
-            `${item.title} ${item.properties?.heading || ''} ${item.body} ${item.tags.join(' ')} ${item.summary || ''}`
-              .toLowerCase()
-              .includes(term),
-          ),
-      );
-    items.sort((a, b) => {
-      const score = (item) =>
-        terms.reduce(
-          (n, term) =>
-            n +
-            (`${item.title} ${item.properties?.heading || ''}`
-              .toLowerCase()
-              .includes(term)
-              ? 5
-              : 0) +
-            (item.body.toLowerCase().includes(term) ? 1 : 0),
-          0,
-        );
-      return score(b) - score(a);
+    return referenceOf(index.source.container, doc);
+  }
+  const item = await repo.read(index.id);
+  return item && OWN_TYPES.includes(item.type) && !item.archived ? item : null;
+}
+
+// The query for one page of search: the owner's index entries, optionally
+// of one kind, holding any of the terms.
+function searchQuery(terms, kind) {
+  const params = [];
+  const clauses = ['c.ownerId = @owner', 'c.type = "search-item"'];
+  if (kind) {
+    clauses.push('c.itemType = @kind');
+    params.push({ name: '@kind', value: kind });
+  }
+  if (terms.length) {
+    clauses.push(
+      `(${terms.map((_, i) => `CONTAINS(c.searchable, @t${i})`).join(' OR ')})`,
+    );
+    terms.forEach((term, i) => params.push({ name: `@t${i}`, value: term }));
+  }
+  return {
+    sql: `SELECT * FROM c WHERE ${clauses.join(' AND ')} ORDER BY c.id`,
+    params,
+  };
+}
+
+const holdsATerm = (item, terms) =>
+  !terms.length ||
+  terms.some((term) =>
+    `${item.title} ${item.properties?.heading || ''} ${item.body} ${item.tags.join(' ')} ${item.summary || ''}`
+      .toLowerCase()
+      .includes(term),
+  );
+
+const scoreOf = (item, terms) =>
+  terms.reduce(
+    (n, term) =>
+      n +
+      (`${item.title} ${item.properties?.heading || ''}`
+        .toLowerCase()
+        .includes(term)
+        ? 5
+        : 0) +
+      (item.body.toLowerCase().includes(term) ? 1 : 0),
+    0,
+  );
+
+async function searchIndex(
+  repo,
+  { q = '', cursor = null, limit = 30, kind = '' } = {},
+) {
+  const terms = tokens(q).slice(0, 12);
+  const { sql, params } = searchQuery(terms, kind);
+  const page = await repo.searchPage(sql, params, {
+    maxItemCount: limit,
+    continuationToken: cursor,
+  });
+  const items = (
+    await Promise.all(page.resources.map((index) => currentOf(repo, index)))
+  )
+    .filter(Boolean)
+    .filter((item) => holdsATerm(item, terms));
+  items.sort((a, b) => scoreOf(b, terms) - scoreOf(a, terms));
+  return {
+    items,
+    cursor: page.continuationToken,
+    hasMore: page.hasMoreResults,
+  };
+}
+
+async function indexItemIn(repo, item) {
+  if (item.archived) {
+    // Keep a small tombstone in the index. Retrieval rechecks the source,
+    // so stale index entries can never resurrect archived or removed text.
+    await repo.putIndex({
+      id: item.id,
+      type: 'removed',
+      indexedAt: new Date().toISOString(),
     });
-    return {
-      items,
-      cursor: page.continuationToken,
-      hasMore: page.hasMoreResults,
-    };
+  } else await repo.putIndex(indexDocument(item));
+}
+
+async function getItem(repo, id) {
+  const note = await repo.read(id);
+  if (note && OWN_TYPES.includes(note.type)) return note;
+  const indexed = await repo.readIndex(id);
+  return indexed?.type === 'search-item' ? currentOf(repo, indexed) : null;
+}
+
+async function contextItemsOf(repo, id) {
+  const items = new Map();
+  const queue = [id];
+  const seen = new Set();
+  // A small breadth-first walk gives "this series" real selected context
+  // without trusting the model to invent graph edges or query the database.
+  while (queue.length && items.size < 8 && seen.size < 16) {
+    const next = queue.shift();
+    if (seen.has(next)) continue;
+    seen.add(next);
+    const item = await getItem(repo, next);
+    if (!item || item.archived) continue;
+    items.set(item.id, item);
+    queue.push(
+      ...(item.links || []).slice(0, 8),
+      ...(item.collections || []).slice(0, 8),
+    );
+    const backlinks = await repo.backlinks(next);
+    queue.push(...backlinks.slice(0, 8).map((r) => r.id));
   }
-  async function indexItem(item) {
-    if (item.archived) {
-      // Keep a small tombstone in the index. Retrieval rechecks the source,
-      // so stale index entries can never resurrect archived or removed text.
-      await repo.putIndex({
-        id: item.id,
-        type: 'removed',
-        indexedAt: new Date().toISOString(),
-      });
-    } else await repo.putIndex(indexDocument(item));
-  }
-  async function get(id) {
-    const note = await repo.read(id);
-    if (note && ['note', 'topic', 'project', 'conflict'].includes(note.type))
-      return note;
-    const indexed = await repo.readIndex(id);
-    return indexed?.type === 'search-item' ? current(indexed) : null;
-  }
-  async function contextItems(id) {
-    const items = new Map();
-    const queue = [id];
-    const seen = new Set();
-    // A small breadth-first walk gives "this series" real selected context
-    // without trusting the model to invent graph edges or query the database.
-    while (queue.length && items.size < 8 && seen.size < 16) {
-      const next = queue.shift();
-      if (seen.has(next)) continue;
-      seen.add(next);
-      const item = await get(next);
-      if (!item || item.archived) continue;
-      items.set(item.id, item);
-      queue.push(
-        ...(item.links || []).slice(0, 8),
-        ...(item.collections || []).slice(0, 8),
-      );
-      const backlinks = await repo.backlinks(next);
-      queue.push(...backlinks.slice(0, 8).map((r) => r.id));
-    }
-    return [...items.values()];
-  }
-  return { search, current, indexItem, get, contextItems, container: SEARCH };
+  return [...items.values()];
+}
+
+export function createSourceService(repo) {
+  return {
+    search: (options) => searchIndex(repo, options),
+    current: (index) => currentOf(repo, index),
+    indexItem: (item) => indexItemIn(repo, item),
+    get: (id) => getItem(repo, id),
+    contextItems: (id) => contextItemsOf(repo, id),
+    container: SEARCH,
+  };
 }

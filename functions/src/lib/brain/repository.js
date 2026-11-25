@@ -1,6 +1,169 @@
 import { getContainer } from '../cosmos-client.js';
 import { RECORDS, SEARCH, BrainError, fail, clean, digest } from './model.js';
 
+// A save, committed once: a mutation id that was already used answers with
+// the result it saved then, and a lost race is tried again up to six times.
+async function commitRecord(ctx, record, { version = 0, mutationId } = {}) {
+  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(mutationId || ''))
+    fail(400, 'INVALID', 'A unique mutationId is required.');
+  const receiptId = `mutation_${mutationId}`;
+  const requestHash = digest(JSON.stringify({ record, version }));
+  const existing = await ctx.read(receiptId);
+  if (existing) return replayedResult(existing, record, requestHash);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const outcome = await attemptCommit(ctx, {
+      record,
+      version,
+      receiptId,
+      requestHash,
+    });
+    if (outcome.done) return outcome.result;
+  }
+  throw new BrainError(
+    409,
+    'BUSY',
+    'Another save is in progress. Retry with the same mutation id.',
+  );
+}
+
+function replayedResult(existing, record, requestHash) {
+  if (
+    existing.recordId !== record.id ||
+    existing.requestHash !== requestHash
+  )
+    fail(409, 'CONFLICT', 'Mutation id already used for another edit.');
+  return existing.result;
+}
+
+// One try at the batch. `done` is false when another save won the race and
+// this one may try again.
+async function attemptCommit(ctx, { record, version, receiptId, requestHash }) {
+  const { read, batch, ownerId } = ctx;
+  const [state, current] = await Promise.all([
+    read('state'),
+    read(record.id),
+  ]);
+  checkCurrent(current, record, version);
+  const seq = (state?.seq || 0) + 1;
+  const next = nextRecord(record, current, ownerId, seq);
+  const result = clean(next);
+  const ops = commitOps({
+    ownerId,
+    state,
+    current,
+    next,
+    seq,
+    result,
+    receiptId,
+    requestHash,
+  });
+  try {
+    await batch(ownerId, ops);
+    return { done: true, result };
+  } catch (error) {
+    if (![409, 412, 424].includes(Number(error.code))) throw error;
+    const receipt = await read(receiptId);
+    if (
+      receipt?.recordId === record.id &&
+      receipt.requestHash === requestHash
+    )
+      return { done: true, result: receipt.result };
+    return { done: false };
+  }
+}
+
+function checkCurrent(current, record, version) {
+  if ((current?.version || 0) !== version)
+    fail(
+      412,
+      'CONFLICT',
+      'This item changed. Your text has been retained; compare it with the current version.',
+      { current: clean(current) },
+    );
+  if (current && current.type !== record.type)
+    fail(400, 'INVALID', 'Item type cannot change.');
+}
+
+function nextRecord(record, current, ownerId, seq) {
+  const now = new Date().toISOString();
+  return {
+    ...record,
+    ownerId,
+    version: (current?.version || 0) + 1,
+    seq,
+    createdAt: current?.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+// The batch: the workspace's sequence, the item, its revision, its event
+// and the mutation's receipt, all in one transaction. Each existing
+// document is replaced only over the version that was read (ifMatch).
+function commitOps({
+  ownerId,
+  state,
+  current,
+  next,
+  seq,
+  result,
+  receiptId,
+  requestHash,
+}) {
+  return [
+    state
+      ? {
+          operationType: 'Replace',
+          id: 'state',
+          ifMatch: state._etag,
+          resourceBody: { id: 'state', ownerId, type: 'state', seq },
+        }
+      : {
+          operationType: 'Create',
+          resourceBody: { id: 'state', ownerId, type: 'state', seq },
+        },
+    current
+      ? {
+          operationType: 'Replace',
+          id: next.id,
+          ifMatch: current._etag,
+          resourceBody: next,
+        }
+      : { operationType: 'Create', resourceBody: next },
+    {
+      operationType: 'Create',
+      resourceBody: {
+        id: `revision_${next.id}_${seq}`,
+        ownerId,
+        type: 'revision',
+        recordId: next.id,
+        seq,
+        result,
+      },
+    },
+    {
+      operationType: 'Create',
+      resourceBody: {
+        id: `event_${String(seq).padStart(16, '0')}`,
+        ownerId,
+        type: 'event',
+        recordId: next.id,
+        seq,
+      },
+    },
+    {
+      operationType: 'Create',
+      resourceBody: {
+        id: receiptId,
+        ownerId,
+        type: 'receipt',
+        recordId: next.id,
+        requestHash,
+        result,
+      },
+    },
+  ];
+}
+
 /** All authored mutations, revisions, receipts and cursor advancement share one
  * owner partition and one transactional batch. No timestamp-based sync cursor. */
 export function createBrainRepository(store, ownerId, batch) {
@@ -32,117 +195,8 @@ export function createBrainRepository(store, ownerId, batch) {
       limit,
     );
 
-  async function commit(record, { version = 0, mutationId } = {}) {
-    if (!/^[a-zA-Z0-9_-]{8,128}$/.test(mutationId || ''))
-      fail(400, 'INVALID', 'A unique mutationId is required.');
-    const receiptId = `mutation_${mutationId}`;
-    const requestHash = digest(JSON.stringify({ record, version }));
-    const existing = await read(receiptId);
-    if (existing) {
-      if (
-        existing.recordId !== record.id ||
-        existing.requestHash !== requestHash
-      )
-        fail(409, 'CONFLICT', 'Mutation id already used for another edit.');
-      return existing.result;
-    }
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const [state, current] = await Promise.all([
-        read('state'),
-        read(record.id),
-      ]);
-      if ((current?.version || 0) !== version)
-        fail(
-          412,
-          'CONFLICT',
-          'This item changed. Your text has been retained; compare it with the current version.',
-          { current: clean(current) },
-        );
-      if (current && current.type !== record.type)
-        fail(400, 'INVALID', 'Item type cannot change.');
-      const seq = (state?.seq || 0) + 1;
-      const now = new Date().toISOString();
-      const next = {
-        ...record,
-        ownerId,
-        version: (current?.version || 0) + 1,
-        seq,
-        createdAt: current?.createdAt || now,
-        updatedAt: now,
-      };
-      const result = clean(next);
-      const ops = [
-        state
-          ? {
-              operationType: 'Replace',
-              id: 'state',
-              ifMatch: state._etag,
-              resourceBody: { id: 'state', ownerId, type: 'state', seq },
-            }
-          : {
-              operationType: 'Create',
-              resourceBody: { id: 'state', ownerId, type: 'state', seq },
-            },
-        current
-          ? {
-              operationType: 'Replace',
-              id: next.id,
-              ifMatch: current._etag,
-              resourceBody: next,
-            }
-          : { operationType: 'Create', resourceBody: next },
-        {
-          operationType: 'Create',
-          resourceBody: {
-            id: `revision_${next.id}_${seq}`,
-            ownerId,
-            type: 'revision',
-            recordId: next.id,
-            seq,
-            result,
-          },
-        },
-        {
-          operationType: 'Create',
-          resourceBody: {
-            id: `event_${String(seq).padStart(16, '0')}`,
-            ownerId,
-            type: 'event',
-            recordId: next.id,
-            seq,
-          },
-        },
-        {
-          operationType: 'Create',
-          resourceBody: {
-            id: receiptId,
-            ownerId,
-            type: 'receipt',
-            recordId: next.id,
-            requestHash,
-            result,
-          },
-        },
-      ];
-      try {
-        await batch(ownerId, ops);
-        return result;
-      } catch (error) {
-        if (![409, 412, 424].includes(Number(error.code))) throw error;
-        const receipt = await read(receiptId);
-        if (
-          receipt?.recordId === record.id &&
-          receipt.requestHash === requestHash
-        )
-          return receipt.result;
-      }
-    }
-    throw new BrainError(
-      409,
-      'BUSY',
-      'Another save is in progress. Retry with the same mutation id.',
-    );
-  }
+  const commit = (record, options) =>
+    commitRecord({ read, batch, ownerId }, record, options);
 
   async function changes(after = 0, limit = 50) {
     const events = await query(

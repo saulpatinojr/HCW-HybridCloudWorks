@@ -55,6 +55,9 @@ const API_VERSION = '2023-01-01-preview';
  */
 const MAX_PAGES = 10;
 
+/** Does `pattern` match `value`, reading a missing value as empty text? */
+const matches = (pattern, value) => pattern.test(value || '');
+
 /** Per-service OData filter, row selector, and output shaping. */
 export const AZURE_SERVICE_FILTERS = {
   'compute-vm': {
@@ -64,9 +67,9 @@ export const AZURE_SERVICE_FILTERS = {
       items.find(
         (item) =>
           item.skuName === 'Standard_D4as_v5' &&
-          !/Spot|Low Priority/i.test(item.skuName || '') &&
-          !/Windows/i.test(item.productName || '') &&
-          !/Cloud Services/i.test(item.productName || '')
+          !matches(/Spot|Low Priority/i, item.skuName) &&
+          !matches(/Windows/i, item.productName) &&
+          !matches(/Cloud Services/i, item.productName)
       ),
     unit: 'hour',
   },
@@ -134,10 +137,10 @@ export const AZURE_SERVICE_FILTERS = {
     selectItem: (items) =>
       items.find(
         (item) =>
-          /serverless/i.test(item.skuName || '') &&
-          /1M RUs/i.test(item.meterName || '') &&
+          matches(/serverless/i, item.skuName) &&
+          matches(/1M RUs/i, item.meterName) &&
           Number(item.unitPrice) > 0
-      ) || items.find((item) => /1M RUs/i.test(item.meterName || '') && Number(item.unitPrice) > 0),
+      ) || items.find((item) => matches(/1M RUs/i, item.meterName) && Number(item.unitPrice) > 0),
     unit: NOSQL_BENCHMARK_UNIT,
     transformSku: () => '1M RUs serverless benchmark',
   },

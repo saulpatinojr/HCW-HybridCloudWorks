@@ -185,6 +185,160 @@ export function parseRecordingRequest(body) {
   return { recordingId, title, transcript, contentType, requestedProvider, cloudProvider };
 }
 
+/** The work behind createRecordingDrafter's draftFromRecording; `deps` are the drafter's own. */
+async function draftFromRecording({ drafter, store, persist, now, uuid, log }, body, { user, budgetMs = null } = {}) {
+  const budgetLeft = startBudgetClock(budgetMs);
+  const input = parseRecordingRequest(body);
+
+  const recording = await store.readDoc('recordings', input.recordingId, input.recordingId);
+  if (!recording) {
+    throw coded('RECORDING_NOT_FOUND', `recording ${input.recordingId} not found`);
+  }
+
+  const transcript = checkedTranscript(input, recording);
+
+  const title = input.title || String(recording.title || '').trim() || 'Untitled recording';
+  const type = RECORDING_CONTENT_TYPES[input.contentType];
+  const cloudProvider = inferProviderFromRecording({
+    cloudProvider: input.cloudProvider,
+    title,
+    transcript,
+  });
+
+  const usage = [];
+  const parsed = await drafter.generateDraft({
+    url: `recording:${input.recordingId}`,
+    cloudProvider,
+    scrapedTitle: title,
+    description: `Transcript of a recording titled "${title}" (${input.contentType.replace('_', ' ')}).`,
+    markdown: transcript,
+    customInstructionPrompt: type.instructions,
+    usageOut: usage,
+    budgetMs: budgetLeft(),
+  });
+
+  const postContent = String(parsed?.postContent || '').trim();
+  if (!postContent) {
+    throw coded('DRAFT_EMPTY', 'The model returned no postContent for this transcript.');
+  }
+
+  const stamp = now().toISOString();
+  const result = await persist({
+    store,
+    user,
+    now,
+    uuid,
+    // The critique is the editor's call at review time, as it is for the
+    // forge; running it here would double the model cost of every routing.
+    runEditorialCritique: false,
+    data: recordingDraftData({ parsed, title, postContent, cloudProvider, input, stamp, type }),
+  });
+  if (result.status !== 200) {
+    throw coded('PERSIST_REJECTED', result.body?.error || 'Content was not created', {
+      status: result.status,
+      details: result.body,
+    });
+  }
+  const contentId = result.body.contentId;
+
+  // The link back, best-effort. RecordingsPage PATCHes the same fields after
+  // the response, so this write is belt-and-braces for a client that dies in
+  // between — and a failure here must not turn a created draft into a 5xx,
+  // which would invite a retry and a duplicate. The response says whether
+  // the link landed.
+  let linked = true;
+  try {
+    await store.patchDoc('recordings', input.recordingId, {
+      status: 'routed',
+      contentId,
+      routedAt: stamp,
+      routedContentType: input.contentType,
+    });
+  } catch (error) {
+    linked = false;
+    log.warn?.(
+      `[createContentFromRecording] draft created but the recording link-back failed (${error?.code || error?.name || 'error'}); the client PATCH will set it`
+    );
+  }
+
+  // Content-free: type and provider only. Identifiers stay out of the trace,
+  // as everywhere else in this package.
+  log.log?.(
+    `[createContentFromRecording] drafted (${input.contentType}, ${parsed.aiProvider || 'provider unknown'})`
+  );
+  return {
+    contentId,
+    linked,
+    draft: {
+      title: parsed.title || title,
+      summary: parsed.summary || '',
+      keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : [],
+      aiProvider: parsed.aiProvider || null,
+      cloudProvider,
+    },
+  };
+}
+
+/** The content document a recording draft is created as. */
+function recordingDraftData({ parsed, title, postContent, cloudProvider, input, stamp, type }) {
+  const keyTopics = () => (Array.isArray(parsed.keyTopics) ? parsed.keyTopics.slice(0, 12).map(String) : []);
+  return {
+    type: type.publishType,
+    Title: String(parsed.title || title).slice(0, MAX_TITLE_CHARS),
+    title: String(parsed.title || title).slice(0, MAX_TITLE_CHARS),
+    Summary: String(parsed.summary || ''),
+    summary: String(parsed.summary || ''),
+    Content: postContent,
+    content: postContent,
+    postContent,
+    Author: 'Hybrid Cloud Works',
+    'Cloud Provider': cloudProvider,
+    Tags: keyTopics(),
+    keyTopics: keyTopics(),
+    // The AI's address topic (#1628); the drafter already dropped any word off the list.
+    ...(isArticleTopic(parsed.topic) && { topic: parsed.topic }),
+    summaryPrompt: String(parsed.summaryPrompt || ''),
+    detailsPrompt: String(parsed.detailsPrompt || ''),
+    suggestedContentType: parsed.suggestedContentType || null,
+    Live: false,
+    Status: 'Draft',
+    contentStatus: 'draft',
+    source: 'recording',
+    sourceTrustLevel: 'manual',
+    trustedSource: true,
+    sourceRecordingId: input.recordingId,
+    recordingContentType: input.contentType,
+    ...modelFields(input, parsed),
+    approvedForNews: false,
+    routedAt: stamp,
+  };
+}
+
+const modelFields = (input, parsed) => ({
+  requestedAiProvider: input.requestedProvider || null,
+  aiProvider: parsed.aiProvider || null,
+  aiModel: parsed.aiModel || null,
+  format: parsed.format || null,
+});
+
+/** The transcript to draft from: the request's, else the recording's; refused when too short or too long. */
+function checkedTranscript(input, recording) {
+  const transcript = String(input.transcript ?? recording.transcript ?? '').trim();
+  if (transcript.length < MIN_TRANSCRIPT_CHARS) {
+    throw coded(
+      'TRANSCRIPT_TOO_SHORT',
+      `The transcript has ${transcript.length} characters; at least ${MIN_TRANSCRIPT_CHARS} are needed to draft from.`
+    );
+  }
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) {
+    throw coded(
+      'TRANSCRIPT_TOO_LONG',
+      `The transcript has ${transcript.length} characters; the HTTP path takes at most ${MAX_TRANSCRIPT_CHARS}. Split the recording.`
+    );
+  }
+  return transcript;
+}
+
 /**
  * @param {object} deps
  * @param {{ generateDraft: Function }} deps.drafter   createDrafter()
@@ -205,146 +359,10 @@ export function createRecordingDrafter({
     throw new Error('createRecordingDrafter requires persist (createContentDocument)');
   }
 
+  const deps = { drafter, store, persist, now, uuid, log };
   // `budgetMs` sits beside `user`, never in `body`: the body is the client's
   // JSON, and a client must not choose its own time budget.
-  async function draftFromRecording(body, { user, budgetMs = null } = {}) {
-    const budgetLeft = startBudgetClock(budgetMs);
-    const input = parseRecordingRequest(body);
-
-    const recording = await store.readDoc('recordings', input.recordingId, input.recordingId);
-    if (!recording) {
-      throw coded('RECORDING_NOT_FOUND', `recording ${input.recordingId} not found`);
-    }
-
-    const transcript = String(input.transcript ?? recording.transcript ?? '').trim();
-    if (transcript.length < MIN_TRANSCRIPT_CHARS) {
-      throw coded(
-        'TRANSCRIPT_TOO_SHORT',
-        `The transcript has ${transcript.length} characters; at least ${MIN_TRANSCRIPT_CHARS} are needed to draft from.`
-      );
-    }
-    if (transcript.length > MAX_TRANSCRIPT_CHARS) {
-      throw coded(
-        'TRANSCRIPT_TOO_LONG',
-        `The transcript has ${transcript.length} characters; the HTTP path takes at most ${MAX_TRANSCRIPT_CHARS}. Split the recording.`
-      );
-    }
-
-    const title = input.title || String(recording.title || '').trim() || 'Untitled recording';
-    const type = RECORDING_CONTENT_TYPES[input.contentType];
-    const cloudProvider = inferProviderFromRecording({
-      cloudProvider: input.cloudProvider,
-      title,
-      transcript,
-    });
-
-    const usage = [];
-    const parsed = await drafter.generateDraft({
-      url: `recording:${input.recordingId}`,
-      cloudProvider,
-      scrapedTitle: title,
-      description: `Transcript of a recording titled "${title}" (${input.contentType.replace('_', ' ')}).`,
-      markdown: transcript,
-      customInstructionPrompt: type.instructions,
-      usageOut: usage,
-      budgetMs: budgetLeft(),
-    });
-
-    const postContent = String(parsed?.postContent || '').trim();
-    if (!postContent) {
-      throw coded('DRAFT_EMPTY', 'The model returned no postContent for this transcript.');
-    }
-
-    const stamp = now().toISOString();
-    const result = await persist({
-      store,
-      user,
-      now,
-      uuid,
-      // The critique is the editor's call at review time, as it is for the
-      // forge; running it here would double the model cost of every routing.
-      runEditorialCritique: false,
-      data: {
-        type: type.publishType,
-        Title: String(parsed.title || title).slice(0, MAX_TITLE_CHARS),
-        title: String(parsed.title || title).slice(0, MAX_TITLE_CHARS),
-        Summary: String(parsed.summary || ''),
-        summary: String(parsed.summary || ''),
-        Content: postContent,
-        content: postContent,
-        postContent,
-        Author: 'Hybrid Cloud Works',
-        'Cloud Provider': cloudProvider,
-        Tags: Array.isArray(parsed.keyTopics) ? parsed.keyTopics.slice(0, 12).map(String) : [],
-        keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics.slice(0, 12).map(String) : [],
-        // The AI's address topic (#1628); the drafter already dropped any word off the list.
-        ...(isArticleTopic(parsed.topic) && { topic: parsed.topic }),
-        summaryPrompt: String(parsed.summaryPrompt || ''),
-        detailsPrompt: String(parsed.detailsPrompt || ''),
-        suggestedContentType: parsed.suggestedContentType || null,
-        Live: false,
-        Status: 'Draft',
-        contentStatus: 'draft',
-        source: 'recording',
-        sourceTrustLevel: 'manual',
-        trustedSource: true,
-        sourceRecordingId: input.recordingId,
-        recordingContentType: input.contentType,
-        requestedAiProvider: input.requestedProvider || null,
-        aiProvider: parsed.aiProvider || null,
-        aiModel: parsed.aiModel || null,
-        format: parsed.format || null,
-        approvedForNews: false,
-        routedAt: stamp,
-      },
-    });
-    if (result.status !== 200) {
-      throw coded('PERSIST_REJECTED', result.body?.error || 'Content was not created', {
-        status: result.status,
-        details: result.body,
-      });
-    }
-    const contentId = result.body.contentId;
-
-    // The link back, best-effort. RecordingsPage PATCHes the same fields after
-    // the response, so this write is belt-and-braces for a client that dies in
-    // between — and a failure here must not turn a created draft into a 5xx,
-    // which would invite a retry and a duplicate. The response says whether
-    // the link landed.
-    let linked = true;
-    try {
-      await store.patchDoc('recordings', input.recordingId, {
-        status: 'routed',
-        contentId,
-        routedAt: stamp,
-        routedContentType: input.contentType,
-      });
-    } catch (error) {
-      linked = false;
-      log.warn?.(
-        `[createContentFromRecording] draft created but the recording link-back failed (${error?.code || error?.name || 'error'}); the client PATCH will set it`
-      );
-    }
-
-    // Content-free: type and provider only. Identifiers stay out of the trace,
-    // as everywhere else in this package.
-    log.log?.(
-      `[createContentFromRecording] drafted (${input.contentType}, ${parsed.aiProvider || 'provider unknown'})`
-    );
-    return {
-      contentId,
-      linked,
-      draft: {
-        title: parsed.title || title,
-        summary: parsed.summary || '',
-        keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : [],
-        aiProvider: parsed.aiProvider || null,
-        cloudProvider,
-      },
-    };
-  }
-
-  return { draftFromRecording };
+  return { draftFromRecording: (body, options) => draftFromRecording(deps, body, options) };
 }
 
 function withBudget(promise, budgetMs) {

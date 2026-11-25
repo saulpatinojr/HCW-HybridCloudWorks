@@ -82,6 +82,120 @@ function classificationSummary() {
 }
 
 /**
+ * Where the archive's container stands for one year, as two separate facts:
+ *
+ *   containerExists  true, false, or null when that could not be asked
+ *   archived         true (the year's manifest is there), false (the
+ *                    container is there and the manifest is not), or null
+ *                    (not known: the container is missing or unreadable)
+ *
+ * Asked in this order on purpose. Storage answers "not found" for a file
+ * in a container that does not exist exactly as for a file that does not
+ * exist, so reading the manifest alone would turn "the container was never
+ * created" into "this year is not archived", which is the one answer that
+ * lets an archive start.
+ */
+async function archiveState(archiveBlobs, year, context) {
+  let containerExists = null;
+  try {
+    containerExists = (await archiveBlobs.containerExists()) === true;
+  } catch (error) {
+    context?.warn?.(`contentArchive: could not ask whether the archive container exists (${errorCode(error)})`);
+    return { containerExists: null, archived: null };
+  }
+  if (!containerExists) return { containerExists: false, archived: null };
+  try {
+    return { containerExists: true, archived: (await archiveBlobs.readJson(archiveManifestName(year))) !== null };
+  } catch (error) {
+    context?.warn?.(`contentArchive: the archive container could not be read (${errorCode(error)})`);
+    return { containerExists: true, archived: null };
+  }
+}
+
+/**
+ * The newest archive and a run in progress. Read only when the
+ * container is there and could be read just now; a failure to read
+ * is "not known", not "none".
+ */
+async function readProgress({ blobs, archiveBlobs, year, state, at, context }) {
+  const { archived, containerExists } = state;
+  const unknown = { lastArchive: null, run: null };
+  if (!(containerExists === true && archived !== null)) return { progress: unknown, progressKnown: false };
+  try {
+    const progress = await readArchiveProgress({ backupBlobs: blobs, archiveBlobs, year, archived, now: at });
+    return { progress, progressKnown: true };
+  } catch (error) {
+    context?.warn?.(`contentArchive: the archive's progress could not be read (${errorCode(error)})`);
+    return { progress: unknown, progressKnown: false };
+  }
+}
+
+/** Whether an archive could start today, and what stands in the way. */
+function startDecision({ env, at, state, backup, latest }) {
+  const backupRunId = backup?.runId ?? null;
+  return archiveStartDecision({
+    env,
+    now: at,
+    containerExists: state.containerExists,
+    manifestExists: state.archived,
+    backupRunId,
+    // An archive never starts from a state no finished report describes.
+    reportBlockers: reportGate({ latest, backupRunId, backupContainers: backup ? backup.containers.map((row) => row.container) : null }),
+  });
+}
+
+/** The body of the GET answer. */
+function statusBody({ env, at, year, state, progress, progressKnown, decision, backup, latest }) {
+  return {
+    ok: true,
+    setting: ARCHIVE_SETTING,
+    switchOn: env?.[ARCHIVE_SETTING] === 'true',
+    // The job that writes an archive exists (archive-job.js). It starts
+    // from the nightly export's timer, so that has to be on as well.
+    jobBuilt: true,
+    exportOn: exportEnabled(env || {}),
+    // The newest finished archive, a run in progress, or null for each.
+    // progressKnown false: they could not be read, so null says nothing.
+    progressKnown,
+    lastArchive: progress.lastArchive,
+    run: progress.run,
+    lateAfterHours: ARCHIVE_LATE_HOURS,
+    archiveContainer: ARCHIVE_CONTAINER,
+    year,
+    archiveContainerExists: state.containerExists,
+    archived: state.archived,
+    wouldStart: decision.start,
+    blockers: decision.blockers,
+    earliestBackup: decision.earliestBackup,
+    latestBackup: backup ? { runId: backup.runId, containers: backup.containers.length } : null,
+    classification: classificationSummary(),
+    latest,
+    // Where reports are kept and for how long, so the card can say so.
+    reports: { container: 'cosmos-export-state', prefix: 'state/archive-report/', keepDays: REPORT_KEEP_DAYS, staleMinutes: RUN_STALE_MINUTES },
+    checkedAt: at.toISOString(),
+  };
+}
+
+/** Why a dry run did not start, by the scheduler's reason; any other reason is "already started". */
+const DRY_RUN_REFUSALS = {
+  'no-backup': {
+    error: 'no_backup',
+    message:
+      'No complete weekly full backup was found in the last 35 days, so there is nothing to read. The nightly export has to be on, and a Sunday run has to have finished (Health, Overview, Nightly export).',
+  },
+  'in-progress': {
+    error: 'in_progress',
+    message: `A dry run is still reading the backup. Wait for its report, or press again once it is more than ${RUN_STALE_MINUTES} minutes old; a run that has not finished by then did not finish.`,
+  },
+};
+const DRY_RUN_ALREADY_STARTED = {
+  error: 'already_started',
+  message: 'A dry run was started in this same minute. Its report will appear here when it finishes.',
+};
+const dryRunRefusal = (reason) =>
+  Object.hasOwn(DRY_RUN_REFUSALS, reason) ? DRY_RUN_REFUSALS[reason] : DRY_RUN_ALREADY_STARTED;
+
+/**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ upsertDoc: Function }} deps.store
@@ -92,37 +206,6 @@ function classificationSummary() {
  * @param {() => string} [deps.uuid]
  */
 export function createArchiveHandlers({ guard, store, blobs, archiveBlobs, env = process.env, now = () => new Date(), uuid }) {
-  /**
-   * Where the archive's container stands for one year, as two separate facts:
-   *
-   *   containerExists  true, false, or null when that could not be asked
-   *   archived         true (the year's manifest is there), false (the
-   *                    container is there and the manifest is not), or null
-   *                    (not known: the container is missing or unreadable)
-   *
-   * Asked in this order on purpose. Storage answers "not found" for a file
-   * in a container that does not exist exactly as for a file that does not
-   * exist, so reading the manifest alone would turn "the container was never
-   * created" into "this year is not archived", which is the one answer that
-   * lets an archive start.
-   */
-  async function archiveState(year, context) {
-    let containerExists = null;
-    try {
-      containerExists = (await archiveBlobs.containerExists()) === true;
-    } catch (error) {
-      context?.warn?.(`contentArchive: could not ask whether the archive container exists (${errorCode(error)})`);
-      return { containerExists: null, archived: null };
-    }
-    if (!containerExists) return { containerExists: false, archived: null };
-    try {
-      return { containerExists: true, archived: (await archiveBlobs.readJson(archiveManifestName(year))) !== null };
-    } catch (error) {
-      context?.warn?.(`contentArchive: the archive container could not be read (${errorCode(error)})`);
-      return { containerExists: true, archived: null };
-    }
-  }
-
   return {
     /** GET cms/content-archive */
     async getStatus(request, context) {
@@ -133,60 +216,12 @@ export function createArchiveHandlers({ guard, store, blobs, archiveBlobs, env =
         const year = archiveYearFor(at);
         const [backup, state, latest] = await Promise.all([
           findLatestFullBackup({ blobs, now: at }),
-          archiveState(year, context),
+          archiveState(archiveBlobs, year, context),
           readLatestReport({ blobs, now: at }),
         ]);
-        const { archived, containerExists } = state;
-        // The newest archive and a run in progress. Read only when the
-        // container is there and could be read just now; a failure to read
-        // is "not known", not "none".
-        let progress = { lastArchive: null, run: null };
-        let progressKnown = containerExists === true && archived !== null;
-        if (progressKnown) {
-          try {
-            progress = await readArchiveProgress({ backupBlobs: blobs, archiveBlobs, year, archived, now: at });
-          } catch (error) {
-            context?.warn?.(`contentArchive: the archive's progress could not be read (${errorCode(error)})`);
-            progressKnown = false;
-          }
-        }
-        const decision = archiveStartDecision({
-          env,
-          now: at,
-          containerExists,
-          manifestExists: archived,
-          backupRunId: backup?.runId ?? null,
-          // An archive never starts from a state no finished report describes.
-          reportBlockers: reportGate({ latest, backupRunId: backup?.runId ?? null, backupContainers: backup ? backup.containers.map((row) => row.container) : null }),
-        });
-        return privateJson(200, {
-          ok: true,
-          setting: ARCHIVE_SETTING,
-          switchOn: env?.[ARCHIVE_SETTING] === 'true',
-          // The job that writes an archive exists (archive-job.js). It starts
-          // from the nightly export's timer, so that has to be on as well.
-          jobBuilt: true,
-          exportOn: exportEnabled(env || {}),
-          // The newest finished archive, a run in progress, or null for each.
-          // progressKnown false: they could not be read, so null says nothing.
-          progressKnown,
-          lastArchive: progress.lastArchive,
-          run: progress.run,
-          lateAfterHours: ARCHIVE_LATE_HOURS,
-          archiveContainer: ARCHIVE_CONTAINER,
-          year,
-          archiveContainerExists: containerExists,
-          archived,
-          wouldStart: decision.start,
-          blockers: decision.blockers,
-          earliestBackup: decision.earliestBackup,
-          latestBackup: backup ? { runId: backup.runId, containers: backup.containers.length } : null,
-          classification: classificationSummary(),
-          latest,
-          // Where reports are kept and for how long, so the card can say so.
-          reports: { container: 'cosmos-export-state', prefix: 'state/archive-report/', keepDays: REPORT_KEEP_DAYS, staleMinutes: RUN_STALE_MINUTES },
-          checkedAt: at.toISOString(),
-        });
+        const { progress, progressKnown } = await readProgress({ blobs, archiveBlobs, year, state, at, context });
+        const decision = startDecision({ env, at, state, backup, latest });
+        return privateJson(200, statusBody({ env, at, year, state, progress, progressKnown, decision, backup, latest }));
       } catch (failure) {
         return errorResponse(context, 'Failed to read the content archive’s state', failure, 500, request);
       }
@@ -208,27 +243,8 @@ export function createArchiveHandlers({ guard, store, blobs, archiveBlobs, env =
           now,
           ...(uuid ? { uuid } : {}),
         }).start({ requestedBy: auth.user ?? null });
-        if (!result.started && result.reason === 'no-backup') {
-          return privateJson(409, {
-            ok: false,
-            error: 'no_backup',
-            message:
-              'No complete weekly full backup was found in the last 35 days, so there is nothing to read. The nightly export has to be on, and a Sunday run has to have finished (Health, Overview, Nightly export).',
-          });
-        }
-        if (!result.started && result.reason === 'in-progress') {
-          return privateJson(409, {
-            ok: false,
-            error: 'in_progress',
-            message: `A dry run is still reading the backup. Wait for its report, or press again once it is more than ${RUN_STALE_MINUTES} minutes old; a run that has not finished by then did not finish.`,
-          });
-        }
         if (!result.started) {
-          return privateJson(409, {
-            ok: false,
-            error: 'already_started',
-            message: 'A dry run was started in this same minute. Its report will appear here when it finishes.',
-          });
+          return privateJson(409, { ok: false, ...dryRunRefusal(result.reason) });
         }
         // One row per run, with numbers only.
         await recordMutationAudit(store, {

@@ -114,89 +114,14 @@ export function validateModules(markdown = '') {
   const issues = [];
   const picturePrompts = [];
   let moduleCount = 0;
+  const source = String(markdown || '');
 
   MODULE_TAG_REGEX.lastIndex = 0;
   let match;
-  while ((match = MODULE_TAG_REGEX.exec(String(markdown || ''))) !== null) {
+  while ((match = MODULE_TAG_REGEX.exec(source)) !== null) {
     moduleCount += 1;
     const [, type, align, content] = match;
-
-    if (!KNOWN_MODULE_TYPES.has(type)) {
-      issues.push(`Unknown module type "${type}"`);
-      continue;
-    }
-    if (align && !['left', 'right', 'all'].includes(align)) {
-      issues.push(`Module ${moduleCount} (${type}) has invalid align "${align}"`);
-    }
-    if (JSON_MODULE_TYPES.has(type)) {
-      try {
-        const parsed = JSON.parse(content.trim());
-        // A JSON body must be an object, not a bare value: `5` parses but no
-        // renderer can do anything with it, and the semantic checks below
-        // would silently pass for types without one.
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          issues.push(`Module ${moduleCount} (${type}) JSON body is not an object`);
-          continue;
-        }
-        if (type === 'picture') {
-          const prompt = String(parsed.imagePrompt || '').trim();
-          if (prompt) picturePrompts.push(prompt);
-          else if (!String(parsed.imageUrl || '').trim()) {
-            issues.push(`Picture module ${moduleCount} has neither imageUrl nor imagePrompt`);
-          }
-        }
-        if (type === 'links') {
-          const links = Array.isArray(parsed.links) ? parsed.links : [];
-          if (!links.length) issues.push(`Links module ${moduleCount} has no links`);
-        }
-        if (type === 'pull_quote' && !String(parsed.text || '').trim()) {
-          issues.push(`Pull-quote module ${moduleCount} has no text`);
-        }
-        if (type === 'stat_board') {
-          const stats = Array.isArray(parsed.stats) ? parsed.stats : [];
-          if (stats.length < 2 || stats.length > MAX_STAT_BOARD_STATS) {
-            issues.push(
-              `Stat-board module ${moduleCount} needs 2-${MAX_STAT_BOARD_STATS} stats, has ${stats.length}`
-            );
-          } else if (
-            stats.some(
-              (stat) => !String(stat?.value ?? '').trim() || !String(stat?.label || '').trim()
-            )
-          ) {
-            issues.push(`Stat-board module ${moduleCount} has a stat missing value or label`);
-          }
-        }
-        if (type === 'comparison') {
-          const columns = Array.isArray(parsed.columns) ? parsed.columns : [];
-          const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-          if (columns.length < 2 || !rows.length) {
-            issues.push(`Comparison module ${moduleCount} needs at least 2 columns and 1 row`);
-          } else if (rows.some((row) => !Array.isArray(row) || row.length !== columns.length)) {
-            issues.push(
-              `Comparison module ${moduleCount} has a row that does not match its ${columns.length} columns`
-            );
-          }
-        }
-        if (type === 'timeline') {
-          const steps = Array.isArray(parsed.steps) ? parsed.steps : [];
-          if (steps.length < 2) {
-            issues.push(`Timeline module ${moduleCount} needs at least 2 steps`);
-          } else if (steps.some((step) => !String(step?.title || '').trim())) {
-            issues.push(`Timeline module ${moduleCount} has a step with no title`);
-          }
-        }
-        if (
-          type === 'callout' &&
-          (!String(parsed.title || '').trim() || !String(parsed.body || '').trim())
-        ) {
-          issues.push(`Callout module ${moduleCount} needs both title and body`);
-        }
-      } catch {
-        issues.push(`Module ${moduleCount} (${type}) content is not valid JSON`);
-      }
-    } else if (!String(content || '').trim()) {
-      issues.push(`Module ${moduleCount} (${type}) is empty`);
-    }
+    issues.push(...moduleIssues({ type, align, content, n: moduleCount, picturePrompts }));
   }
 
   if (moduleCount > MAX_MODULES) {
@@ -205,3 +130,89 @@ export function validateModules(markdown = '') {
 
   return { valid: issues.length === 0, moduleCount, issues, picturePrompts };
 }
+
+/** The issues of module number `n`, in the order they are reported. */
+function moduleIssues({ type, align, content, n, picturePrompts }) {
+  if (!KNOWN_MODULE_TYPES.has(type)) return [`Unknown module type "${type}"`];
+  const issues = [];
+  if (align && !['left', 'right', 'all'].includes(align)) {
+    issues.push(`Module ${n} (${type}) has invalid align "${align}"`);
+  }
+  if (JSON_MODULE_TYPES.has(type)) {
+    const problem = jsonModuleIssue(type, content, n, picturePrompts);
+    if (problem) issues.push(problem);
+  } else if (!String(content || '').trim()) {
+    issues.push(`Module ${n} (${type}) is empty`);
+  }
+  return issues;
+}
+
+/**
+ * The one issue of a module with a JSON body, or null. Any failure while the
+ * body is read or checked counts as JSON that is not valid.
+ */
+function jsonModuleIssue(type, content, n, picturePrompts) {
+  try {
+    const parsed = JSON.parse(content.trim());
+    // A JSON body must be an object, not a bare value: `5` parses but no
+    // renderer can do anything with it, and the semantic checks below
+    // would silently pass for types without one.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return `Module ${n} (${type}) JSON body is not an object`;
+    }
+    const check = Object.hasOwn(MODULE_CHECKS, type) ? MODULE_CHECKS[type] : null;
+    return check ? check(parsed, n, picturePrompts) : null;
+  } catch {
+    return `Module ${n} (${type}) content is not valid JSON`;
+  }
+}
+
+const blank = (value) => !String(value || '').trim();
+const listOf = (value) => (Array.isArray(value) ? value : []);
+
+/**
+ * The semantic check of each JSON module type: the issue, or null. A
+ * picture's prompt is collected into `picturePrompts` on the way.
+ */
+const MODULE_CHECKS = {
+  picture(parsed, n, picturePrompts) {
+    const prompt = String(parsed.imagePrompt || '').trim();
+    if (prompt) {
+      picturePrompts.push(prompt);
+      return null;
+    }
+    return blank(parsed.imageUrl) ? `Picture module ${n} has neither imageUrl nor imagePrompt` : null;
+  },
+  links(parsed, n) {
+    return listOf(parsed.links).length ? null : `Links module ${n} has no links`;
+  },
+  pull_quote(parsed, n) {
+    return blank(parsed.text) ? `Pull-quote module ${n} has no text` : null;
+  },
+  stat_board(parsed, n) {
+    const stats = listOf(parsed.stats);
+    if (stats.length < 2 || stats.length > MAX_STAT_BOARD_STATS) {
+      return `Stat-board module ${n} needs 2-${MAX_STAT_BOARD_STATS} stats, has ${stats.length}`;
+    }
+    const incomplete = stats.some((stat) => !String(stat?.value ?? '').trim() || blank(stat?.label));
+    return incomplete ? `Stat-board module ${n} has a stat missing value or label` : null;
+  },
+  comparison(parsed, n) {
+    const columns = listOf(parsed.columns);
+    const rows = listOf(parsed.rows);
+    if (columns.length < 2 || !rows.length) {
+      return `Comparison module ${n} needs at least 2 columns and 1 row`;
+    }
+    return rows.some((row) => !Array.isArray(row) || row.length !== columns.length)
+      ? `Comparison module ${n} has a row that does not match its ${columns.length} columns`
+      : null;
+  },
+  timeline(parsed, n) {
+    const steps = listOf(parsed.steps);
+    if (steps.length < 2) return `Timeline module ${n} needs at least 2 steps`;
+    return steps.some((step) => blank(step?.title)) ? `Timeline module ${n} has a step with no title` : null;
+  },
+  callout(parsed, n) {
+    return blank(parsed.title) || blank(parsed.body) ? `Callout module ${n} needs both title and body` : null;
+  },
+};

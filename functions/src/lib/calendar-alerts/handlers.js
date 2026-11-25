@@ -75,6 +75,92 @@ const privateJson = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+/** A refusal this code wrote answers as itself; anything else is the fixed failure sentence. */
+function failed(context, request, sentence, error) {
+  if (isAuthoredError(error) && Number.isInteger(error.status) && error.status < 500) {
+    return privateJson(error.status, {
+      ok: false,
+      error: authoredMessage(error, sentence),
+      ...(error.status === 409 ? { code: 'CONFLICT' } : {}),
+    });
+  }
+  return errorResponse(context, sentence, error, 500, request);
+}
+
+/**
+ * The request body as JSON. A body that is not an object is a 400; one past
+ * the size limits is a 413 with its own sentence, so the guard can be told
+ * from the field checks that follow it.
+ */
+async function readBody(request) {
+  const declared = Number(request.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new CalendarAlertTooLargeError();
+  const body = await request.json().catch(() => null);
+  if (body === null || typeof body !== 'object') {
+    throw new CalendarAlertValidationError('The body must be a JSON object');
+  }
+  if (JSON.stringify(body).length > MAX_BODY_JSON) throw new CalendarAlertTooLargeError();
+  return body;
+}
+
+/**
+ * What an audit row says: the alert's id, where it stands, and the NAMES of
+ * the fields a change touched, never its words or their values.
+ */
+async function audit({ store, now, uuid }, { action, user, row, context, fields = null }) {
+  await recordMutationAudit(store, {
+    action,
+    actor: user,
+    resource: `admin_config:calendar_alerts:${row.id}`,
+    details: { alertId: row.id, status: row.status, ...(fields ? { fields } : {}) },
+    now,
+    uuid,
+    context,
+  });
+}
+
+/** The alert id off the route, or the 404 for one that cannot be an id. */
+function alertIdOf(request) {
+  const id = request.params?.alertId;
+  return isAlertId(id) ? { id } : { error: new CalendarAlertNotFoundError() };
+}
+
+/**
+ * The change behind PATCH, applied to the stored state. The Calendar can
+ * show a starting alert before any list read has saved it; acting on it
+ * saves it, in the same write.
+ */
+function patchInState(stored, { id, patch, today, at }) {
+  const { state } = applySeeds(stored, { at });
+  const row = state.alerts.find((entry) => entry?.id === id);
+  if (!row || !isStoredAlert(row)) throw new CalendarAlertNotFoundError();
+  const next = applyPatch(row, patch, { today, at });
+  const changed = {
+    ...state,
+    alerts: state.alerts.map((entry) => (entry?.id === id ? next : entry)),
+  };
+  // Only an edit of the words can make the list heavier; done and snooze cannot.
+  if (Object.keys(patch.edits).length > 0) assertListWeight(changed);
+  return { write: true, state: changed, result: next };
+}
+
+/** The change behind DELETE, applied to the stored state. */
+function removeFromState(stored, { id, at }) {
+  const { state } = applySeeds(stored, { at });
+  const row = state.alerts.find((entry) => entry?.id === id);
+  if (!row) throw new CalendarAlertNotFoundError();
+  return { write: true, state: withoutAlert(state, id), result: row };
+}
+
+/** The names of the fields a PATCH touched, for the audit row. */
+function changedFields(patch) {
+  return [
+    ...Object.keys(patch.edits),
+    ...(patch.done === undefined ? [] : ['done']),
+    ...(patch.snoozeDays === undefined ? [] : ['snooze']),
+  ];
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -89,56 +175,7 @@ export function createCalendarAlertHandlers({
   now = () => new Date(),
   uuid = randomUUID,
 }) {
-  /** A refusal this code wrote answers as itself; anything else is the fixed failure sentence. */
-  function failed(context, request, sentence, error) {
-    if (isAuthoredError(error) && Number.isInteger(error.status) && error.status < 500) {
-      return privateJson(error.status, {
-        ok: false,
-        error: authoredMessage(error, sentence),
-        ...(error.status === 409 ? { code: 'CONFLICT' } : {}),
-      });
-    }
-    return errorResponse(context, sentence, error, 500, request);
-  }
-
-  /**
-   * The request body as JSON. A body that is not an object is a 400; one past
-   * the size limits is a 413 with its own sentence, so the guard can be told
-   * from the field checks that follow it.
-   */
-  async function readBody(request) {
-    const declared = Number(request.headers?.get?.('content-length'));
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new CalendarAlertTooLargeError();
-    const body = await request.json().catch(() => null);
-    if (body === null || typeof body !== 'object') {
-      throw new CalendarAlertValidationError('The body must be a JSON object');
-    }
-    if (JSON.stringify(body).length > MAX_BODY_JSON) throw new CalendarAlertTooLargeError();
-    return body;
-  }
-
-  /**
-   * What an audit row says: the alert's id, where it stands, and the NAMES of
-   * the fields a change touched, never its words or their values.
-   */
-  async function audit(action, user, row, context, fields = null) {
-    await recordMutationAudit(store, {
-      action,
-      actor: user,
-      resource: `admin_config:calendar_alerts:${row.id}`,
-      details: { alertId: row.id, status: row.status, ...(fields ? { fields } : {}) },
-      now,
-      uuid,
-      context,
-    });
-  }
-
-  /** The alert id off the route, or the 404 for one that cannot be an id. */
-  function alertIdOf(request) {
-    const id = request.params?.alertId;
-    return isAlertId(id) ? { id } : { error: new CalendarAlertNotFoundError() };
-  }
-
+  const deps = { store, now, uuid };
   return {
     /** GET cms/calendar-alerts */
     async list(request, context) {
@@ -173,7 +210,7 @@ export function createCalendarAlertHandlers({
           },
           { now }
         );
-        await audit(AUDIT_ACTIONS.created, auth.user, row, context);
+        await audit(deps, { action: AUDIT_ACTIONS.created, user: auth.user, row, context });
         return privateJson(201, { ok: true, alert: presentAlert(row, dateOnly(now())) });
       } catch (error) {
         return failed(context, request, 'Failed to save the calendar alert', error);
@@ -190,30 +227,8 @@ export function createCalendarAlertHandlers({
         const patch = parsePatchBody(await readBody(request));
         const at = now().toISOString();
         const today = dateOnly(now());
-        const { result } = await changeAlerts(
-          store,
-          (stored) => {
-            // The Calendar can show a starting alert before any list read has
-            // saved it; acting on it saves it, in the same write.
-            const { state } = applySeeds(stored, { at });
-            const row = state.alerts.find((entry) => entry?.id === target.id);
-            if (!row || !isStoredAlert(row)) throw new CalendarAlertNotFoundError();
-            const next = applyPatch(row, patch, { today, at });
-            const changed = {
-              ...state,
-              alerts: state.alerts.map((entry) => (entry?.id === target.id ? next : entry)),
-            };
-            // Only an edit of the words can make the list heavier; done and snooze cannot.
-            if (Object.keys(patch.edits).length > 0) assertListWeight(changed);
-            return { write: true, state: changed, result: next };
-          },
-          { now }
-        );
-        await audit(AUDIT_ACTIONS.updated, auth.user, result, context, [
-          ...Object.keys(patch.edits),
-          ...(patch.done === undefined ? [] : ['done']),
-          ...(patch.snoozeDays === undefined ? [] : ['snooze']),
-        ]);
+        const { result } = await changeAlerts(store, (stored) => patchInState(stored, { id: target.id, patch, today, at }), { now });
+        await audit(deps, { action: AUDIT_ACTIONS.updated, user: auth.user, row: result, context, fields: changedFields(patch) });
         return privateJson(200, { ok: true, alert: presentAlert(result, today) });
       } catch (error) {
         return failed(context, request, 'Failed to update the calendar alert', error);
@@ -228,17 +243,8 @@ export function createCalendarAlertHandlers({
         const target = alertIdOf(request);
         if (target.error) throw target.error;
         const at = now().toISOString();
-        const { result } = await changeAlerts(
-          store,
-          (stored) => {
-            const { state } = applySeeds(stored, { at });
-            const row = state.alerts.find((entry) => entry?.id === target.id);
-            if (!row) throw new CalendarAlertNotFoundError();
-            return { write: true, state: withoutAlert(state, target.id), result: row };
-          },
-          { now }
-        );
-        await audit(AUDIT_ACTIONS.deleted, auth.user, { id: target.id, status: result?.status ?? null }, context);
+        const { result } = await changeAlerts(store, (stored) => removeFromState(stored, { id: target.id, at }), { now });
+        await audit(deps, { action: AUDIT_ACTIONS.deleted, user: auth.user, row: { id: target.id, status: result?.status ?? null }, context });
         return privateJson(200, { ok: true, id: target.id });
       } catch (error) {
         return failed(context, request, 'Failed to delete the calendar alert', error);

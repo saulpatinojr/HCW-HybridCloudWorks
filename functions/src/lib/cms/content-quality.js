@@ -1,5 +1,6 @@
 /**
  * Content quality, image readiness, and TL;DR shaping — pure scoring logic.
+ * (Image readiness itself is in image-readiness.js, re-exported here.)
  *
  * Ported from Site-Main cms/core/content-quality.js, which its own header
  * describes as "logic that survives the Azure migration unchanged … at cutover
@@ -26,8 +27,15 @@ import {
 
 export const MIN_ARTICLE_WORDS_FOR_PUBLISH = 650;
 export const MIN_CONTENT_QUALITY_SCORE = 82;
-export const MIN_IMAGE_QUALITY_SCORE = 78;
 export const PLACEHOLDER_TLDR_TEXT = 'Add the final takeaway summary here.';
+
+// Image readiness is in image-readiness.js; re-exported so callers keep one door.
+export {
+  MIN_IMAGE_QUALITY_SCORE,
+  buildImageLineage,
+  buildImageReadinessReport,
+  normalizeSlotTemplates,
+} from './image-readiness.js';
 
 export function getHeadingMatch(line = '') {
   const match = String(line).match(/^(#{1,6})\s+(.+?)\s*$/);
@@ -88,8 +96,11 @@ export function normalizeContentBodyFields(data = {}) {
   return normalized;
 }
 
+/** The first value that is set (truthy), as trimmed text; '' when none is. */
+const firstText = (...values) => String(values.find(Boolean) || '').trim();
+
 export function getPrimaryContentBody(data = {}) {
-  return String(data.postContent || data.blogDraft || data.content || data.Content || '').trim();
+  return firstText(data.postContent, data.blogDraft, data.content, data.Content);
 }
 
 export function countWords(value = '') {
@@ -221,92 +232,5 @@ export function buildContentQualityReport(data = {}, critique = null, publishTar
         }
       : null,
     issues: issues.slice(0, 12),
-  };
-}
-
-export function buildImageReadinessReport(data = {}, publishTarget = null) {
-  const contract = getPublishContract(
-    publishTarget || data.publishTarget || data.type || data.contentType
-  );
-  const { requireHero, requirePromptLineage } = contract.imagery;
-  const heroImageUrl = String(
-    data.heroImageUrl || data.altCoverImage || data.contentImageUrl || data.imageUrl || ''
-  ).trim();
-  const secondaryImageUrls = Array.isArray(data.secondaryImageUrls)
-    ? data.secondaryImageUrls.filter(Boolean)
-    : [];
-  const aiImageUrls =
-    data.aiImageUrls && typeof data.aiImageUrls === 'object' ? data.aiImageUrls : {};
-  const promptSummary = String(
-    data.summaryPrompt || data.imagePromptSeed || data.imageLineage?.summaryPrompt || ''
-  ).trim();
-  const promptDetails = String(
-    data.detailsPrompt || data.imagePromptDetails || data.imageLineage?.detailsPrompt || ''
-  ).trim();
-  const promptSet = String(
-    data.imagePromptSet || data.promptSet || data.imageLineage?.promptSet || ''
-  ).trim();
-  const promptName = String(
-    data.imagePromptName || data.promptName || data.imageLineage?.promptName || ''
-  ).trim();
-  const issues = [];
-
-  if (requireHero && !heroImageUrl) issues.push('Hero image is required.');
-  if (heroImageUrl && !heroImageUrl.startsWith('https://')) {
-    issues.push('Hero image must use an https URL.');
-  }
-  if (requirePromptLineage && (!promptSummary || !promptDetails)) {
-    issues.push('Image prompt summary and details are required for traceability.');
-  }
-  if (requirePromptLineage && (!promptSet || !promptName)) {
-    issues.push('Image prompt set and prompt name should be recorded.');
-  }
-
-  let score = 100;
-  if (requireHero) {
-    if (!heroImageUrl) score -= 35;
-    if (secondaryImageUrls.length === 0 && !aiImageUrls.secondary1) score -= 8;
-    if (String(data.altText || data.imageAlt || '').trim().length < 12) score -= 7;
-  }
-  if (heroImageUrl && !heroImageUrl.startsWith('https://')) score -= 20;
-  if (requirePromptLineage) {
-    if (!promptSummary || !promptDetails) score -= 18;
-    if (!promptSet || !promptName) score -= 12;
-  }
-
-  score = Math.max(0, Math.min(100, Math.round(score)));
-  return {
-    score,
-    ready: score >= MIN_IMAGE_QUALITY_SCORE && !issues.some((issue) => issue.includes('required')),
-    threshold: MIN_IMAGE_QUALITY_SCORE,
-    heroImageUrl,
-    secondaryCount: secondaryImageUrls.length,
-    aiSlots: Object.keys(aiImageUrls).filter((key) => aiImageUrls[key]),
-    promptSet,
-    promptName,
-    issues,
-  };
-}
-
-export function normalizeSlotTemplates(slotTemplates = {}) {
-  const keys = ['hero', 'secondary1', 'secondary2', 'secondary3'];
-  return keys.reduce((acc, key) => {
-    const value = String(slotTemplates?.[key] || '').trim();
-    if (value) acc[key] = value;
-    return acc;
-  }, {});
-}
-
-export function buildImageLineage(data = {}) {
-  return {
-    promptSet: String(data.imagePromptSet || data.promptSet || '').trim(),
-    promptName: String(data.imagePromptName || data.promptName || '').trim(),
-    promptTemplateVersion: String(data.promptTemplateVersion || '').trim() || 'manual-create-v1',
-    summaryPrompt: String(data.summaryPrompt || data.imagePromptSeed || '').trim(),
-    detailsPrompt: String(data.detailsPrompt || data.imagePromptDetails || '').trim(),
-    slotTemplates:
-      data.slotTemplates && typeof data.slotTemplates === 'object'
-        ? normalizeSlotTemplates(data.slotTemplates)
-        : {},
   };
 }
