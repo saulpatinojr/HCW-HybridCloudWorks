@@ -99,27 +99,32 @@ export const SLOT_TTL_SECONDS = -1;
 export async function takeSlot(store, holderId, max, nowMs) {
   const nowIso = new Date(nowMs).toISOString();
   for (let n = 0; n < max; n += 1) {
-    const id = `${SLOT_PREFIX}${n}`;
-    const slot = { id, kind: 'visitor_slot', sessionId: holderId, takenAt: nowIso, ttl: SLOT_TTL_SECONDS };
-    try {
-      await store.createDoc(QUOTA_CONTAINER, slot);
-      return n;
-    } catch (error) {
-      if (!isConflict(error)) throw error;
-    }
-    const current = await store.readDoc(QUOTA_CONTAINER, id, id);
-    if (current?.sessionId === holderId) return n;
-    if (!current || !(await slotIsFree(store, current, nowMs))) continue;
-    try {
-      await store.replaceDocIfMatch(QUOTA_CONTAINER, { ...slot, _etag: current._etag }, { partitionKey: id });
-      return n;
-    } catch (error) {
-      if (!lostRace(error)) throw error;
-      const after = await store.readDoc(QUOTA_CONTAINER, id, id);
-      if (after?.sessionId === holderId) return n;
-    }
+    if (await tryTakeSlot(store, n, holderId, { nowMs, nowIso })) return n;
   }
   return null;
+}
+
+/** Slot `n` for this holder: made new, already its own, or taken over once free; false when another holds it. */
+async function tryTakeSlot(store, n, holderId, { nowMs, nowIso }) {
+  const id = `${SLOT_PREFIX}${n}`;
+  const slot = { id, kind: 'visitor_slot', sessionId: holderId, takenAt: nowIso, ttl: SLOT_TTL_SECONDS };
+  try {
+    await store.createDoc(QUOTA_CONTAINER, slot);
+    return true;
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+  }
+  const current = await store.readDoc(QUOTA_CONTAINER, id, id);
+  if (current?.sessionId === holderId) return true;
+  if (!current || !(await slotIsFree(store, current, nowMs))) return false;
+  try {
+    await store.replaceDocIfMatch(QUOTA_CONTAINER, { ...slot, _etag: current._etag }, { partitionKey: id });
+    return true;
+  } catch (error) {
+    if (!lostRace(error)) throw error;
+    const after = await store.readDoc(QUOTA_CONTAINER, id, id);
+    return after?.sessionId === holderId;
+  }
 }
 
 /** The ids the `max` slot documents name now (a slot let go names none). Store faults are thrown. */

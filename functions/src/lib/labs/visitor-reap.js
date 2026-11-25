@@ -80,52 +80,64 @@ export async function reapExpiredVisitorSessions(
     return tally;
   }
 
-  // Waiting for a retry, a claim or a start whose holder never finished, and a given-up record due another round.
-  let due = [];
-  try {
-    due = await store.queryDocs(SESSION_CONTAINER, DUE_QUERY, [
-      { name: '@top', value: limit },
-      { name: '@type', value: VISITOR_JOB_TYPE },
-      { name: '@statuses', value: [...DUE_STATUSES] },
-      { name: '@dueIso', value: nowIso },
-    ]);
-  } catch (error) {
-    log?.(`visitor-session: the sessions waiting for a clean-up could not be listed (${errorKind(error)})`);
-    due = [];
-  }
-
-  const work = [
-    ...expiredSessions.map((session) => ({ session, endStatus: SESSION_STATUS.expired, retry: false })),
-    ...(Array.isArray(due) ? due : []).map((session) => ({
-      session,
-      // What it was going to become, if that is one of the two final statuses; anything else is an expiry.
-      endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(session.endStatus) ? session.endStatus : SESSION_STATUS.expired,
-      retry: true,
-    })),
-  ];
-  const taken = work.slice(0, limit);
-  for (const [index, { session, endStatus, retry }] of taken.entries()) {
+  const due = await dueSessions(store, { limit, nowIso, log });
+  const taken = sweepWork(expiredSessions, due).slice(0, limit);
+  for (const [index, item] of taken.entries()) {
     if (clock() - startedMs >= SWEEP_DEADLINE_MS) {
       // Late enough that this session's Coder calls could outlast the lease
       // its claim would hold; it and the rest wait for the next run.
       log?.(`visitor-session: the sweep stopped before its lease ran out, leaving ${taken.length - index} sessions for the next run`);
       break;
     }
-    try {
-      const { outcome } = await endSession(store, fetchImpl, config, session, { endStatus, nowMs, log });
-      if (outcome === 'done') tally[retry ? 'finished' : 'reaped'] += 1;
-      if (outcome === 'pending') tally.pending += 1;
-      if (outcome === 'given-up') tally.failed += 1;
-      if (outcome === 'changed') {
-        tally.failed += 1;
-        log?.('visitor-session: a session kept changing and was not cleaned up');
-      }
-    } catch (error) {
-      tally.failed += 1;
-      log?.(`visitor-session: a session could not be saved (${errorKind(error)})`);
-    }
+    await sweepOne(store, fetchImpl, config, item, { nowMs, log, tally });
   }
   return tally;
+}
+
+/** Waiting for a retry, a claim or a start whose holder never finished, and a given-up record due another round. */
+async function dueSessions(store, { limit, nowIso, log }) {
+  try {
+    const due = await store.queryDocs(SESSION_CONTAINER, DUE_QUERY, [
+      { name: '@top', value: limit },
+      { name: '@type', value: VISITOR_JOB_TYPE },
+      { name: '@statuses', value: [...DUE_STATUSES] },
+      { name: '@dueIso', value: nowIso },
+    ]);
+    return Array.isArray(due) ? due : [];
+  } catch (error) {
+    log?.(`visitor-session: the sessions waiting for a clean-up could not be listed (${errorKind(error)})`);
+    return [];
+  }
+}
+
+/** The sessions to end, expired first, each with what it becomes and whether it is a retry. */
+function sweepWork(expiredSessions, due) {
+  return [
+    ...expiredSessions.map((session) => ({ session, endStatus: SESSION_STATUS.expired, retry: false })),
+    ...due.map((session) => ({
+      session,
+      // What it was going to become, if that is one of the two final statuses; anything else is an expiry.
+      endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(session.endStatus) ? session.endStatus : SESSION_STATUS.expired,
+      retry: true,
+    })),
+  ];
+}
+
+/** End one session and count what happened. */
+async function sweepOne(store, fetchImpl, config, { session, endStatus, retry }, { nowMs, log, tally }) {
+  try {
+    const { outcome } = await endSession(store, fetchImpl, config, session, { endStatus, nowMs, log });
+    if (outcome === 'done') tally[retry ? 'finished' : 'reaped'] += 1;
+    if (outcome === 'pending') tally.pending += 1;
+    if (outcome === 'given-up') tally.failed += 1;
+    if (outcome === 'changed') {
+      tally.failed += 1;
+      log?.('visitor-session: a session kept changing and was not cleaned up');
+    }
+  } catch (error) {
+    tally.failed += 1;
+    log?.(`visitor-session: a session could not be saved (${errorKind(error)})`);
+  }
 }
 
 /**
