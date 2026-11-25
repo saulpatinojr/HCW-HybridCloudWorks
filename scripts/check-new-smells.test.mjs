@@ -121,6 +121,12 @@ describe('the data-table block in .qlty/qlty.toml (owner decision 2026-11-25, #1
 });
 
 describe('what counts as a new smell', () => {
+  it('treats deeper nesting of the same block as the same smell', () => {
+    const base = [smell({ rule: 'nested-control-flow', message: 'Deeply nested control flow (level = 4)' })];
+    const head = [smell({ rule: 'nested-control-flow', message: 'Deeply nested control flow (level = 5)' })];
+    expect(smellKey(head[0])).toBe(smellKey(base[0]));
+  });
+
   it('keeps a smell the base already had, even when it moved or grew', () => {
     const base = [smell({ line: 10, message: 'Function with high complexity (count = 16): doWork' })];
     const head = [smell({ line: 40, message: 'Function with high complexity (count = 25): doWork' })];

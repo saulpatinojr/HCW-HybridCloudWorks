@@ -21,7 +21,7 @@
  * Exit 0: nothing new. Exit 1: one or more new smells, each printed as a GitHub annotation on its file and line.
  * Exit 2: the command was used wrongly or a file could not be read.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseTriageBlocks, triage } from './lib/qlty-triage.mjs';
 
@@ -48,13 +48,13 @@ export function parseRenames(text) {
 
 /**
  * What makes two smells "the same one" across the base and the pull request. Line numbers are left out, since an
- * edit above a smell moves it, and so are the counts in the message ("count = 7"), since a smell that grew is
- * still the same smell. For copied code the other files are part of it, sorted, so a new copy is a new smell.
+ * edit above a smell moves it, and so are the counts in the message ("count = 7", "level = 5"), since a smell that
+ * grew is still the same smell. For copied code the other files are part of it, sorted, so a new copy is a new smell.
  */
 export function smellKey(issue, pathOf = (path) => path) {
   const path = pathOf(issue.location?.path || '');
   const message = String(issue.message || '')
-    .replace(/\s*\((?:count|mass) = [\d.]+\)/g, '')
+    .replace(/\s*\((?:count|mass|level) = [\d.]+\)/g, '')
     .replace(/\b\d+ lines\b/g, 'N lines')
     .replace(/\bin \d+ locations\b/g, 'in N locations');
   if (issue.driver === 'duplication') {
@@ -171,6 +171,8 @@ function main(argv) {
   return 1;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// Compare real paths: Node resolves symbolic links in import.meta.url but not in argv[1], and a plain compare
+// through a linked folder would skip main() and pass the step with no output.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
   process.exitCode = main(process.argv.slice(2));
 }
