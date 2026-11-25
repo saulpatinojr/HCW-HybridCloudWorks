@@ -133,3 +133,22 @@ export function tokenExpiresWithin(server, withinMs, now = () => new Date()) {
   const at = Date.parse(server?.oauth?.expiresAt ?? '');
   return Number.isFinite(at) && at - now().getTime() <= withinMs;
 }
+
+/** The stored tokens to revoke, refresh token first (RFC 7009 §2.1), as `[hint, token]` pairs. */
+export function revocableTokens(server) {
+  return [
+    ['refresh_token', server?.oauthRefreshToken],
+    ['access_token', server?.oauthToken],
+  ].filter(([, token]) => typeof token === 'string' && token);
+}
+
+/** A function that replaces every one of `tokens`, raw or percent-encoded, with `***` in a text. */
+export function scrubberFor(tokens) {
+  return (text) => {
+    let out = String(text ?? '');
+    for (const [, token] of tokens) {
+      for (const form of new Set([token, encodeURIComponent(token)])) out = out.split(form).join('***');
+    }
+    return out;
+  };
+}

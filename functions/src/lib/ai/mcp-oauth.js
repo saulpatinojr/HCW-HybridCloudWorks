@@ -71,7 +71,12 @@ import {
   registerClient,
   reusableClient,
 } from './mcp-oauth-client.js';
-import { parseTokenResponse, tokenRequest } from './mcp-oauth-tokens.js';
+import {
+  parseTokenResponse,
+  tokenRequest,
+  revocableTokens,
+  scrubberFor,
+} from './mcp-oauth-tokens.js';
 import {
   afterRefusedRefresh,
   isGrantRejection,
@@ -81,10 +86,10 @@ import {
 import {
   authorizationServerMetadataUrls,
   coversServer,
-  optionalHttpsEndpoint,
   protectedResourceMetadataUrls,
   resourceMetadataFromChallenge,
-  sameIssuer,
+  authorizationServerOf,
+  probeChallenge,
 } from './mcp-oauth-discovery-rules.js';
 
 export {
@@ -176,33 +181,6 @@ export function createOAuthHttp({ fetch, resolve, dispatcherFor, timeoutMs = 8_0
 }
 
 // ─── Discovery ───────────────────────────────────────────────────────────────
-
-/**
- * One unauthenticated MCP request, for the challenge it answers with. A
- * failure here is not a failure of the flow: the well-known URIs still work.
- */
-async function probeChallenge(serverUrl, http) {
-  try {
-    const res = await http(serverUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'hcw-mcp-proxy', version: '1.0.0' },
-        },
-        id: 0,
-      }),
-      timeoutMs: 5_000,
-    });
-    return res.status === 401 ? res.headers?.get?.('www-authenticate') || null : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * The first candidate that answers 200 with a JSON object `accept`s:
@@ -304,53 +282,7 @@ async function discoverAuthorizationServer({ issuerUrl, http, name }) {
       `${name}'s authorization server ${bare(issuerUrl)} publishes no OAuth or OpenID metadata, so it cannot be connected with Connect.`
     );
   }
-  const { doc } = found;
-  // RFC 8414 §3.3: the metadata's issuer must be the identifier it was
-  // fetched for, so a missing one, or one at another path on the same origin
-  // (another tenant), is refused before any endpoint in it is used.
-  const issuer = typeof doc.issuer === 'string' ? doc.issuer : '';
-  if (!sameIssuer(issuer, issuerUrl)) {
-    throw new McpOAuthError(
-      `${name}'s authorization-server metadata names the issuer ${issuer ? bare(issuer) : '(none)'}, not ${bare(issuerUrl)}; the sign-in was not started.`
-    );
-  }
-  requireHttpsUrl(issuer, `${name}'s issuer`);
-  const authorizationEndpoint = requireHttpsUrl(doc.authorization_endpoint, `${name}'s authorization endpoint`).href;
-  const tokenEndpoint = requireHttpsUrl(doc.token_endpoint, `${name}'s token endpoint`).href;
-  if (!stringList(doc.code_challenge_methods_supported).includes('S256')) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server does not offer PKCE with S256 (code_challenge_methods_supported lacks "S256"), which this site requires.`
-    );
-  }
-  if (typeof doc.registration_endpoint !== 'string' || !doc.registration_endpoint.trim()) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server offers no dynamic client registration (no registration_endpoint), so this site cannot register itself with it.`
-    );
-  }
-  const registrationEndpoint = requireHttpsUrl(doc.registration_endpoint, `${name}'s registration endpoint`).href;
-  const responseTypes = stringList(doc.response_types_supported);
-  if (responseTypes.length && !responseTypes.includes('code')) {
-    throw new McpOAuthError(`${name}'s sign-in server does not offer the authorization-code flow.`);
-  }
-  const grantTypes = stringList(doc.grant_types_supported);
-  if (grantTypes.length && !grantTypes.includes('authorization_code')) {
-    throw new McpOAuthError(`${name}'s sign-in server does not offer the authorization_code grant.`);
-  }
-  return {
-    issuer,
-    authorizationEndpoint,
-    tokenEndpoint,
-    registrationEndpoint,
-    revocationEndpoint: optionalHttpsEndpoint(doc.revocation_endpoint),
-    // RFC 8414 §2: absent means client_secret_basic.
-    tokenEndpointAuthMethods: Array.isArray(doc.token_endpoint_auth_methods_supported)
-      ? stringList(doc.token_endpoint_auth_methods_supported)
-      : ['client_secret_basic'],
-    // RFC 9207: a server that says it sends `iss` on the redirect must have
-    // sent it, and it must name this issuer (mix-up defence).
-    issParameterSupported: doc.authorization_response_iss_parameter_supported === true,
-    metadataUrl: found.url,
-  };
+  return authorizationServerOf(found.doc, { issuerUrl, name, metadataUrl: found.url });
 }
 
 /**
@@ -478,10 +410,7 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
   const oauth = server?.oauth || {};
   const issuer = typeof oauth.issuer === 'string' && oauth.issuer ? oauth.issuer : null;
   const endpoint = oauth.revocationEndpoint;
-  const tokens = [
-    ['refresh_token', server?.oauthRefreshToken],
-    ['access_token', server?.oauthToken],
-  ].filter(([, token]) => typeof token === 'string' && token);
+  const tokens = revocableTokens(server);
   if (!endpoint || !tokens.length) return { revoked: null, issuer };
 
   try {
@@ -493,13 +422,7 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
   // Every token this call sends, so a provider body or a transport error that
   // echoes one is scrubbed before it becomes the `reason` the handler returns
   // (CodeRabbit on #1124). Raw and percent-encoded forms both.
-  const scrub = (text) => {
-    let out = String(text ?? '');
-    for (const [, token] of tokens) {
-      for (const form of new Set([token, encodeURIComponent(token)])) out = out.split(form).join('***');
-    }
-    return out;
-  };
+  const scrub = scrubberFor(tokens);
 
   let reason = null;
   for (const [hint, token] of tokens) {

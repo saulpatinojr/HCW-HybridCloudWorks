@@ -4,7 +4,12 @@
  * document covers, and when two issuers are the same. The reads that apply
  * them stay in mcp-oauth.js.
  */
-import { requireHttpsUrl } from './mcp-oauth-base.js';
+import {
+  McpOAuthError,
+  bare,
+  requireHttpsUrl,
+  stringList,
+} from './mcp-oauth-base.js';
 
 /**
  * The `resource_metadata` URL a 401's WWW-Authenticate challenge names
@@ -119,4 +124,86 @@ export function sameIssuer(metadataIssuer, issuerUrl) {
   if (a === b) return true;
   const origin = bareOrigin(a);
   return origin !== null && origin === bareOrigin(b);
+}
+
+/**
+ * An authorization server's metadata document, checked: the issuer it names,
+ * https endpoints, PKCE with S256, dynamic registration and the
+ * authorization-code flow. The endpoints and options a sign-in uses, or a
+ * McpOAuthError naming what is missing.
+ */
+export function authorizationServerOf(doc, { issuerUrl, name, metadataUrl }) {
+  // RFC 8414 §3.3: the metadata's issuer must be the identifier it was
+  // fetched for, so a missing one, or one at another path on the same origin
+  // (another tenant), is refused before any endpoint in it is used.
+  const issuer = typeof doc.issuer === 'string' ? doc.issuer : '';
+  if (!sameIssuer(issuer, issuerUrl)) {
+    throw new McpOAuthError(
+      `${name}'s authorization-server metadata names the issuer ${issuer ? bare(issuer) : '(none)'}, not ${bare(issuerUrl)}; the sign-in was not started.`
+    );
+  }
+  requireHttpsUrl(issuer, `${name}'s issuer`);
+  const authorizationEndpoint = requireHttpsUrl(doc.authorization_endpoint, `${name}'s authorization endpoint`).href;
+  const tokenEndpoint = requireHttpsUrl(doc.token_endpoint, `${name}'s token endpoint`).href;
+  if (!stringList(doc.code_challenge_methods_supported).includes('S256')) {
+    throw new McpOAuthError(
+      `${name}'s sign-in server does not offer PKCE with S256 (code_challenge_methods_supported lacks "S256"), which this site requires.`
+    );
+  }
+  if (typeof doc.registration_endpoint !== 'string' || !doc.registration_endpoint.trim()) {
+    throw new McpOAuthError(
+      `${name}'s sign-in server offers no dynamic client registration (no registration_endpoint), so this site cannot register itself with it.`
+    );
+  }
+  const registrationEndpoint = requireHttpsUrl(doc.registration_endpoint, `${name}'s registration endpoint`).href;
+  const responseTypes = stringList(doc.response_types_supported);
+  if (responseTypes.length && !responseTypes.includes('code')) {
+    throw new McpOAuthError(`${name}'s sign-in server does not offer the authorization-code flow.`);
+  }
+  const grantTypes = stringList(doc.grant_types_supported);
+  if (grantTypes.length && !grantTypes.includes('authorization_code')) {
+    throw new McpOAuthError(`${name}'s sign-in server does not offer the authorization_code grant.`);
+  }
+  return {
+    issuer,
+    authorizationEndpoint,
+    tokenEndpoint,
+    registrationEndpoint,
+    revocationEndpoint: optionalHttpsEndpoint(doc.revocation_endpoint),
+    // RFC 8414 §2: absent means client_secret_basic.
+    tokenEndpointAuthMethods: Array.isArray(doc.token_endpoint_auth_methods_supported)
+      ? stringList(doc.token_endpoint_auth_methods_supported)
+      : ['client_secret_basic'],
+    // RFC 9207: a server that says it sends `iss` on the redirect must have
+    // sent it, and it must name this issuer (mix-up defence).
+    issParameterSupported: doc.authorization_response_iss_parameter_supported === true,
+    metadataUrl,
+  };
+}
+
+/**
+ * One unauthenticated MCP request, for the challenge it answers with. A
+ * failure here is not a failure of the flow: the well-known URIs still work.
+ */
+export async function probeChallenge(serverUrl, http) {
+  try {
+    const res = await http(serverUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'hcw-mcp-proxy', version: '1.0.0' },
+        },
+        id: 0,
+      }),
+      timeoutMs: 5_000,
+    });
+    return res.status === 401 ? res.headers?.get?.('www-authenticate') || null : null;
+  } catch {
+    return null;
+  }
 }
