@@ -360,16 +360,16 @@ export async function listCertEvents(store, request, context) {
       return json(400, { error: 'platform is not a known provider' });
     }
 
+    // A provider with no event sources answers an empty list without a read.
     const sources = CERT_EVENT_SOURCES_BY_PLATFORM[platform] || [];
-    if (sources.length === 0) {
-      return json(200, { success: true, items: [], total: 0 }, CERT_EVENTS_CACHE_SECONDS);
-    }
-
-    const docs = await store.queryDocs(
-      CERT_EVENTS_CONTAINER,
-      `SELECT TOP ${CERT_EVENTS_MAX_LISTED} ${CERT_EVENT_PROJECTION} FROM c WHERE ARRAY_CONTAINS(@sources, c.source) ORDER BY c.pubDate DESC`,
-      [{ name: '@sources', value: [...sources] }]
-    );
+    const docs =
+      sources.length === 0
+        ? []
+        : await store.queryDocs(
+            CERT_EVENTS_CONTAINER,
+            `SELECT TOP ${CERT_EVENTS_MAX_LISTED} ${CERT_EVENT_PROJECTION} FROM c WHERE ARRAY_CONTAINS(@sources, c.source) ORDER BY c.pubDate DESC`,
+            [{ name: '@sources', value: [...sources] }]
+          );
 
     const items = docs
       .filter((doc) => !isSoftDeleted(doc))
