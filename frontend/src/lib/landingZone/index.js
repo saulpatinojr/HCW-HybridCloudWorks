@@ -53,10 +53,10 @@ export {
   PROVIDER_NAMES,
   PROVIDER_PINS,
   SUBSCRIPTION_SCOPED_PROVIDERS,
-  TERRAFORM_REQUIRED_VERSION,
   avmModule,
   isAvmSource,
 } from './avmVersions';
+export { TERRAFORM_REQUIRED_VERSION } from './terraformVersion';
 export {
   HUB_PREFIX_RANGE,
   SPOKE_MAX_PREFIX,

@@ -13,6 +13,7 @@ import {
   buildCertificationFromSources,
   collectSources,
   foreignOwnerFor,
+  inferArea,
   reconcileLifecycle,
   stampSyncDate,
   summarizeChanges,
@@ -650,5 +651,269 @@ describe('summarizeChanges — the pull request body', () => {
 
     const unchanged = summarizeChanges({ before, after: before, today: '2026-09-14' });
     expect(unchanged).toContain('No entry changed; only the sync date moved.');
+  });
+});
+
+/**
+ * Pins written before #1859 split three long functions into smaller ones to
+ * meet the linter's complexity limit. They hold what each function returns
+ * today, so the split cannot change a single field.
+ */
+describe('behaviour held across the #1859 split', () => {
+  it('inferArea: each area, in the order the checks run', () => {
+    const skill = (title, extra = {}) => ({ title, ...extra });
+    expect(inferArea(skill('Secure identity with Entra'))).toBe('Security');
+    expect(inferArea(skill('x', { display_subjects: ['Compliance'] }))).toBe('Security');
+    expect(inferArea(skill('Configure Active Directory'))).toBe('Security');
+    expect(inferArea(skill('Build a Power Apps canvas app'))).toBe('AI Business');
+    expect(inferArea(skill('x', { display_products: ['Copilot Studio'] }))).toBe('AI Business');
+    expect(inferArea(skill('Monitor workloads'))).toBe('Operations');
+    expect(inferArea(skill('Do a management task'))).toBe('Operations');
+    expect(inferArea(skill('Deploy to Kubernetes'))).toBe('Containers');
+    expect(inferArea(skill('Implement a SQL database'))).toBe('Data');
+    expect(inferArea(skill('Build in Microsoft Fabric'))).toBe('Data');
+    expect(inferArea(skill('Automate with GitHub'))).toBe('DevTools');
+    expect(inferArea(skill('Write C# code'))).toBe('DevTools');
+    expect(inferArea(skill('x', { display_subjects: ['Business applications'] }))).toBe(
+      'AI Business'
+    );
+    expect(inferArea(skill('Configure storage accounts'))).toBe('Storage');
+    expect(inferArea(skill('Configure a virtual network'))).toBe('Networking');
+    expect(inferArea(skill('Create an AI agent'))).toBe('AI');
+    // Security is checked first, so it wins over a later match.
+    expect(inferArea(skill('Kubernetes security baseline'))).toBe('Security');
+  });
+
+  const none = { byCode: new Map(), byTitle: new Map() };
+
+  it('buildCertificationFromSources: every default a new certification gets, per level', () => {
+    const api = (title, extra = {}) => ({
+      title: `Microsoft Certified: ${title}`,
+      url: `/credentials/certifications/${title.toLowerCase().replace(/\s+/g, '-')}/`,
+      ...extra,
+    });
+    const indexes = (code, result) => ({ byCode: new Map([[code, result]]), byTitle: new Map() });
+
+    expect(
+      buildCertificationFromSources(
+        { code: 'AZ-900', title: 'Azure Fundamentals' },
+        indexes(
+          'AZ-900',
+          api('Azure Fundamentals', { display_subjects: ['a', 'b', 'c', 'd', 'e'] })
+        ),
+        none
+      )
+    ).toEqual({
+      id: 'az-900',
+      slug: 'azure-fundamentals',
+      code: 'AZ-900',
+      officialCode: 'AZ-900',
+      title: 'Microsoft Certified: Azure Fundamentals',
+      level: 'Fundamentals',
+      status: 'active',
+      description: 'Azure Fundamentals validates role-based Microsoft cloud skills.',
+      longDescription:
+        'Azure Fundamentals validates skills for Microsoft cloud and AI workloads using official Microsoft certification requirements.',
+      topics: ['a', 'b', 'c', 'd'],
+      hours: 10,
+      prepTime: '~4 weeks',
+      successRate: null,
+      learnUrl: 'https://learn.microsoft.com/en-us/credentials/certifications/azure-fundamentals/',
+      studyGuideUrl:
+        'https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-900',
+      practiceUrl:
+        'https://learn.microsoft.com/en-us/credentials/certifications/practice-assessments-for-microsoft-certifications#examid=az-900',
+      modules: [],
+      appliedSkills: [],
+      prerequisites: 'Review the official Microsoft Learn certification page for prerequisites.',
+      nextCerts: [],
+    });
+
+    const expert = buildCertificationFromSources(
+      { code: 'AZ-305', title: 'Azure Solutions Architect Expert (beta)' },
+      indexes('AZ-305', api('Azure Solutions Architect Expert', { display_products: ['p'] })),
+      none
+    );
+    expect(expert).toMatchObject({
+      level: 'Expert',
+      status: 'beta',
+      hours: 60,
+      prepTime: '~10 weeks',
+      topics: ['p'],
+    });
+
+    const associate = buildCertificationFromSources(
+      { code: 'AZ-104', title: 'Azure Administrator Associate' },
+      indexes('AZ-104', api('Azure Administrator Associate')),
+      none
+    );
+    expect(associate).toMatchObject({
+      level: 'Associate',
+      hours: 35,
+      prepTime: '~6 weeks',
+      topics: ['Azure Administrator Associate'],
+    });
+  });
+
+  it('buildCertificationFromSources: a known certification keeps every field the file has', () => {
+    const stored = {
+      id: 'kept-id',
+      slug: 'kept-slug',
+      code: 'AZ-104',
+      title: 'Kept title',
+      level: 'Specialty',
+      status: 'expiring',
+      expiryDate: '2026-12-31',
+      featured: true,
+      retiredDate: '2027-01-01',
+      replacedBy: 'az-105',
+      betaEndDate: '2026-01-01',
+      betaDiscount: '80%',
+      gaDate: '2026-02-01',
+      statusReadDate: '2026-10-12',
+      availableDate: '2026-10-16',
+      description: 'd',
+      longDescription: 'ld',
+      topics: ['t'],
+      hours: 1,
+      prepTime: 'p',
+      successRate: 0.5,
+      learnUrl: 'https://example.test/learn',
+      studyGuideUrl: 'https://example.test/guide',
+      practiceUrl: 'https://example.test/practice',
+      modules: ['m'],
+      appliedSkills: ['s'],
+      prerequisites: 'pre',
+      nextCerts: ['n'],
+    };
+    const existing = { byCode: new Map([['AZ-104', stored]]), byTitle: new Map() };
+    const { title: _omit, ...rest } = stored;
+    const built = buildCertificationFromSources(
+      { code: 'AZ-104', title: 'Poster title' },
+      none,
+      existing
+    );
+    expect(built).toEqual({ ...rest, title: 'Kept title', officialCode: 'AZ-104' });
+    // The file is written with JSON.stringify, so the order of the keys is
+    // the order of the lines in the catalogue, and a reorder is a noisy diff.
+    expect(Object.keys(built)).toEqual([
+      'id',
+      'slug',
+      'code',
+      'officialCode',
+      'title',
+      'level',
+      'status',
+      'featured',
+      'retiredDate',
+      'expiryDate',
+      'replacedBy',
+      'betaEndDate',
+      'betaDiscount',
+      'gaDate',
+      'statusReadDate',
+      'availableDate',
+      'description',
+      'longDescription',
+      'topics',
+      'hours',
+      'prepTime',
+      'successRate',
+      'learnUrl',
+      'studyGuideUrl',
+      'practiceUrl',
+      'modules',
+      'appliedSkills',
+      'prerequisites',
+      'nextCerts',
+    ]);
+  });
+
+  it('buildCatalogue: what an applied skill’s detail page says about its lifecycle', async () => {
+    const result = (slug, title) => ({
+      url: `/credentials/applied-credentials/${slug}/`,
+      title: `Microsoft Applied Skills: ${title}`,
+      uid: `applied.${slug}`,
+    });
+    const pages = {
+      'retiring-skill':
+        '<h2>Overview</h2><p>Retiring overview.</p></section>This credential will retire on March 31, 2027',
+      'current-skill': '<h2>Overview</h2><p>Current overview.</p></section>',
+    };
+    const out = await buildCatalogue({
+      existingSkills: [],
+      existingCertifications: [],
+      sources: {
+        browseResults: [
+          result('retiring-skill', 'Retiring skill'),
+          result('current-skill', 'Current skill'),
+          { ...result('silent-skill', 'Silent skill'), display_levels: ['Advanced'] },
+        ],
+        appliedPosterText: '',
+        certificationApiResults: [],
+        posterCertificationEntries: [],
+      },
+      fetchImpl: async (url) => {
+        const slug = Object.keys(pages).find((key) => url.includes(key));
+        return slug ? okHtml(pages[slug]) : failed(404);
+      },
+    });
+    expect(out.nextSkills).toEqual([
+      {
+        id: 'current-skill',
+        slug: 'current-skill',
+        code: 'APL-CS',
+        officialCode: 'applied.current-skill',
+        title: 'Current skill',
+        area: 'AI',
+        level: 'Intermediate',
+        status: 'active',
+        expiryDate: undefined,
+        description: 'Current overview.',
+        learnUrl:
+          'https://learn.microsoft.com/en-us/credentials/applied-credentials/current-skill/',
+      },
+      {
+        id: 'retiring-skill',
+        slug: 'retiring-skill',
+        code: 'APL-RS',
+        officialCode: 'applied.retiring-skill',
+        title: 'Retiring skill',
+        area: 'AI',
+        level: 'Intermediate',
+        status: 'expiring',
+        expiryDate: '2027-03-31',
+        description: 'Retiring overview.',
+        learnUrl:
+          'https://learn.microsoft.com/en-us/credentials/applied-credentials/retiring-skill/',
+      },
+      {
+        id: 'silent-skill',
+        slug: 'silent-skill',
+        code: 'APL-SS',
+        officialCode: 'applied.silent-skill',
+        title: 'Silent skill',
+        area: 'AI',
+        level: 'Advanced',
+        status: 'active',
+        expiryDate: undefined,
+        description: 'Validate hands-on skills for Silent skill.',
+        learnUrl: 'https://learn.microsoft.com/en-us/credentials/applied-credentials/silent-skill/',
+      },
+    ]);
+    expect(Object.keys(out.nextSkills[0])).toEqual([
+      'id',
+      'slug',
+      'code',
+      'officialCode',
+      'title',
+      'area',
+      'level',
+      'status',
+      'expiryDate',
+      'description',
+      'learnUrl',
+    ]);
+    expect(out.disagreements).toEqual([]);
   });
 });

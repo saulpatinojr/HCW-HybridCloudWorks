@@ -17,7 +17,12 @@
  * @vitest-environment node
  */
 import { describe, it, expect } from 'vitest';
-import { CANCELLED_REQUEST, decideEmptiness, parseOptions } from './audit-published-pages.mjs';
+import {
+  CANCELLED_REQUEST,
+  decideEmptiness,
+  judgeRecord,
+  parseOptions,
+} from './audit-published-pages.mjs';
 
 const COPY = ['No episodes available yet.'];
 
@@ -115,5 +120,116 @@ describe('CANCELLED_REQUEST', () => {
     ]) {
       expect(CANCELLED_REQUEST.test(e)).toBe(false);
     }
+  });
+});
+
+// What a crawled page becomes: findings and a verdict. This lived inside the
+// crawler's page function until #1859 moved it out to meet the linter's
+// complexity limit; these hold every finding, in the order it is written.
+describe('judgeRecord', () => {
+  const clean = (extra = {}) => ({
+    path: '/azure',
+    provider: 'azure',
+    status: 200,
+    consoleErrors: [],
+    pageErrors: [],
+    failedRequests: [],
+    apiFailures: [],
+    title: 'Azure | Hybrid Cloud Works',
+    ogTitle: 'Azure',
+    themeClass: 'theme-azure',
+    mainChars: 2000,
+    emptyCopy: [],
+    brokenImages: [],
+    media: [],
+    notes: [],
+    acceptedFailures: 0,
+    findings: [],
+    verdict: 'works',
+    ...extra,
+  });
+
+  it('passes a clean page through decideEmptiness', () => {
+    expect(judgeRecord(clean())).toMatchObject({ verdict: 'works', findings: [], notes: [] });
+    expect(judgeRecord(clean({ mainChars: 10 }))).toMatchObject({
+      verdict: 'empty',
+      findings: ['thin main region: 10 chars'],
+    });
+    expect(judgeRecord(clean({ emptyCopy: ['Coming Soon'] }))).toMatchObject({
+      verdict: 'works',
+      notes: ['a widget shows empty-state copy: Coming Soon'],
+    });
+  });
+
+  it('writes every finding, in order, and calls the page a defect', () => {
+    const record = judgeRecord(
+      clean({
+        status: 500,
+        pageErrors: ['x'],
+        consoleErrors: [
+          'Minified React error #418',
+          'Failed to load resource: 404',
+          'Failed to load resource: 404',
+          'Failed to load resource: 500',
+          'something else',
+        ],
+        acceptedFailures: 1,
+        apiFailures: [{ url: 'https://api.example/public/feed?x=1', status: 503 }],
+        failedRequests: [{}, {}],
+        title: 'Hybrid Cloud Works',
+        ogTitle: 'GitHub',
+        themeClass: 'theme-github',
+        brokenImages: ['/a.png'],
+        media: [
+          { url: 'a', status: 200 },
+          { url: 'b', status: 206 },
+          { url: 'c', status: 404 },
+          { url: 'd', status: 0 },
+        ],
+      })
+    );
+    expect(record.verdict).toBe('defect');
+    expect(record.consoleClasses).toEqual([
+      'react-hydration-418',
+      'network-failed',
+      'console-other',
+    ]);
+    expect(record.findings).toEqual([
+      'http 500',
+      'page errors: 1',
+      'console react-hydration-418: 1',
+      'console network-failed: 2',
+      'console console-other: 1',
+      'API failures: /public/feed→503',
+      'failed requests: 2',
+      'title lacks provider name: "Hybrid Cloud Works"',
+      'og:title lacks provider name: "GitHub"',
+      'theme class theme-github on a azure URL',
+      'broken images: 1',
+      'media not served: 404,0',
+    ]);
+  });
+
+  it('says "no response" when there was no document, and drops lines an accepted failure explains', () => {
+    const record = judgeRecord(
+      clean({
+        status: null,
+        consoleErrors: ['Failed to load resource: 404'],
+        acceptedFailures: 3,
+      })
+    );
+    expect(record.findings).toEqual(['no response']);
+    expect(record.consoleClasses).toEqual([]);
+  });
+
+  it('does not ask a blog post, an empty og:title or a page without a theme for the provider', () => {
+    const post = judgeRecord(
+      clean({ path: '/azure/blog/some-post', title: 'Some post', ogTitle: 'Some post' })
+    );
+    expect(post.findings).toEqual([]);
+    const bare = judgeRecord(clean({ ogTitle: '', themeClass: '' }));
+    expect(bare.findings).toEqual([]);
+    const noProvider = judgeRecord(clean({ provider: null, title: 'Anything' }));
+    expect(noProvider.findings).toEqual([]);
   });
 });

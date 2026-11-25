@@ -169,8 +169,7 @@ export function assertDeployConfig(env = {}) {
     const value = browserEnvValue(env, key);
     if (!ENTRA_GUID.test(value) || value.toLowerCase() === NIL_UUID) {
       problems.push(
-        `${key} must be a GUID for a deploy build; got ${value ? `"${value}"` : '(empty)'}. ` +
-          GUID_ADVICE[key]
+        `${key} must be a GUID for a deploy build; got ${value ? `"${value}"` : '(empty)'}. ${GUID_ADVICE[key]}`
       );
     }
   }
@@ -290,16 +289,15 @@ export default defineConfig(({ mode }) => {
     assertDeployConfig(env);
   }
 
-  // Log injected keys (NOT values) to help debug CI issues
-  console.log('--- CI/CD Build Config ---');
-  console.log('Mode:', mode);
-  console.log(
-    'Injected VITE keys:',
+  // Log injected keys (NOT values) to help debug CI issues.
+  const injectedKeys =
     Object.keys(defineConf)
       .map((k) => k.split('.').pop())
       .filter((k) => defineConf[`import.meta.env.${k}`] !== '""')
-      .join(', ') || 'None!'
-  );
+      .join(', ') || 'None!';
+  console.log('--- CI/CD Build Config ---');
+  console.log(`Mode: ${mode}`);
+  console.log(`Injected VITE keys: ${injectedKeys}`);
   console.log('--------------------------');
 
   return {
