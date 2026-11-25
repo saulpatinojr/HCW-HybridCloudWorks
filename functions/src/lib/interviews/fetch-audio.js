@@ -180,17 +180,9 @@ export async function fetchAudioToContainer({
   const allowHost = (hostname) => hostAllowed(hostname, suffixes);
   const interview = isObject(doc.interview) ? doc.interview : {};
   const provenance = isObject(doc.provenance) ? doc.provenance : {};
-  const recordFailure = async (error) => {
-    const sentence = storedFailure(error, 'The download failed.');
-    try {
-      await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'failed', error: sentence } });
-    } catch (writeError) {
-      log?.warn?.(`${FETCH_JOB_TYPE}: failure not recorded (${writeError?.code ?? 'unknown'})`);
-    }
-    return error;
-  };
+  const failed = { store, container, interviewId, interview, log };
   if (!allowHost(new URL(sourceUrl).hostname)) {
-    throw await recordFailure(
+    throw await recordFailure(failed, 
       new JobFailedError('That host is not on the list INTERVIEW_AUDIO_URL_HOSTS allows.', {
         code: 'HOST_NOT_ALLOWED',
         status: 422,
@@ -213,12 +205,12 @@ export async function fetchAudioToContainer({
       signal,
     });
   } catch (error) {
-    throw await recordFailure(fetchFailure(error));
+    throw await recordFailure(failed, fetchFailure(error));
   }
   const contentType = resolveAudioType(fetched.response, fetched.url);
   if (!contentType) {
     fetched.stream.destroy();
-    throw await recordFailure(
+    throw await recordFailure(failed, 
       new JobFailedError('The URL did not answer with an mp3, m4a or wav file.', {
         code: 'UNSUPPORTED_TYPE',
         status: 415,
@@ -231,43 +223,9 @@ export async function fetchAudioToContainer({
   // expires under the lifecycle rule in any case.
   const path = audioBlobPath(interviewId, uploadId, AUDIO_TYPES[contentType]);
 
-  // Hash and count as the bytes are pulled through, so nothing flows until
-  // the uploader reads; the stream's own error (the cap, the deadline) ends
-  // the pipeline and the upload with it.
-  const hash = createHash('sha256');
-  let bytes = 0;
-  const counted = new Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      bytes += chunk.length;
-      callback(null, chunk);
-    },
-  });
-  let pipeError = null;
-  pipeline(fetched.stream, counted, (error) => {
-    if (error) pipeError = error;
-  });
-  const discard = () => storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path).catch(() => {});
-  try {
-    await storage.uploadBlobFromStream(INTERVIEWS_AUDIO_CONTAINER, path, counted, UPLOAD_BLOCK_BYTES, contentType);
-  } catch (error) {
-    await discard();
-    throw await recordFailure(fetchFailure(pipeError || error));
-  }
-  if (pipeError) {
-    await discard();
-    throw await recordFailure(fetchFailure(pipeError));
-  }
-  if (bytes === 0) {
-    await discard();
-    throw await recordFailure(new JobFailedError('The URL answered with an empty file.', { code: 'AUDIO_EMPTY', status: 422 }));
-  }
+  const { bytes, sha256 } = await storeStream({ storage, failed }, fetched.stream, { path, contentType });
   const uploadedAt = now().toISOString();
-  const previous = isObject(provenance.audio) && provenance.audio.path ? provenance.audio : null;
-  const superseded = [
-    ...(previous ? [{ container: previous.container || INTERVIEWS_AUDIO_CONTAINER, path: previous.path, uploadedAt: previous.uploadedAt ?? null }] : []),
-    ...(Array.isArray(previous?.superseded) ? previous.superseded : []),
-  ];
+  const superseded = supersededBy(provenance);
   await store.patchDoc(container, interviewId, {
     provenance: {
       ...provenance,
@@ -276,7 +234,7 @@ export async function fetchAudioToContainer({
         container: INTERVIEWS_AUDIO_CONTAINER,
         path,
         bytes,
-        sha256: hash.digest('hex'),
+        sha256,
         contentType,
         durationSec: null,
         uploadedAt,
@@ -288,6 +246,64 @@ export async function fetchAudioToContainer({
   });
   log?.log?.(`${FETCH_JOB_TYPE}: ${bytes} B ${contentType} in ${Date.now() - startedAt} ms`);
   return { interviewId, bytes, contentType, path };
+}
+
+/**
+ * Stream the download into its blob. Hash and count as the bytes are pulled
+ * through, so nothing flows until the uploader reads; the stream's own error
+ * (the cap, the deadline) ends the pipeline and the upload with it. A failed
+ * or empty upload deletes the blob and records the failure.
+ */
+async function storeStream({ storage, failed }, source, { path, contentType }) {
+  const hash = createHash('sha256');
+  let bytes = 0;
+  const counted = new Transform({
+    transform(chunk, _encoding, callback) {
+      hash.update(chunk);
+      bytes += chunk.length;
+      callback(null, chunk);
+    },
+  });
+  let pipeError = null;
+  pipeline(source, counted, (error) => {
+    if (error) pipeError = error;
+  });
+  const discard = () => storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path).catch(() => {});
+  try {
+    await storage.uploadBlobFromStream(INTERVIEWS_AUDIO_CONTAINER, path, counted, UPLOAD_BLOCK_BYTES, contentType);
+  } catch (error) {
+    await discard();
+    throw await recordFailure(failed, fetchFailure(pipeError || error));
+  }
+  if (pipeError) {
+    await discard();
+    throw await recordFailure(failed, fetchFailure(pipeError));
+  }
+  if (bytes === 0) {
+    await discard();
+    throw await recordFailure(failed, new JobFailedError('The URL answered with an empty file.', { code: 'AUDIO_EMPTY', status: 422 }));
+  }
+  return { bytes, sha256: hash.digest('hex') };
+}
+
+/** Write the failure on the document in a sentence the job may store; answers the error for the caller to throw. */
+async function recordFailure({ store, container, interviewId, interview, log }, error) {
+  const sentence = storedFailure(error, 'The download failed.');
+  try {
+    await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'failed', error: sentence } });
+  } catch (writeError) {
+    log?.warn?.(`${FETCH_JOB_TYPE}: failure not recorded (${writeError?.code ?? 'unknown'})`);
+  }
+  return error;
+}
+
+/** The recordings this download replaces: the one the document pointed at, and those it had replaced. */
+function supersededBy(provenance) {
+  const previous = isObject(provenance.audio) && provenance.audio.path ? provenance.audio : null;
+  return [
+    ...(previous ? [{ container: previous.container || INTERVIEWS_AUDIO_CONTAINER, path: previous.path, uploadedAt: previous.uploadedAt ?? null }] : []),
+    ...(Array.isArray(previous?.superseded) ? previous.superseded : []),
+  ];
 }
 
 /** The guard's or the pipe's failure as a sentence the job may store: its code, never its words. */
