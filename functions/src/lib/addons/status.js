@@ -49,10 +49,11 @@
 import { readSetting } from '../http/read-setting.js';
 import { createMinuteCache, jsonResponse, MINUTE_CACHE_SECONDS } from '../labs/minute-cache.js';
 import { addonEntry, isKnownAddon } from './registry.js';
+import { failureReason, readHealth } from './health.js';
+
+export { ADDON_HEALTH_MAX_BYTES, ADDON_TIMEOUT_MS, projectHealth } from './health.js';
 
 export const ADDON_STATUS_CACHE_SECONDS = MINUTE_CACHE_SECONDS;
-/** An AddOn that has not answered its health read in five seconds is reported unreachable, not waited for. */
-export const ADDON_TIMEOUT_MS = 5_000;
 /** The cache document id for one AddOn's status. */
 export const addonStatusCacheId = (id) => `addons:${id}:status`;
 /** The discriminator written on every cached document. */
@@ -67,13 +68,6 @@ export const ADDON_STATUS_FIELDS = Object.freeze([
   'capabilities',
   'asOf',
 ]);
-
-// The whole string, not a prefix: a semver core with an optional pre-release and build. The only length bound is
-// the whole string's (SHORT_STRING_MAX), so a long but valid pre-release is accepted and nothing past the version
-// can ride into the cache and out to every status caller.
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const SHORT_STRING_MAX = 40;
-const CAPABILITIES_MAX = 20;
 
 /**
  * The proxy's configuration for one AddOn, or null when it has none. Only
@@ -106,126 +100,35 @@ export function readAddonConfig(env = process.env, id) {
 /** The setting is set but unusable — worth one warning line, by name. */
 const hasAddonUrl = (env, id) => Boolean(readSetting(env, addonEntry(id)?.setting));
 
-/** A short string, or null: what `edition` may be. */
-const shortString = (value) =>
-  typeof value === 'string' && value.length > 0 && value.length <= SHORT_STRING_MAX ? value : null;
-
-/** What can be wrong with a health body, by code: sentences this module wrote, so a log line may carry them. */
-const HEALTH_BODY_FAULTS = {
-  HEALTH_NOT_OK: 'the health body did not say ok',
-  HEALTH_NO_VERSION: 'the health body carried no semver version',
-  HEALTH_TOO_LARGE: 'the health body was too large',
-};
-
-/** A health body fault as an error that carries its code, so its sentence is looked up and never read back. */
-const healthBodyFault = (code) => Object.assign(new Error(HEALTH_BODY_FAULTS[code]), { code });
-
 /**
- * The three fields the projection copies from a health body, each checked
- * for shape. Throws when the body is not the documented health envelope, so
- * the caller reports unreachable rather than guessing at fields.
+ * The AddOn's configuration when it can be used, or null. A setting that is
+ * filled in but not an https URL gets one warning line, by setting name.
  */
-export function projectHealth(body) {
-  if (!body || typeof body !== 'object' || body.ok !== true) {
-    throw healthBodyFault('HEALTH_NOT_OK');
+function usableConfig(env, id, context) {
+  const config = readAddonConfig(env, id);
+  if (!config && hasAddonUrl(env, id)) {
+    context?.warn?.(
+      `addons-status: ${addonEntry(id).setting} is not an https URL; reporting its add-on unconfigured`
+    );
   }
-  const version =
-    typeof body.version === 'string' && body.version.length <= SHORT_STRING_MAX && SEMVER.test(body.version)
-      ? body.version
-      : null;
-  if (!version) throw healthBodyFault('HEALTH_NO_VERSION');
-  const capabilities = Array.isArray(body.capabilities)
-    ? body.capabilities.filter((c) => typeof c === 'string' && c.length <= SHORT_STRING_MAX).slice(0, CAPABILITIES_MAX)
-    : [];
-  // The AddOn's own `asOf` when it is a parseable timestamp of bounded length; the caller falls back to the read time.
-  const asOf =
-    typeof body.asOf === 'string' && body.asOf.length <= SHORT_STRING_MAX && !Number.isNaN(Date.parse(body.asOf))
-      ? body.asOf
-      : null;
-  return { version, edition: shortString(body.edition), capabilities, asOf };
+  return config;
 }
 
-/**
- * One GET of the AddOn's health. Throws on anything but 200, a redirect
- * included: the proxy never follows one to another origin.
- */
-/** The most a health body may be; the envelope is a few hundred bytes, so this is generous and still a bound. */
-export const ADDON_HEALTH_MAX_BYTES = 16 * 1024;
-
-/**
- * The response body as text, read no further than `max` bytes: the stream is cancelled the moment the count passes
- * it, so a faulty endpoint cannot make this Function App buffer an unbounded body. A response without a readable
- * stream (a test stand-in) is read whole and then measured.
- */
-async function readBoundedText(response, max) {
-  const body = response.body;
-  if (!body || typeof body.getReader !== 'function') {
-    const text = await response.text();
-    if (text.length > max) throw healthBodyFault('HEALTH_TOO_LARGE');
-    return text;
+/** The minute cache for one id from `caches`, created and kept there on first use. */
+function minuteCacheFor(caches, { store, now }, id) {
+  if (!caches.has(id)) {
+    caches.set(
+      id,
+      createMinuteCache({
+        store,
+        id: addonStatusCacheId(id),
+        kind: ADDON_STATUS_CACHE_KIND,
+        now,
+        seconds: ADDON_STATUS_CACHE_SECONDS,
+      })
+    );
   }
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let received = 0;
-  let text = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.byteLength;
-    if (received > max) {
-      await reader.cancel();
-      throw healthBodyFault('HEALTH_TOO_LARGE');
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  return text + decoder.decode();
-}
-
-/**
- * Read and project the AddOn's health. One deadline (ADDON_TIMEOUT_MS) covers
- * the whole exchange, body included; the body is refused past
- * ADDON_HEALTH_MAX_BYTES, by Content-Length when the AddOn sends one and by a
- * byte count while the stream is read, before anything is parsed.
- */
-async function readHealth(fetchImpl, config) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ADDON_TIMEOUT_MS);
-  try {
-    const response = await fetchImpl(`${config.base}${config.healthPath}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      redirect: 'error',
-      signal: controller.signal,
-    });
-    if (response.status !== 200) {
-      // End the exchange before the deadline is cleared: a rejected answer's body is never read, so cancel it.
-      await response.body?.cancel?.().catch(() => {});
-      throw Object.assign(new Error(`the health read answered ${response.status}`), {
-        status: response.status,
-      });
-    }
-    const declared = Number(response.headers?.get?.('content-length'));
-    if (Number.isFinite(declared) && declared > ADDON_HEALTH_MAX_BYTES) {
-      throw healthBodyFault('HEALTH_TOO_LARGE');
-    }
-    return projectHealth(JSON.parse(await readBoundedText(response, ADDON_HEALTH_MAX_BYTES)));
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw Object.assign(new Error(`timeout after ${ADDON_TIMEOUT_MS} ms`), { code: 'FETCH_TIMEOUT' });
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Why the read failed, in words that carry no URL. */
-function failureReason(error) {
-  if (error?.code === 'FETCH_TIMEOUT') return `no answer within ${ADDON_TIMEOUT_MS / 1000} s`;
-  if (error instanceof SyntaxError) return 'the health body was not JSON';
-  if (Number.isInteger(error?.status)) return `the health read answered ${error.status}`;
-  if (Object.hasOwn(HEALTH_BODY_FAULTS, error?.code ?? '')) return HEALTH_BODY_FAULTS[error.code];
-  return 'the health read failed';
+  return caches.get(id);
 }
 
 /** The unreachable body: the full projection shape, with nothing from the AddOn. */
@@ -258,21 +161,7 @@ export function createAddonStatusHandlers({
   // and the cache document then settles both.
   const inflight = new Map();
   /** The minute cache for one id, created on first use. */
-  const cacheFor = (id) => {
-    if (!caches.has(id)) {
-      caches.set(
-        id,
-        createMinuteCache({
-          store,
-          id: addonStatusCacheId(id),
-          kind: ADDON_STATUS_CACHE_KIND,
-          now,
-          seconds: ADDON_STATUS_CACHE_SECONDS,
-        })
-      );
-    }
-    return caches.get(id);
-  };
+  const cacheFor = (id) => minuteCacheFor(caches, { store, now }, id);
 
   /**
    * The status body for one known id — the same object the route returns.
@@ -280,16 +169,8 @@ export function createAddonStatusHandlers({
    * answers unconfigured here rather than throwing.
    */
   async function readStatus(id, context) {
-    if (!isKnownAddon(id)) return { configured: false };
-    const config = readAddonConfig(env, id);
-    if (!config) {
-      if (hasAddonUrl(env, id)) {
-        context?.warn?.(
-          `addons-status: ${addonEntry(id).setting} is not an https URL; reporting its add-on unconfigured`
-        );
-      }
-      return { configured: false };
-    }
+    const config = isKnownAddon(id) ? usableConfig(env, id, context) : null;
+    if (!config) return { configured: false };
 
     const cache = cacheFor(id);
     const cached = await cache.read(context);
