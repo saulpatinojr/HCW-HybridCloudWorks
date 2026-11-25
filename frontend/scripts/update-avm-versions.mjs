@@ -63,12 +63,13 @@
  * that is not `MAJOR.MINOR.PATCH`, or whose `tag` is not `v<version>`, ends
  * the run with exit code 1 and one sentence, and nothing is written.
  *
- * TWO FILES. This one owns everything that touches the network, the
+ * THREE FILES. This one owns everything that touches the network, the
  * filesystem, Docker or the clock; avm-versions-edits.mjs owns the version
  * comparison, the registry-document validation, the text edits (the pins,
- * the versions file, the child blocks and the builder's child list), the
- * reading of the vendor stage's print-out and the summary, and is
- * re-exported here so a test imports from one place.
+ * the versions file, the child blocks and the builder's child list) and the
+ * reading of the vendor stage's print-out; avm-versions-summary.mjs owns the
+ * summary (#1845). Both are re-exported here so a test imports from one
+ * place.
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -99,12 +100,13 @@ import {
   rewritePin,
   rewriteSmokePin,
   stampVerifiedOn,
-  summarize,
   tarballUrl,
   terraformTfUrl,
 } from './avm-versions-edits.mjs';
+import { summarize } from './avm-versions-summary.mjs';
 
 export * from './avm-versions-edits.mjs';
+export * from './avm-versions-summary.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, '..');
