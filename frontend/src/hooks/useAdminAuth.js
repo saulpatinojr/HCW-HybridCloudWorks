@@ -256,6 +256,29 @@ export function clearAdminStatusCache(uid) {
 // HOOK: useAdminAuth
 // ============================================================================
 
+// Whether an admin status lists a permission. No status, or no list, is no.
+function statusHasPermission(adminStatus, permission) {
+  if (!adminStatus?.permissions || !Array.isArray(adminStatus.permissions)) {
+    return false;
+  }
+  return adminStatus.permissions.includes(permission);
+}
+
+// Whether an admin status's role is at least `role`. An unknown role on the
+// status ranks lowest; an unknown role asked for ranks above every real one.
+function statusHasRole(adminStatus, role) {
+  if (!adminStatus?.role) return false;
+  const ADMIN_ROLES = {
+    viewer: 1,
+    editor: 2,
+    publisher: 3,
+    super_admin: 4,
+  };
+  const userLevel = ADMIN_ROLES[adminStatus.role] || 0;
+  const requiredLevel = ADMIN_ROLES[role] || 999;
+  return userLevel >= requiredLevel;
+}
+
 /**
  * Hook to get current user's admin status.
  *
@@ -300,15 +323,15 @@ export function useAdminAuth() {
       setError(result.message || null);
       setAdminStatus(null);
       setCachedAdminStatus({ isAdmin: false });
-      return;
+    } else {
+      setUnknownReason(null);
+      setError(null);
+      setAdminStatus(result.status);
+      setCachedAdminStatus(result.status);
+      // A definitive answer means the session works. Re-arm the one automatic
+      // recovery so the NEXT expiry is handled as quietly as this one was.
+      markSessionRecoveryAttempted(false);
     }
-    setUnknownReason(null);
-    setError(null);
-    setAdminStatus(result.status);
-    setCachedAdminStatus(result.status);
-    // A definitive answer means the session works. Re-arm the one automatic
-    // recovery so the NEXT expiry is handled as quietly as this one was.
-    markSessionRecoveryAttempted(false);
   }, []);
 
   const runCheck = useCallback(
@@ -368,7 +391,9 @@ export function useAdminAuth() {
       setUser(entraUser);
       setError(null);
 
-      if (!entraUser) {
+      if (entraUser) {
+        await runCheckRef.current(entraUser);
+      } else {
         // User logged out
         setAdminStatus(null);
         setAccessState(ACCESS_STATE.UNKNOWN);
@@ -377,18 +402,14 @@ export function useAdminAuth() {
         clearAdminStatusCache();
         markSessionRecoveryAttempted(false);
         setAuthReady(true);
-        return;
       }
-
-      await runCheckRef.current(entraUser);
     };
 
     import('@/lib/entraAuth')
       .then(({ onAuthStateChanged }) => {
         // The effect may have been torn down while the chunk was in flight;
         // subscribing then would leak a listener with no unsubscribe path.
-        if (cancelled) return;
-        unsubscribe = onAuthStateChanged(onUser);
+        if (!cancelled) unsubscribe = onAuthStateChanged(onUser);
       })
       .catch((err) => {
         // Failing to load the auth module is not "signed out" — it is
@@ -413,30 +434,11 @@ export function useAdminAuth() {
 
   // Helper functions
   const hasPermission = useCallback(
-    (permission) => {
-      if (!adminStatus?.permissions || !Array.isArray(adminStatus.permissions)) {
-        return false;
-      }
-      return adminStatus.permissions.includes(permission);
-    },
+    (permission) => statusHasPermission(adminStatus, permission),
     [adminStatus]
   );
 
-  const hasRole = useCallback(
-    (role) => {
-      if (!adminStatus?.role) return false;
-      const ADMIN_ROLES = {
-        viewer: 1,
-        editor: 2,
-        publisher: 3,
-        super_admin: 4,
-      };
-      const userLevel = ADMIN_ROLES[adminStatus.role] || 0;
-      const requiredLevel = ADMIN_ROLES[role] || 999;
-      return userLevel >= requiredLevel;
-    },
-    [adminStatus]
-  );
+  const hasRole = useCallback((role) => statusHasRole(adminStatus, role), [adminStatus]);
 
   /** Re-run the check, ignoring the five-minute cache. The retry button. */
   const recheck = useCallback(() => runCheck(user, { force: true }), [runCheck, user]);
