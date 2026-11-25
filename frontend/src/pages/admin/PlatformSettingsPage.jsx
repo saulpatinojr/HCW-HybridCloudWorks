@@ -10,6 +10,8 @@
  *   Social automation  autoposting to Publer on a live publish
  *   Audio              podcast feeds and the Listen & Learn voice
  *   Reminders          dated things not to forget, said on Telegram by the daily check
+ *   Scheduled tasks    every job in the estate that runs on a clock, where it
+ *                      runs and what it leaves behind (read-only)
  *   Change history     every save, who made it and what it recorded — including
  *                      the Sessionize speaker id saved on Integrations
  *
@@ -36,6 +38,7 @@ import AudioTab from '@/components/admin/platform-settings/AudioTab';
 import ChangeHistoryTab from '@/components/admin/platform-settings/ChangeHistoryTab';
 import RemindersTab from '@/components/admin/platform-settings/RemindersTab';
 import TaxonomyTab from '@/components/admin/platform-settings/TaxonomyTab';
+import ScheduledTasksTab from '@/components/admin/platform-settings/ScheduledTasksTab';
 import HubTabs from '@/components/admin/HubTabs';
 
 export const TABS = Object.freeze([
@@ -46,6 +49,7 @@ export const TABS = Object.freeze([
   { id: 'social', label: 'Social automation', Component: SocialAutomationTab },
   { id: 'audio', label: 'Audio', Component: AudioTab },
   { id: 'reminders', label: 'Reminders', Component: RemindersTab },
+  { id: 'schedules', label: 'Scheduled tasks', Component: ScheduledTasksTab },
   { id: 'history', label: 'Change history', Component: ChangeHistoryTab },
 ]);
 
@@ -53,6 +57,7 @@ const HELP = [
   'All settings is the map: every configuration document the platform reads, where it is stored, where it is edited, and a link. Nothing is edited on that tab.',
   'Content defaults, Content types & origins, Social automation and Audio each edit one group of documents. A save is checked against the exact shape the code reads, replaces the document whole, and is listed under Change history.',
   'Settings that belong to another hub — newsletter, AI Engine, Sessionize, gallery folders, Plaud, Labs — are edited there and listed here, so the index is complete without moving them.',
+  'Scheduled tasks lists every job in the estate that runs on a clock (GitHub Actions, the Function App, the lab host and the daily Claude session), with its schedule in plain words and a link to where it lives. Nothing is edited there.',
   'Change history lists every save with who made it and what it recorded (counts and choices, never contents), including the Sessionize speaker id saved on Integrations.',
 ];
 

@@ -13,7 +13,7 @@
  * A hardcoded list of "providers that have static content" in the build script
  * would answer that question and go stale the day someone adds or removes a
  * blueprint. Exporting the answer as data does not. `sitemapRoutes` in
- * frontend/scripts/prerender.mjs imports every `architecture-blueprints.js`
+ * frontend/scripts/prerender-routes.mjs imports every `architecture-blueprints.js`
  * under src/pages and counts what it exports; this one is empty, so
  * `/vmware/architecture-designs` is dropped from `sitemap.xml` for exactly as
  * long as it stays empty. Add a blueprint here and the URL comes back with no

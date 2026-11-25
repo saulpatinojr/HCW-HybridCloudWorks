@@ -638,7 +638,7 @@ jobs:
       #   - `/` must answer 200 with the page markup.
       #   - `/about` must answer 200 and be the PRE-BUILT page: its body must
       #     carry `data-prerendered-route="/about"`, the mark the pre-render
-      #     step puts on every page it writes (scripts/prerender.mjs). The
+      #     step puts on every page it writes (scripts/prerender-html.mjs). The
       #     build step above already requires dist/about/index.html. This
       #     probed `/news` until #1613, which is not a page the site builds;
       #     it only answered 200 because the old catch-all sent the app to

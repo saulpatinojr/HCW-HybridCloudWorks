@@ -67,4 +67,41 @@ describe('HubTabs', () => {
     fireEvent.click(two);
     expect(onSelect).toHaveBeenLastCalledWith('two');
   });
+
+  it('lays the tabs out as a grid, and marks the selected tab by its fill', () => {
+    render(<Harness active="two" />);
+    const tablist = screen.getByRole('tablist');
+    // No sideways scroll strip: a grid of equal cells keeps every tab on screen.
+    expect(tablist.className).not.toContain('overflow-x-auto');
+    expect(tablist.className).toContain('grid-cols-[repeat(auto-fit,');
+    // The tabs are the grid's own cells, so the columns line up on every row.
+    expect([...tablist.children].every((child) => child.getAttribute('role') === 'tab')).toBe(true);
+    const [one, two] = screen.getAllByRole('tab');
+    expect(two.className).toContain('bg-primary');
+    expect(one.className).not.toContain('bg-primary');
+    // Every tab has a visible keyboard focus ring.
+    for (const tab of screen.getAllByRole('tab')) {
+      expect(tab.className).toContain('focus-visible:outline-2');
+    }
+  });
+
+  it('follows the selection it is given, as a ?tab= link changes it', () => {
+    const { rerender } = render(<Harness active="one" />);
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('One');
+    rerender(<Harness active="three" />);
+    expect(screen.getByRole('tab', { selected: true }).textContent).toBe('Three');
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe('demo-tab-three');
+  });
+
+  it('wraps ArrowLeft from the first tab to the last, and Home goes back', () => {
+    const onSelect = vi.fn();
+    render(<Harness active="one" onSelect={onSelect} />);
+    const [one, , three] = screen.getAllByRole('tab');
+    fireEvent.keyDown(one, { key: 'ArrowLeft' });
+    expect(onSelect).toHaveBeenLastCalledWith('three');
+    expect(document.activeElement).toBe(three);
+    fireEvent.keyDown(three, { key: 'Home' });
+    expect(onSelect).toHaveBeenLastCalledWith('one');
+    expect(document.activeElement).toBe(one);
+  });
 });
