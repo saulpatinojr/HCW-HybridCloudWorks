@@ -3,7 +3,7 @@ import { DOCKER_GUIDE_PAGE_PATH, DOCKERFILE_PATH, README_PATH, SANDBOX_DOCKERFIL
 import { amd64EntryOf, imageEnv, parseImageRef, resolveTag } from './lab-pin-registry.mjs';
 import { applyBumps, readEnv, replaceEvery, replaceFrom, replaceOne, setCheckedOn, setEnvValue } from './lab-pin-edits.mjs';
 import { planAnsibleCore } from './lab-pin-ansible-core.mjs';
-import { compareVersions } from '../lab-pins-upstream.mjs';
+import { compareVersions } from './lab-pins-versions.mjs';
 
 // ── Lab image base (versions.env and its FROM lines) ───────────────────────
 

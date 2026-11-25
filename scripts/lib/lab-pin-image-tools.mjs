@@ -3,7 +3,8 @@ import { README_PATH, VERSIONS_ENV_PATH } from './lab-pin-constants.mjs';
 import { sumsLine } from './lab-pin-indexes.mjs';
 import { applyBumps, readEnv, replaceOne } from './lab-pin-edits.mjs';
 import { envEditOf, lineOf, STABLE_VERSION } from './lab-pin-ansible-core.mjs';
-import { compareVersions, coreVersion, newest, newestAptVersion, newestGitHubRelease, newestHashicorp } from '../lab-pins-upstream.mjs';
+import { compareVersions, coreVersion, newest } from './lab-pins-versions.mjs';
+import { newestAptVersion, newestGitHubRelease, newestHashicorp } from './lab-pins-fetch.mjs';
 
 // ── Lab image tools, providers and Azure CLI (image-tools) ────────────────
 

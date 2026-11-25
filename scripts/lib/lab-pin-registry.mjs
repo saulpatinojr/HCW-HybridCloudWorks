@@ -1,6 +1,6 @@
 /** Reading container registries for the lab pin planners: a tag's digest, checked two ways (see lab-pin-bumps.mjs). */
 import { sha256Hex, USER_AGENT } from './lab-pin-constants.mjs';
-import { fetchRetrying, JSON_ACCEPT, parseJsonFrom } from '../lab-pins-upstream.mjs';
+import { fetchRetrying, JSON_ACCEPT, parseJsonFrom } from './lab-pins-fetch.mjs';
 
 // ── HTTP, memoised per run ─────────────────────────────────────────────────
 
@@ -9,7 +9,7 @@ import { fetchRetrying, JSON_ACCEPT, parseJsonFrom } from '../lab-pins-upstream.
  * Docker Packages index serves four), so every bump in one pull request rests
  * on the same reading. A read that fails with a server error or a 406 is
  * tried again, unchanged, before it counts as failed (fetchRetrying in
- * lab-pins-upstream.mjs); `retry` is for the tests, which do not sleep.
+ * lab-pins-fetch.mjs); `retry` is for the tests, which do not sleep.
  */
 export function makeHttp(fetchImpl = fetch, { githubToken, retry } = {}) {
   const cache = new Map();

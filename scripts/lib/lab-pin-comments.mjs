@@ -34,7 +34,7 @@
  *
  * Text only, like the bump itself: nothing here parses YAML or shell.
  */
-import { coreVersion } from '../lab-pins-upstream.mjs';
+import { coreVersion } from './lab-pins-versions.mjs';
 import { CADDY_TEST_PATH, setYamlScalar } from './lab-pin-bumps.mjs';
 
 /** Files whose whole set of comments counts as beside the pin, not only the lines directly above it. */

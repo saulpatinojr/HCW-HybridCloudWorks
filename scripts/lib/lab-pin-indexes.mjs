@@ -1,6 +1,6 @@
 /** Reading package indexes and checksum files for the lab pin planners (see lab-pin-bumps.mjs). */
 import { escapeRe, sha256Hex } from './lab-pin-constants.mjs';
-import { coreVersion } from '../lab-pins-upstream.mjs';
+import { coreVersion } from './lab-pins-versions.mjs';
 
 // ── Package indexes and checksum files ─────────────────────────────────────
 

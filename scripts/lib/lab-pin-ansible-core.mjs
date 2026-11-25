@@ -1,7 +1,7 @@
 /** ansible-core's newest release in its line, with every wheel's hash and its dependencies checked (see lab-pin-bumps.mjs). */
 import { escapeRe, VERSIONS_ENV_PATH } from './lab-pin-constants.mjs';
 import { replaceOne, setEnvValue } from './lab-pin-edits.mjs';
-import { compareVersions, newest } from '../lab-pins-upstream.mjs';
+import { compareVersions, newest } from './lab-pins-versions.mjs';
 
 // ── ansible-core (versions.env's ANSIBLE_CORE_* lines) ─────────────────────
 
