@@ -376,6 +376,35 @@
 # launcher from this role's file. The modules go in before the helper that
 # imports them, so a run between two tasks never finds a new helper without
 # them.
+# The launcher refuses to run if a folder above the modules is not root's or
+# can be written by a group or other users. Check those folders here first, so
+# a host laid out that way stops this run with a clear message instead of
+# installing modules the timer would then refuse to load.
+- name: Read the folders above hcw-coder-automation's modules
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: [/, /usr, /usr/local, /usr/local/lib]
+  register: coder_lab_parent_dirs
+
+- name: Check the folders above hcw-coder-automation's modules are root's and writable by root alone
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+      - not item.stat.islnk
+      - item.stat.uid == 0
+      - not item.stat.wgrp
+      - not item.stat.woth
+    fail_msg: >-
+      {{ item.item }} must be a real folder owned by root and not writable by a
+      group or other users, or the root helpers refuse to run. Fix its owner or
+      mode (for example chmod g-w,o-w and chown root) and run bootstrap.sh again.
+    quiet: true
+  loop: "{{ coder_lab_parent_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 - name: Create the directories for hcw-coder-automation's modules, writable by root only
   ansible.builtin.file:
     path: "{{ item }}"

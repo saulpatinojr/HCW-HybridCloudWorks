@@ -185,6 +185,41 @@
 # The paths are written here, not as variables, because both scripts name
 # them as constants. The modules go in before the script that imports them,
 # so a timer run between two tasks never finds a new script without them.
+# The launcher refuses to run if a folder above the modules is not root's or
+# can be written by a group or other users. Check those folders here first, so
+# a host laid out that way stops this run with a clear message instead of
+# installing modules the timer would then refuse to load.
+- name: Read the folders above the check's modules
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: [/, /usr, /usr/local, /usr/local/lib]
+  register: portainer_lab_parent_dirs
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Check the folders above the check's modules are root's and writable by root alone
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+      - not item.stat.islnk
+      - item.stat.uid == 0
+      - not item.stat.wgrp
+      - not item.stat.woth
+    fail_msg: >-
+      {{ item.item }} must be a real folder owned by root and not writable by a
+      group or other users, or the root helpers refuse to run. Fix its owner or
+      mode (for example chmod g-w,o-w and chown root) and run bootstrap.sh again.
+    quiet: true
+  loop: "{{ portainer_lab_parent_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
 - name: Create the directories for the check's modules, writable by root only
   ansible.builtin.file:
     path: "{{ item }}"
