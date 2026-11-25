@@ -935,14 +935,13 @@ so it is recorded here, where every session reads it.
     merging session's to fix in a follow-up pull request, or to hand to the
     owner with its page and the reason to choose.
 
-  Copilot review is meant to be requested automatically (owner,
-  2026-11-25). Whichever setting does it, GitHub asks Copilot only when the
-  author has Copilot code review and AI credits, so a missing review is
-  expected some days; the 15-minute and never-requested rule above covers
-  it. As read from the API on 2026-11-25, the `Default` ruleset (20680114)
-  carries no `copilot_code_review` rule; if it is put back there, its
-  parameters would be `review_on_push: true` and
-  `review_draft_pull_requests: true`.
+  The owner put the `copilot_code_review` rule back on the `Default` ruleset
+  (20680114) on 2026-11-25; read back from the API that day (`updated_at`
+  16:22 UTC), it has `review_on_push: true` and
+  `review_draft_pull_requests: true`. GitHub asks Copilot through it only
+  when the author has Copilot code review and AI credits, so a missing
+  review is expected some days; the 15-minute and never-requested rule
+  above covers it.
 - **Every review conversation is resolved before the merge, including the
   ones that ask for nothing.** Owner instruction 2026-09-06, after a merge
   was blocked with `A conversation must be resolved before this pull request
