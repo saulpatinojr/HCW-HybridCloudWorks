@@ -16,6 +16,21 @@ portainer_published_port: "127.0.0.1:{{ portainer_https_port }}:9443"
 # paths part.
 portainer_stale_helper_source: "{{ role_path }}/../labs_agent/files/hcw-docker-proxy-stale"
 portainer_stale_helper_dest: /usr/local/libexec/hcw-docker-proxy-stale
+# The launcher that checks a root helper's modules before importing them
+# (#1845). It lives in the coder role, whose hcw-coder-automation loads it
+# too; this role installs that same file to the same path, as above, and
+# tests/hcw-portainer-check.test.py fails if the source moves.
+portainer_launcher_source: "{{ role_path }}/../coder/files/hcw-lab-python-launch.py"
+# hcw-portainer-check's modules, every file in files/hcw_portainer_check/;
+# tests/hcw-portainer-check.test.py fails if this list and the folder part.
+portainer_helper_modules:
+  - __init__.py
+  - api.py
+  - cli.py
+  - common.py
+  - delivery.py
+  - reads.py
+  - report.py
 # What the run says about the first-administrator window, by state.
 portainer_advice_timed_out: >-
   Its first-administrator window has closed (Administrator initialization timeout): if no

@@ -40,10 +40,10 @@ distlib launcher, because the helper starts it under a minimal environment
 that cmd.exe cannot start in.
 """
 
+import ast
 import datetime
 import http.server
-import importlib.machinery
-import importlib.util
+import importlib
 import io
 import json
 import os
@@ -73,6 +73,13 @@ ANSIBLE = ROLE.parent.parent
 LAB_HOST = ANSIBLE.parent
 REPO = LAB_HOST.parent
 HELPER = ROLE / "files" / "hcw-portainer-check"
+# The check's modules (#1845), the launcher that checks them before they are
+# imported (the coder role's file, installed by this role too), and where the
+# role installs each.
+PACKAGE_DIR = ROLE / "files" / "hcw_portainer_check"
+LAUNCHER_SOURCE = ANSIBLE / "roles" / "coder" / "files" / "hcw-lab-python-launch.py"
+INSTALLED_LAUNCHER = "/usr/local/libexec/hcw-lab-python-launch"
+LIB_DIR = "/usr/local/lib/hcw-lab/portainer-check"
 UTC = datetime.timezone.utc
 DAY = datetime.timedelta(days=1)
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -133,23 +140,88 @@ def now():
     return datetime.datetime.now(UTC)
 
 
+def constants_of(text):
+    """The top-level NAME = "string" assignments of a Python source, as a dict."""
+    return {target.id: node.value.value for node in ast.parse(text).body if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)}
+
+
+def stage_package(top):
+    """Install a copy of the modules under top, at the role's path, as the role does: directories 0755, files 0644."""
+    target = pathlib.Path(str(top) + LIB_DIR) / PACKAGE_DIR.name
+    target.mkdir(parents=True)
+    for source in PACKAGE_DIR.glob("*.py"):
+        shutil.copyfile(source, target / source.name)
+        (target / source.name).chmod(0o644)
+    directory = target
+    while directory != pathlib.Path(top):
+        directory.chmod(0o755)
+        directory = directory.parent
+
+
+# The script as the unit runs it, with one change: its run_path(LAUNCHER) is
+# answered with this checkout's launcher, which then checks and imports the
+# copy stage_package installed under the scratch top, owned by this user,
+# instead of the host's /usr/local/lib/hcw-lab. Everything else, the
+# script's own constants included, runs as it ships. On Windows, where a
+# file's owner and mode bits mean nothing to Python, the copy is imported
+# directly; CI and the host run the check.
+RUN_ENTRY = r'''
+import importlib, os, runpy, sys
+entry, launcher, top = sys.argv[1:4]
+del sys.argv[1:4]
+real_run_path = runpy.run_path
+def run_path(path, *args, **kwargs):
+    if path != "/usr/local/libexec/hcw-lab-python-launch":
+        sys.exit(f"the script loaded {path}, not the installed launcher")
+    real_launch = real_run_path(launcher)["launch"]
+    def launch(lib_dir, package, me):
+        if os.name == "nt":
+            sys.path.insert(0, top + lib_dir)
+            return importlib.import_module(package + ".cli").main()
+        return real_launch(top + lib_dir, package, me, os.getuid(), top)
+    return {"launch": launch}
+runpy.run_path = run_path
+real_run_path(entry, run_name="__main__")
+'''
+
+
+def helper_command(top):
+    """The command that runs the helper as it ships, its modules staged under top (RUN_ENTRY)."""
+    return [sys.executable, "-I", "-B", "-c", RUN_ENTRY, str(HELPER), str(LAUNCHER_SOURCE), str(top)]
+
+
 # --- The helper's text, and the helper in this process ------------------------------
 
-helper_text = HELPER.read_text(encoding="utf-8")
-check("the helper is Python 3, run isolated", helper_text.startswith("#!/usr/bin/python3 -I\n"))
-try:
-    # In this process, so a read-only checkout gets no __pycache__ written into it.
-    compile(helper_text, str(HELPER), "exec")
-    compile_error = ""
-except SyntaxError as error:
-    compile_error = str(error)
-check("the helper compiles", not compile_error, compile_error)
+entry_text = HELPER.read_text(encoding="utf-8")
+check("the helper is Python 3, run isolated", entry_text.startswith("#!/usr/bin/python3 -I\n"))
+# Since 2026-11-25 (#1845) the script is only the way in: it hands the shared
+# launcher its constants, and the check is the package beside it. The checks
+# on the helper's text read the script and every module together.
+modules = sorted(PACKAGE_DIR.glob("*.py"))
+helper_text = "\n".join([entry_text] + [module.read_text(encoding="utf-8") for module in modules])
+compile_error = ""
+for source in [HELPER, LAUNCHER_SOURCE, *modules]:
+    try:
+        # In this process, so a read-only checkout gets no __pycache__ written into it.
+        compile(source.read_text(encoding="utf-8"), str(source), "exec")
+    except SyntaxError as error:
+        compile_error += f"{source.name}: {error}; "
+check("the helper, the launcher and every module compile", not compile_error, compile_error)
 check("the helper names GET and no other HTTP method",
       re.findall(r'method="(\w+)"', helper_text) == ["GET"]
       and not re.search(r'"(POST|PUT|PATCH|DELETE)"', helper_text))
 check("the helper reads the token from $CREDENTIALS_DIRECTORY and takes no token argument",
       'os.environ.get("CREDENTIALS_DIRECTORY")' in helper_text and 'add_argument("--token' not in helper_text
       and 'add_argument("--config"' in helper_text)
+entry_constants = constants_of(entry_text)
+check("the script hands the installed launcher the module directory and package the role installs, and nothing else",
+      entry_constants == {"LAUNCHER": INSTALLED_LAUNCHER, "LIB_DIR": LIB_DIR, "PACKAGE": PACKAGE_DIR.name}
+      and entry_text.rstrip().endswith(
+          'sys.exit(runpy.run_path(LAUNCHER)["launch"](LIB_DIR, PACKAGE, "hcw-portainer-check"))'),
+      json.dumps(entry_constants))
+check("the launcher the role installs is the coder role's file, which hcw-coder-automation loads too",
+      LAUNCHER_SOURCE.is_file(), str(LAUNCHER_SOURCE))
 # That CI runs this test is checked by scripts/ci-workflow-steps.test.mjs
 # ("every role test file is a step of the role tests job"), not here: the
 # `lab-host role tests` job runs only when a file it reads changes, and a
@@ -161,34 +233,32 @@ if (REPO / "vps-agent" / "bin").is_dir():
 else:
     skip("the CLI the helper is configured with exists in vps-agent/bin", "no vps-agent/ beside lab-host/")
 
-# The helper, loaded in this process, for the pure functions worth holding on
-# their own: the scrub, the licence rules and the edition. The loader is named
-# because the file has no .py suffix, which importlib would otherwise refuse.
-# No bytecode beside the helper: the role ships files/ as it is, and a
-# read-only checkout must stay clean (the compile above already proved it).
+# The modules, loaded in this process, for the pure functions worth holding
+# on their own: the scrub, the licence rules and the edition. No bytecode
+# beside them: the role ships files/ as it is, and a read-only checkout must
+# stay clean (the compile above already proved it).
 sys.dont_write_bytecode = True
-module_spec = importlib.util.spec_from_file_location(
-    "hcw_portainer_check", HELPER, loader=importlib.machinery.SourceFileLoader("hcw_portainer_check", str(HELPER)))
-helper = importlib.util.module_from_spec(module_spec)
-module_spec.loader.exec_module(helper)
-helper.remember("ptr_example_remembered")
+sys.path.insert(0, str(PACKAGE_DIR.parent))
+helper_common = importlib.import_module(f"{PACKAGE_DIR.name}.common")
+helper_report = importlib.import_module(f"{PACKAGE_DIR.name}.report")
+helper_common.remember("ptr_example_remembered")
 check("a remembered token is scrubbed from every message",
-      helper.scrub("the site refused ptr_example_remembered twice ptr_example_remembered") == "the site refused [token] twice [token]")
+      helper_common.scrub("the site refused ptr_example_remembered twice ptr_example_remembered") == "the site refused [token] twice [token]")
 far = int((now() + 300 * DAY).timestamp())
 near = int((now() + 10 * DAY).timestamp())
 check("the licence is valid when one licence says so, and its expiry is the latest valid one's",
-      helper.licence_state([{"valid": False, "expiresAt": far}, {"valid": True, "expiresAt": near}])
+      helper_report.licence_state([{"valid": False, "expiresAt": far}, {"valid": True, "expiresAt": near}])
       == (True, datetime.datetime.fromtimestamp(near, UTC).strftime(TIME_FORMAT)))
 check("not valid when one says so and none is valid, with the latest expiry of all",
-      helper.licence_state([{"valid": False, "expiresAt": near}, {"valid": False, "expiresAt": far}])
+      helper_report.licence_state([{"valid": False, "expiresAt": near}, {"valid": False, "expiresAt": far}])
       == (False, datetime.datetime.fromtimestamp(far, UTC).strftime(TIME_FORMAT)))
 check("unknown when Portainer says neither (valid null), when there is no licence, and no expiry when it is not a number",
-      helper.licence_state([{"valid": None, "expiresAt": far}])[0] is None
-      and helper.licence_state([{"valid": None, "expiresAt": far}])[1] is not None
-      and helper.licence_state([]) == (None, None)
-      and helper.licence_state([{"valid": True, "expiresAt": "soon"}]) == (True, None))
+      helper_report.licence_state([{"valid": None, "expiresAt": far}])[0] is None
+      and helper_report.licence_state([{"valid": None, "expiresAt": far}])[1] is not None
+      and helper_report.licence_state([]) == (None, None)
+      and helper_report.licence_state([{"valid": True, "expiresAt": "soon"}]) == (True, None))
 check("the edition is EE for EE and BE, CE for CE, and left out otherwise",
-      [helper.edition_of({"ServerEdition": label}) for label in ("EE", "BE", "ce", "", "Community", None)]
+      [helper_report.edition_of({"ServerEdition": label}) for label in ("EE", "BE", "ce", "", "Community", None)]
       == ["EE", "EE", "CE", None, None, None])
 
 
@@ -345,6 +415,38 @@ def check_rendered_units(role):
           and (defaults["portainer_check_boot_delay"], defaults["portainer_check_interval"]) == ("5min", "15min"))
 
 
+def check_module_tasks(role):
+    """Hold the tasks that install the check's modules and the launcher to the script's constants (#1845)."""
+    defaults, tasks = role["defaults"], role["tasks"]
+    when = ["portainer_enabled | bool", "portainer_check_enabled | bool"]
+    package = f"{LIB_DIR}/{PACKAGE_DIR.name}"
+    names = [task.get("name", "") for task in tasks]
+    dirs_task, body = task_using(tasks, "ansible.builtin.file", path="{{ item }}", state="directory")
+    check("the role makes every directory down to the package root:root 0755, while the check is installed",
+          body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0755")
+          and dirs_task.get("loop") == ["/usr/local/lib/hcw-lab", LIB_DIR, package] and dirs_task.get("when") == when,
+          str(dirs_task))
+    files_task, body = task_using(tasks, "ansible.builtin.copy", src=f"{PACKAGE_DIR.name}/{{{{ item }}}}")
+    check("the role installs every module, and only those, root:root 0644 in the package's directory",
+          body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
+          == (f"{package}/{{{{ item }}}}", "root", "root", "0644")
+          and files_task.get("loop") == "{{ portainer_helper_modules }}" and files_task.get("when") == when
+          and defaults["portainer_helper_modules"] == sorted(module.name for module in PACKAGE_DIR.glob("*.py")),
+          json.dumps(defaults.get("portainer_helper_modules")))
+    launcher_task, body = task_using(tasks, "ansible.builtin.copy", src="{{ portainer_launcher_source }}")
+    check("the role installs the coder role's launcher where the script loads it, root:root 0644",
+          body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
+          == (INSTALLED_LAUNCHER, "root", "root", "0644") and launcher_task.get("when") == when
+          and defaults["portainer_launcher_source"].endswith("/../coder/files/hcw-lab-python-launch.py"),
+          str(launcher_task))
+    _, script = task_using(tasks, "ansible.builtin.copy", src="hcw-portainer-check")
+    check("the modules and the launcher go in before the script that loads them",
+          None not in (dirs_task, files_task, launcher_task, script)
+          and names.index(dirs_task["name"]) < names.index(files_task["name"]) < names.index(launcher_task["name"])
+          < names.index(next(task["name"] for task in tasks if task.get("ansible.builtin.copy") is script)),
+          str(names))
+
+
 def check_role_tasks(role):
     """Hold the role's tasks and argument spec to its defaults: what it installs, the token, the timer."""
     defaults, tasks, options = role["defaults"], role["tasks"], role["options"]
@@ -353,6 +455,7 @@ def check_role_tasks(role):
           body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
           == ("{{ portainer_check_script }}", "root", "root", "0750")
           and defaults["portainer_check_script"] == "/usr/local/libexec/hcw-portainer-check", str(body))
+    check_module_tasks(role)
     token_task, body = task_using(tasks, "ansible.builtin.copy", dest="{{ portainer_check_token_file }}")
     check("the role writes the token root:root 0600 from the vault key, with no_log, only while the key is set",
           body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0600")
@@ -693,6 +796,7 @@ class World:
             environment_wait_seconds=0,
         )
         self.config_file = self.root / "check.json"
+        stage_package(self.root)
         self.write_config()
 
     def write_config(self, **changes):
@@ -720,7 +824,7 @@ class World:
         env.pop("CREDENTIALS_DIRECTORY", None)
         if credentials:
             env["CREDENTIALS_DIRECTORY"] = str(self.credentials)
-        completed = subprocess.run([sys.executable, "-I", str(HELPER), "--config", str(self.config_file)],
+        completed = subprocess.run([*helper_command(self.root), "--config", str(self.config_file)],
                                    input=b"", capture_output=True, env=env, timeout=120)
         result = subprocess.CompletedProcess(completed.args, completed.returncode,
                                              completed.stdout.decode("utf-8", "replace"),
