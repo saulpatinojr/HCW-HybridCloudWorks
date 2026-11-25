@@ -114,6 +114,156 @@ function deny(status, error, challenge) {
   };
 }
 
+/** A refusal in the shape requireRole and requireUser return. */
+const refusedRole = (error) => ({ user: null, role: null, error });
+
+/** True when the token's space-separated `scp` claim holds `scope`. */
+function hasScope(user, scope) {
+  const scopes = typeof user.scp === 'string' ? user.scp.split(' ').filter(Boolean) : [];
+  return scopes.includes(scope);
+}
+
+/**
+ * Gates 2 and 3 on the `admins` record. Returns the reason and message to
+ * refuse with (plus any extra audit field), or null when the record is
+ * present, active and high enough.
+ */
+function adminRecordDenial(record, minimum) {
+  if (!record) return { reason: 'no-admin-record', message: 'Admin access required' };
+  if (record.active !== true) return { reason: 'inactive', message: 'Admin access required' };
+  if (!satisfiesRole(record.role, minimum)) {
+    return { reason: 'insufficient-role', message: `Requires ${minimum} or higher`, actual: record.role };
+  }
+  return null;
+}
+
+/**
+ * Drop expired entries, then the oldest, until the map is within bounds.
+ *
+ * The cache is keyed by object id and only reached after a token verifies,
+ * so it cannot be grown by an anonymous caller — but it had no eviction at
+ * all, so on a long-lived instance it grew monotonically with every distinct
+ * principal that ever signed in (T-408). Sweeping on write keeps it
+ * O(1) amortised without a timer.
+ */
+function evict(cache, now) {
+  if (cache.size <= ROLE_CACHE_MAX_ENTRIES) return;
+
+  const currentMs = now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= currentMs) cache.delete(key);
+  }
+  // Map iterates in insertion order, so the first keys are the oldest
+  // writes. Still over budget after dropping the expired ones means every
+  // entry is live, and the oldest is the least likely to be needed next.
+  for (const key of cache.keys()) {
+    if (cache.size <= ROLE_CACHE_MAX_ENTRIES) break;
+    cache.delete(key);
+  }
+}
+
+/**
+ * Wrap the injected audit sink so it can never throw into a guard.
+ */
+function safeAudit(auditDenial) {
+  return (entry) => {
+    try {
+      auditDenial?.(entry);
+    } catch {
+      // An audit sink failure must never turn a clean 403 into a 500.
+    }
+  };
+}
+
+/** Read an admin record through the guard's short-lived cache. */
+async function resolveCachedAdmin({ cache, lookupAdmin, now }, oid) {
+  const cached = cache.get(oid);
+  if (cached && cached.expiresAt > now()) return cached.value;
+
+  // Deliberately NOT wrapped in try/catch. A lookup failure must propagate
+  // and become a 500, never a fallback to the token's claim — falling back
+  // would reinstate the stale-role window the hybrid model exists to close.
+  const record = await lookupAdmin(oid);
+  cache.set(oid, { value: record ?? null, expiresAt: now() + ROLE_CACHE_TTL_MS });
+  evict(cache, now);
+  return record ?? null;
+}
+
+/**
+ * The body of requireUser: check the bearer token and its scope. `audit` is
+ * the guard's denial sink, already wrapped by safeAudit.
+ */
+async function authenticateRequest(request, { verifier, audit, delegatedScope }) {
+  const token = bearerTokenFrom(request);
+
+  if (!token) {
+    // A BARE CHALLENGE. RFC 6750 §3: when the request includes no
+    // authentication credentials at all, the response "SHOULD NOT include an
+    // error code or other error information" — there is no failed attempt to
+    // describe, and saying so would only tell an unauthenticated caller how
+    // this endpoint behaves. The client reads the absent error code as
+    // "sign in", which is exactly right.
+    return refusedRole(deny(401, 'Authentication required', {}));
+  }
+
+  let user;
+  try {
+    user = await verifier.verify(token);
+  } catch (err) {
+    // The verifier's code, not its sentence: the row is stored (#945).
+    audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
+    // A FIXED DESCRIPTION, NOT `err.message`.
+    //
+    // verify-token.js says of its own assertions that the detail "lands in
+    // admin_audit_logs and never reaches the client", and echoing it here
+    // would have broken that the moment the header became readable. The
+    // verifier's messages distinguish an expired token from a bad signature
+    // from a wrong tenant, which is a free oracle for anyone probing, and
+    // `jwt audience invalid. expected: …` names configuration outright.
+    //
+    // The client does not need the difference: every one of them means the
+    // same thing to it — sign in again. The audit row above keeps the reason
+    // for whoever is actually debugging.
+    return refusedRole(
+      deny(401, 'Authentication required', {
+        code: 'invalid_token',
+        description: 'The access token could not be verified.',
+      }),
+    );
+  }
+
+  // THE SCOPE GATE. An ID token is not an access token (#515).
+  //
+  // It lives here, in authenticate(), rather than in requireRole below, so
+  // that requireUser inherits it — getAuthExpectations and
+  // bootstrapCurrentUserAdmin are reached that way, and they are the thinnest
+  // surface in the system.
+  //
+  // See ENTRA_API_DELEGATED_SCOPE in roles.js for why `scp` is the claim that
+  // works and `roles` is not. Agent callers do not come through here at all:
+  // require-agent.js runs its own client-credentials path, which has `roles`
+  // and no `scp` by construction.
+  if (!hasScope(user, delegatedScope)) {
+    audit({
+      outcome: 'denied',
+      reason: 'missing-scope',
+      oid: user.oid ?? user.sub,
+      required: delegatedScope,
+    });
+    // insufficient_scope, not invalid_token: the token verified. Re-acquiring
+    // it returns the same scopes and the same rejection, so the client must
+    // show this rather than silently retry.
+    return refusedRole(
+      deny(401, 'Authentication required', {
+        code: 'insufficient_scope',
+        description: `The access token is missing the ${delegatedScope} scope.`,
+      }),
+    );
+  }
+
+  return { user, role: null, error: null };
+}
+
 /**
  * Create the guard.
  *
@@ -144,51 +294,14 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
   // on the Azure side with no writer", which was true when it was written and
   // is what T-406 recorded; the writer landed with the guard's
   // production composition.
-  const audit = (entry) => {
-    try {
-      auditDenial?.(entry);
-    } catch {
-      // An audit sink failure must never turn a clean 403 into a 500.
-    }
-  };
+  const audit = safeAudit(auditDenial);
+  const resolveAdmin = (oid) => resolveCachedAdmin({ cache, lookupAdmin, now }, oid);
 
   /**
-   * Drop expired entries, then the oldest, until the map is within bounds.
-   *
-   * The cache is keyed by object id and only reached after a token verifies,
-   * so it cannot be grown by an anonymous caller — but it had no eviction at
-   * all, so on a long-lived instance it grew monotonically with every distinct
-   * principal that ever signed in (T-408). Sweeping on write keeps it
-   * O(1) amortised without a timer.
+   * Authenticate only — no role requirement. For endpoints that need a known
+   * caller but not an admin (saveToolWorkspace, exportToolReport).
    */
-  function evict() {
-    if (cache.size <= ROLE_CACHE_MAX_ENTRIES) return;
-
-    const currentMs = now();
-    for (const [key, entry] of cache) {
-      if (entry.expiresAt <= currentMs) cache.delete(key);
-    }
-    // Map iterates in insertion order, so the first keys are the oldest
-    // writes. Still over budget after dropping the expired ones means every
-    // entry is live, and the oldest is the least likely to be needed next.
-    for (const key of cache.keys()) {
-      if (cache.size <= ROLE_CACHE_MAX_ENTRIES) break;
-      cache.delete(key);
-    }
-  }
-
-  async function resolveAdmin(oid) {
-    const cached = cache.get(oid);
-    if (cached && cached.expiresAt > now()) return cached.value;
-
-    // Deliberately NOT wrapped in try/catch. A lookup failure must propagate
-    // and become a 500, never a fallback to the token's claim — falling back
-    // would reinstate the stale-role window the hybrid model exists to close.
-    const record = await lookupAdmin(oid);
-    cache.set(oid, { value: record ?? null, expiresAt: now() + ROLE_CACHE_TTL_MS });
-    evict();
-    return record ?? null;
-  }
+  const authenticate = (request) => authenticateRequest(request, { verifier, audit, delegatedScope });
 
   /**
    * Authenticate, then require at least `required`.
@@ -215,107 +328,19 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
     const claimRoles = Array.isArray(user.roles) ? user.roles : [];
     if (!claimRoles.includes(ENTRA_ADMIN_APP_ROLE)) {
       audit({ outcome: 'denied', reason: 'missing-app-role', oid, required: minimum });
-      return { user: null, role: null, error: deny(403, 'Admin access required') };
+      return refusedRole(deny(403, 'Admin access required'));
     }
 
-    // Gate 2: the authoritative record.
+    // Gates 2 and 3: the authoritative record, then the hierarchy.
     const record = await resolveAdmin(oid);
-    if (!record) {
-      audit({ outcome: 'denied', reason: 'no-admin-record', oid, required: minimum });
-      return { user: null, role: null, error: deny(403, 'Admin access required') };
-    }
-    if (record.active !== true) {
-      audit({ outcome: 'denied', reason: 'inactive', oid, required: minimum });
-      return { user: null, role: null, error: deny(403, 'Admin access required') };
-    }
-
-    // Gate 3: the hierarchy.
-    if (!satisfiesRole(record.role, minimum)) {
-      audit({ outcome: 'denied', reason: 'insufficient-role', oid, required: minimum, actual: record.role });
-      return { user: null, role: null, error: deny(403, `Requires ${minimum} or higher`) };
+    const problem = adminRecordDenial(record, minimum);
+    if (problem) {
+      const { reason, message, ...extra } = problem;
+      audit({ outcome: 'denied', reason, oid, required: minimum, ...extra });
+      return refusedRole(deny(403, message));
     }
 
     return { user, role: record.role, error: null };
-  }
-
-  /**
-   * Authenticate only — no role requirement. For endpoints that need a known
-   * caller but not an admin (saveToolWorkspace, exportToolReport).
-   */
-  async function authenticate(request) {
-    const token = bearerTokenFrom(request);
-
-    if (!token) {
-      // A BARE CHALLENGE. RFC 6750 §3: when the request includes no
-      // authentication credentials at all, the response "SHOULD NOT include an
-      // error code or other error information" — there is no failed attempt to
-      // describe, and saying so would only tell an unauthenticated caller how
-      // this endpoint behaves. The client reads the absent error code as
-      // "sign in", which is exactly right.
-      return { user: null, role: null, error: deny(401, 'Authentication required', {}) };
-    }
-
-    let user;
-    try {
-      user = await verifier.verify(token);
-    } catch (err) {
-      // The verifier's code, not its sentence: the row is stored (#945).
-      audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
-      // A FIXED DESCRIPTION, NOT `err.message`.
-      //
-      // verify-token.js says of its own assertions that the detail "lands in
-      // admin_audit_logs and never reaches the client", and echoing it here
-      // would have broken that the moment the header became readable. The
-      // verifier's messages distinguish an expired token from a bad signature
-      // from a wrong tenant, which is a free oracle for anyone probing, and
-      // `jwt audience invalid. expected: …` names configuration outright.
-      //
-      // The client does not need the difference: every one of them means the
-      // same thing to it — sign in again. The audit row above keeps the reason
-      // for whoever is actually debugging.
-      return {
-        user: null,
-        role: null,
-        error: deny(401, 'Authentication required', {
-          code: 'invalid_token',
-          description: 'The access token could not be verified.',
-        }),
-      };
-    }
-
-    // THE SCOPE GATE. An ID token is not an access token (#515).
-    //
-    // It lives here, in authenticate(), rather than in requireRole below, so
-    // that requireUser inherits it — getAuthExpectations and
-    // bootstrapCurrentUserAdmin are reached that way, and they are the thinnest
-    // surface in the system.
-    //
-    // See ENTRA_API_DELEGATED_SCOPE in roles.js for why `scp` is the claim that
-    // works and `roles` is not. Agent callers do not come through here at all:
-    // require-agent.js runs its own client-credentials path, which has `roles`
-    // and no `scp` by construction.
-    const scopes = typeof user.scp === 'string' ? user.scp.split(' ').filter(Boolean) : [];
-    if (!scopes.includes(delegatedScope)) {
-      audit({
-        outcome: 'denied',
-        reason: 'missing-scope',
-        oid: user.oid ?? user.sub,
-        required: delegatedScope,
-      });
-      // insufficient_scope, not invalid_token: the token verified. Re-acquiring
-      // it returns the same scopes and the same rejection, so the client must
-      // show this rather than silently retry.
-      return {
-        user: null,
-        role: null,
-        error: deny(401, 'Authentication required', {
-          code: 'insufficient_scope',
-          description: `The access token is missing the ${delegatedScope} scope.`,
-        }),
-      };
-    }
-
-    return { user, role: null, error: null };
   }
 
   return {
