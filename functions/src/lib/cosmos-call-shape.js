@@ -66,20 +66,24 @@ export function replaceDocIfMatchProblem(containerName, document, options) {
       'without it the replace is not conditional.'
     );
   }
-  if (options !== undefined) {
-    if (!isObject(options)) {
-      return (
-        `options must be an object such as { partitionKey }, not ${kindOf(options)}. ` +
-        'The ETag goes inside the document, not after it.'
-      );
-    }
-    const unknown = Object.keys(options).filter((field) => !OPTION_FIELDS.includes(field));
-    if (unknown.length > 0) {
-      return (
-        `options has ${unknown.length} field(s) other than ${OPTION_FIELDS.join(', ')}. ` +
-        'A document goes in the second argument, not in options.'
-      );
-    }
+  return optionsProblem(options);
+}
+
+/** Why the optional third argument is not `{ partitionKey }`-shaped, or null when it is (or is absent). */
+function optionsProblem(options) {
+  if (options === undefined) return null;
+  if (!isObject(options)) {
+    return (
+      `options must be an object such as { partitionKey }, not ${kindOf(options)}. ` +
+      'The ETag goes inside the document, not after it.'
+    );
+  }
+  const unknown = Object.keys(options).filter((field) => !OPTION_FIELDS.includes(field));
+  if (unknown.length > 0) {
+    return (
+      `options has ${unknown.length} field(s) other than ${OPTION_FIELDS.join(', ')}. ` +
+      'A document goes in the second argument, not in options.'
+    );
   }
   return null;
 }

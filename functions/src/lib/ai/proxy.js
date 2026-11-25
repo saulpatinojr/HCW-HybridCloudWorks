@@ -217,183 +217,22 @@ export function createAiProxyHandlers({
   uuid = () => crypto.randomUUID(),
   clock = () => Date.now(),
 }) {
-  /**
-   * Record what a call cost.
-   *
-   * The row shape lives in ai/usage.js, shared with the Listen & Learn run
-   * since that became the second thing here that spends money on a model. The
-   * portal's Usage tab does its arithmetic client-side over whatever rows it
-   * finds — totalling `totalTokens` and `estimatedCostUsd`, grouping by
-   * `provider` — so a second writer with a slightly different shape would not
-   * error, it would silently total zero.
-   *
-   * A failure there must not fail the call: the model has already answered and
-   * been paid for, and losing the record is better than losing the answer.
-   */
-  const recordUsage = (record) => recordAiUsage({ store, ai, uuid, now }, record);
-
+  const deps = {
+    guard,
+    store,
+    ai,
+    readCatalog,
+    capChecker,
+    actorDailyLimit,
+    globalDailyLimit,
+    maxPromptChars,
+    now,
+    uuid,
+    clock,
+  };
   return {
     /** POST /api/aiProxy — one call to one named provider (#944, AP-B9). */
-    async aiProxy(request, context) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-
-      const body = await request.json().catch(() => null);
-      const provider = String(body?.provider || '').trim();
-      const prompt = String(body?.prompt || '');
-      const systemPrompt = String(body?.systemPrompt || '');
-      if (!provider) return json(400, { ok: false, error: 'provider is required' });
-      if (!prompt.trim()) return json(400, { ok: false, error: 'prompt is required' });
-
-      if (prompt.length > maxPromptChars) {
-        return json(400, {
-          ok: false,
-          error: `Prompt exceeds maximum allowed length of ${maxPromptChars} characters`,
-          code: 'PROMPT_TOO_LONG',
-        });
-      }
-      if (systemPrompt.length > maxPromptChars) {
-        return json(400, {
-          ok: false,
-          error: `System prompt exceeds maximum allowed length of ${maxPromptChars} characters`,
-          code: 'PROMPT_TOO_LONG',
-        });
-      }
-
-      // Catalog validation: validate provider and model against the catalogue (#944, AP-B9)
-      const catalog = await readCatalog({ store, now });
-      if (!catalog?.providers || !Object.hasOwn(catalog.providers, provider)) {
-        return json(400, {
-          ok: false,
-          error: `Unknown or unsupported provider: ${provider}`,
-          code: 'INVALID_PROVIDER',
-        });
-      }
-      const providerEntry = catalog.providers[provider];
-
-      let targetModel = null;
-      if (body?.model !== undefined && body?.model !== null) {
-        const modelStr = String(body.model).trim();
-        if (!modelStr) {
-          return json(400, {
-            ok: false,
-            error: 'model cannot be empty when specified',
-            code: 'INVALID_MODEL',
-          });
-        }
-        if (!providerEntry.models || !Object.hasOwn(providerEntry.models, modelStr)) {
-          return json(400, {
-            ok: false,
-            error: `Unknown model "${modelStr}" for provider "${provider}"`,
-            code: 'INVALID_MODEL',
-          });
-        }
-        const modelEntry = providerEntry.models[modelStr];
-        if (modelEntry.status === 'retired') {
-          return json(400, {
-            ok: false,
-            error: `Model "${modelStr}" on ${provider} is retired in the catalogue`,
-            code: 'RETIRED_MODEL',
-          });
-        }
-        targetModel = modelStr;
-      }
-
-      // Spend ceiling: per-actor and global daily caps enforced BEFORE calling provider (#944, AP-B9)
-      const actorId = auth.user?.oid || auth.user?.sub || auth.user?.email || 'editor';
-      const nowIso = new Date(now()).toISOString();
-      const day = utcDay(nowIso);
-
-      const actorCapId = `ai-proxy-actor:${actorId}:${day}`;
-      const actorAllowed = await capChecker(store, {
-        container: CACHE_CONTAINER,
-        id: actorCapId,
-        kind: 'ai-proxy-actor-cap',
-        day,
-        nowIso,
-        limit: actorDailyLimit,
-        ttlSeconds: 2 * 24 * 60 * 60,
-      });
-      if (!actorAllowed) {
-        return json(429, {
-          ok: false,
-          error: `Daily AI spend ceiling reached for actor ${actorId}. Try again tomorrow UTC.`,
-          code: 'AI_SPEND_LIMIT_EXCEEDED',
-        });
-      }
-
-      const globalCapId = `ai-proxy-global:${day}`;
-      const globalAllowed = await capChecker(store, {
-        container: CACHE_CONTAINER,
-        id: globalCapId,
-        kind: 'ai-proxy-global-cap',
-        day,
-        nowIso,
-        limit: globalDailyLimit,
-        ttlSeconds: 2 * 24 * 60 * 60,
-      });
-      if (!globalAllowed) {
-        // Release the actor reservation when the global cap denies the request
-        if (typeof store.incrementIf === 'function') {
-          await store.incrementIf(CACHE_CONTAINER, actorCapId, {
-            path: '/count',
-            value: -1,
-            condition: 'FROM c WHERE c.count > 0',
-          });
-        }
-        return json(429, {
-          ok: false,
-          error: 'Global daily AI spend ceiling reached. Try again tomorrow UTC.',
-          code: 'AI_SPEND_LIMIT_EXCEEDED',
-        });
-      }
-
-      const startedAt = clock();
-      try {
-        const result = await ai.callProvider({
-          provider,
-          model: targetModel,
-          prompt,
-          systemPrompt,
-          maxTokens: Math.min(Number(body?.maxTokens) || AI_PROXY_DEFAULT_MAX_TOKENS, AI_PROXY_DEFAULT_MAX_TOKENS),
-        });
-        const latencyMs = clock() - startedAt;
-
-        await recordUsage({
-          provider,
-          model: result.model,
-          promptTokens: result.promptTokens,
-          completionTokens: result.completionTokens,
-          source: body?.source,
-        });
-
-        return json(200, {
-          ok: true,
-          text: result.text,
-          model: result.model,
-          promptTokens: result.promptTokens,
-          completionTokens: result.completionTokens,
-          estimatedCostUsd: ai.getCostEstimate(
-            provider,
-            result.model,
-            result.promptTokens,
-            result.completionTokens
-          ),
-          latencyMs,
-        });
-      } catch (error) {
-        // 200 with ok:false, not 5xx. The caller is a Playground that renders
-        // the message; an unconfigured provider is an answer, not a fault, and
-        // AI_NOT_CONFIGURED already says exactly what to do about it.
-        context.error?.('aiProxy failed:', errorFacts(error));
-        return json(200, {
-          ok: false,
-          error: 'The provider call failed',
-          code: error?.code || null,
-          latencyMs: clock() - startedAt,
-        });
-      }
-    },
+    aiProxy: (request, context) => aiProxy(deps, request, context),
 
     /**
      * POST /api/testAiProvider — can we reach this provider right now?
@@ -403,28 +242,252 @@ export function createAiProxyHandlers({
      * fields have always expected and nothing has ever set. The work is
      * `testProviderConnection`; this adds the role check and the HTTP shape.
      */
-    async testAiProvider(request, context) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-
-      const body = await request.json().catch(() => null);
-      const providerId = String(body?.providerId || '').trim();
-      if (!providerId) return json(400, { ok: false, error: 'providerId is required' });
-
-      const catalog = await readCatalog({ store, now });
-      if (!catalog?.providers || !Object.hasOwn(catalog.providers, providerId)) {
-        return json(400, {
-          ok: false,
-          error: `Unknown or unsupported provider: ${providerId}`,
-          code: 'INVALID_PROVIDER',
-        });
-      }
-
-      const outcome = await testProviderConnection(
-        { store, ai, now, uuid, clock, log: context },
-        { providerId, model: body?.model || null, trigger: 'admin' }
-      );
-      return json(200, outcome);
-    },
+    testAiProvider: (request, context) => testAiProvider(deps, request, context),
   };
+}
+
+/**
+ * Record what a call cost.
+ *
+ * The row shape lives in ai/usage.js, shared with the Listen & Learn run
+ * since that became the second thing here that spends money on a model. The
+ * portal's Usage tab does its arithmetic client-side over whatever rows it
+ * finds — totalling `totalTokens` and `estimatedCostUsd`, grouping by
+ * `provider` — so a second writer with a slightly different shape would not
+ * error, it would silently total zero.
+ *
+ * A failure there must not fail the call: the model has already answered and
+ * been paid for, and losing the record is better than losing the answer.
+ */
+const recordUsage = ({ store, ai, uuid, now }, record) => recordAiUsage({ store, ai, uuid, now }, record);
+
+/** The 400 for a request without a provider or prompt, or with a prompt past the cap; null when it passes. */
+function promptRefusal({ provider, prompt, systemPrompt }, maxPromptChars) {
+  if (!provider) return json(400, { ok: false, error: 'provider is required' });
+  if (!prompt.trim()) return json(400, { ok: false, error: 'prompt is required' });
+  const tooLong = [
+    [prompt, 'Prompt'],
+    [systemPrompt, 'System prompt'],
+  ].find(([text]) => text.length > maxPromptChars);
+  if (!tooLong) return null;
+  return json(400, {
+    ok: false,
+    error: `${tooLong[1]} exceeds maximum allowed length of ${maxPromptChars} characters`,
+    code: 'PROMPT_TOO_LONG',
+  });
+}
+
+/** The provider is in the catalogue: the 400 when it is not, or null. */
+function providerRefusal(catalog, provider) {
+  if (catalog?.providers && Object.hasOwn(catalog.providers, provider)) return null;
+  return json(400, {
+    ok: false,
+    error: `Unknown or unsupported provider: ${provider}`,
+    code: 'INVALID_PROVIDER',
+  });
+}
+
+/**
+ * The model the call names, checked against the provider's catalogue entry:
+ * `{ targetModel }` (null for the provider's default), or `{ response }`
+ * with the 400 for an empty, unknown or retired model.
+ */
+function catalogModel(providerEntry, provider, rawModel) {
+  if (rawModel === undefined || rawModel === null) return { targetModel: null };
+  const modelStr = String(rawModel).trim();
+  if (!modelStr) {
+    return {
+      response: json(400, {
+        ok: false,
+        error: 'model cannot be empty when specified',
+        code: 'INVALID_MODEL',
+      }),
+    };
+  }
+  if (!providerEntry.models || !Object.hasOwn(providerEntry.models, modelStr)) {
+    return {
+      response: json(400, {
+        ok: false,
+        error: `Unknown model "${modelStr}" for provider "${provider}"`,
+        code: 'INVALID_MODEL',
+      }),
+    };
+  }
+  if (providerEntry.models[modelStr].status === 'retired') {
+    return {
+      response: json(400, {
+        ok: false,
+        error: `Model "${modelStr}" on ${provider} is retired in the catalogue`,
+        code: 'RETIRED_MODEL',
+      }),
+    };
+  }
+  return { targetModel: modelStr };
+}
+
+/**
+ * Spend ceiling: per-actor and global daily caps, taken BEFORE the provider
+ * is called (#944, AP-B9). The 429 when either is spent, or null.
+ */
+async function spendRefusal({ store, now, capChecker, actorDailyLimit, globalDailyLimit }, user) {
+  const actorId = user?.oid || user?.sub || user?.email || 'editor';
+  const nowIso = new Date(now()).toISOString();
+  const day = utcDay(nowIso);
+
+  const actorCapId = `ai-proxy-actor:${actorId}:${day}`;
+  const actorAllowed = await capChecker(store, {
+    container: CACHE_CONTAINER,
+    id: actorCapId,
+    kind: 'ai-proxy-actor-cap',
+    day,
+    nowIso,
+    limit: actorDailyLimit,
+    ttlSeconds: 2 * 24 * 60 * 60,
+  });
+  if (!actorAllowed) {
+    return json(429, {
+      ok: false,
+      error: `Daily AI spend ceiling reached for actor ${actorId}. Try again tomorrow UTC.`,
+      code: 'AI_SPEND_LIMIT_EXCEEDED',
+    });
+  }
+
+  const globalCapId = `ai-proxy-global:${day}`;
+  const globalAllowed = await capChecker(store, {
+    container: CACHE_CONTAINER,
+    id: globalCapId,
+    kind: 'ai-proxy-global-cap',
+    day,
+    nowIso,
+    limit: globalDailyLimit,
+    ttlSeconds: 2 * 24 * 60 * 60,
+  });
+  if (globalAllowed) return null;
+  // Release the actor reservation when the global cap denies the request
+  if (typeof store.incrementIf === 'function') {
+    await store.incrementIf(CACHE_CONTAINER, actorCapId, {
+      path: '/count',
+      value: -1,
+      condition: 'FROM c WHERE c.count > 0',
+    });
+  }
+  return json(429, {
+    ok: false,
+    error: 'Global daily AI spend ceiling reached. Try again tomorrow UTC.',
+    code: 'AI_SPEND_LIMIT_EXCEEDED',
+  });
+}
+
+/**
+ * Everything before the provider is called: the role, the prompt, the
+ * catalogue and the spend caps. `{ request fields, targetModel }`, or
+ * `{ response }` refusing.
+ */
+async function prepareProxyCall(deps, request) {
+  const auth = await deps.guard.requireRole(request, 'editor');
+  if (auth.error) return { response: auth.error };
+
+  const body = await request.json().catch(() => null);
+  const checked = await checkProxyBody(deps, body);
+  if (checked.response) return checked;
+
+  const refusedSpend = await spendRefusal(deps, auth.user);
+  if (refusedSpend) return { response: refusedSpend };
+  return checked;
+}
+
+/**
+ * The body's provider, prompts and model, checked against the caps and the
+ * catalogue: `{ provider, prompt, systemPrompt, body, targetModel }`, or
+ * `{ response }` with the 400.
+ */
+async function checkProxyBody(deps, body) {
+  const fields = {
+    provider: String(body?.provider || '').trim(),
+    prompt: String(body?.prompt || ''),
+    systemPrompt: String(body?.systemPrompt || ''),
+  };
+  const refusedPrompt = promptRefusal(fields, deps.maxPromptChars);
+  if (refusedPrompt) return { response: refusedPrompt };
+
+  // Catalog validation: validate provider and model against the catalogue (#944, AP-B9)
+  const catalog = await deps.readCatalog({ store: deps.store, now: deps.now });
+  const refusedProvider = providerRefusal(catalog, fields.provider);
+  if (refusedProvider) return { response: refusedProvider };
+  const model = catalogModel(catalog.providers[fields.provider], fields.provider, body?.model);
+  return model.response ? model : { ...fields, body, targetModel: model.targetModel };
+}
+
+/** POST /api/aiProxy — one call to one named provider (#944, AP-B9). */
+async function aiProxy(deps, request, context) {
+  const prepared = await prepareProxyCall(deps, request);
+  if (prepared.response) return prepared.response;
+  const { provider, prompt, systemPrompt, body, targetModel } = prepared;
+  const { ai, clock } = deps;
+
+  const startedAt = clock();
+  try {
+    const result = await ai.callProvider({
+      provider,
+      model: targetModel,
+      prompt,
+      systemPrompt,
+      maxTokens: Math.min(Number(body?.maxTokens) || AI_PROXY_DEFAULT_MAX_TOKENS, AI_PROXY_DEFAULT_MAX_TOKENS),
+    });
+    const latencyMs = clock() - startedAt;
+
+    await recordUsage(deps, {
+      provider,
+      model: result.model,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      source: body?.source,
+    });
+
+    return json(200, {
+      ok: true,
+      text: result.text,
+      model: result.model,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      estimatedCostUsd: ai.getCostEstimate(
+        provider,
+        result.model,
+        result.promptTokens,
+        result.completionTokens
+      ),
+      latencyMs,
+    });
+  } catch (error) {
+    // 200 with ok:false, not 5xx. The caller is a Playground that renders
+    // the message; an unconfigured provider is an answer, not a fault, and
+    // AI_NOT_CONFIGURED already says exactly what to do about it.
+    context.error?.('aiProxy failed:', errorFacts(error));
+    return json(200, {
+      ok: false,
+      error: 'The provider call failed',
+      code: error?.code || null,
+      latencyMs: clock() - startedAt,
+    });
+  }
+}
+
+/** POST /api/testAiProvider — the role check and the HTTP shape around testProviderConnection. */
+async function testAiProvider({ guard, store, ai, readCatalog, now, uuid, clock }, request, context) {
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+
+  const body = await request.json().catch(() => null);
+  const providerId = String(body?.providerId || '').trim();
+  if (!providerId) return json(400, { ok: false, error: 'providerId is required' });
+
+  const catalog = await readCatalog({ store, now });
+  const refused = providerRefusal(catalog, providerId);
+  if (refused) return refused;
+
+  const outcome = await testProviderConnection(
+    { store, ai, now, uuid, clock, log: context },
+    { providerId, model: body?.model || null, trigger: 'admin' }
+  );
+  return json(200, outcome);
 }

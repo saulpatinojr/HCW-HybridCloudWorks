@@ -13,7 +13,7 @@
  * keyless servers, and Plaud's pasted token, take the path they always did.
  */
 import { parseMcpResponseBody } from '../cloud-tools/mcp-parse.js';
-import { AuthoredError, authoredMessage, codeShaped, errorCode, errorFacts } from '../http/error-response.js';
+import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import {
   INTEGRATION_KEY_HOSTS,
   KNOWN_INTEGRATION_KEY_NAMES,
@@ -30,20 +30,21 @@ import {
   validateMcpToolPolicy,
   validateMcpUrl,
 } from './mcp-policy.js';
+import { McpOAuthNotConnectedError, createOAuthHttp } from './mcp-oauth.js';
+import { McpUpstreamError, fetchWithTimeout, sseRpc } from './mcp-transport.js';
 import {
-  McpOAuthNotConnectedError,
-  REFRESH_SKEW_MS,
-  createOAuthHttp,
-  notConnectedMessage,
-  oauthConnectionState,
-  refreshOAuthToken,
-  tokenExpiresWithin,
-} from './mcp-oauth.js';
+  errorFields,
+  loadMcpServer,
+  markServerError,
+  markServerNeedsConnection,
+  normalizeMcpTools,
+  rpcWithOAuth,
+  toolCallOutcome,
+} from './mcp-calls.js';
 
 const MCP_CONTAINER = 'mcp_servers';
 const SESSION_TTL_MS = 5 * 60_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const SSE_TIMEOUT_MS = 25_000;
 const sessions = new Map();
 
 const json = (status, body) => ({
@@ -51,25 +52,6 @@ const json = (status, body) => ({
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 });
-
-/**
- * A transport-level MCP failure: a timeout, an HTTP status, a stream that
- * ended. Every sentence is written in this module (authored, #945); the
- * server's body rides on `responseBody` for the OAuth error code and never
- * reaches a sentence.
- */
-class McpUpstreamError extends AuthoredError {
-  /**
-   * @param {string} message - the authored sentence
-   * @param {{ status?: number, responseBody?: string }} [options]
-   */
-  constructor(message, { status = 0, responseBody = '' } = {}) {
-    super(message);
-    this.name = 'McpUpstreamError';
-    this.status = status;
-    this.responseBody = responseBody;
-  }
-}
 
 /**
  * The URL rule, the key-name allowlist and the credential resolution are
@@ -110,29 +92,6 @@ function rememberSession(serverId, sessionId) {
 
 function clearSession(serverId) {
   sessions.delete(serverId);
-}
-
-async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const parentSignal = options?.signal;
-  const signal = parentSignal
-    ? AbortSignal.any([parentSignal, controller.signal])
-    : controller.signal;
-  if (signal.aborted) {
-    clearTimeout(timer);
-    throw signal.reason || new McpUpstreamError(`MCP request timed out after ${Math.round(timeoutMs / 1000)}s`);
-  }
-  try {
-    return await fetchImpl(url, { ...options, signal });
-  } catch (error) {
-    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
-      throw new McpUpstreamError(`MCP request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 async function getSessionId(serverId, url, authHeaders, { fetchImpl, log, timeoutMs }) {
@@ -226,237 +185,9 @@ async function httpRpc(serverId, url, rpcBody, authHeaders, options) {
   return parseMcpResponseBody(result.responseBody);
 }
 
-function drainSseFrames(buffer) {
-  const lines = buffer.split('\n');
-  const tail = lines.pop();
-  const frames = [];
-  let event = '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('event:')) event = trimmed.slice(6).trim();
-    if (trimmed.startsWith('data:')) frames.push({ event, data: trimmed.slice(5).trim() });
-  }
-  return { frames, tail };
-}
-
-function sseEndpoint(postUrl, frame, sseUrl) {
-  if (
-    postUrl ||
-    !(frame.event === 'endpoint' || frame.data.startsWith('/') || frame.data.startsWith('http'))
-  ) {
-    return postUrl;
-  }
-  try {
-    return new URL(frame.data, sseUrl).toString();
-  } catch {
-    return frame.data;
-  }
-}
-
-/** Whether an SSE message endpoint is https on the stream's own origin. */
-function sameOriginHttps(endpoint, sseUrl) {
-  try {
-    const url = new URL(endpoint);
-    return url.protocol === 'https:' && url.origin === new URL(sseUrl).origin;
-  } catch {
-    return false;
-  }
-}
-
-function matchingSseResponse(data, targetId) {
-  if (!data.startsWith('{')) return null;
-  try {
-    const message = JSON.parse(data);
-    return message.id === targetId ? message : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Relay an SSE MCP connection. Replicate still uses the legacy SSE transport
- * in the seeded configuration (Firecrawl moved to Streamable HTTP in #1848),
- * while custom servers default to Streamable HTTP.
- */
-function sseRpc(sseUrl, authHeaders, rpcBody, { fetchImpl, timeoutMs, requireSameOriginEndpoint }) {
-  return new Promise(async (resolve, reject) => {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(
-      () => finish(null, new McpUpstreamError('SSE MCP request timed out')),
-      Math.min(timeoutMs, SSE_TIMEOUT_MS)
-    );
-    let postUrl = null;
-    let requestSent = false;
-    let settled = false;
-    let buffer = '';
-    let readyTimer = null;
-
-    const finish = (result, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutHandle);
-      if (readyTimer) clearTimeout(readyTimer);
-      controller.abort();
-      if (error) reject(error);
-      else resolve(result);
-    };
-
-    const post = async (body) => {
-      const response = await fetchWithTimeout(
-        fetchImpl,
-        postUrl,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            ...authHeaders,
-          },
-          body: JSON.stringify(body),
-        },
-        timeoutMs
-      );
-      await response.text();
-      if (!response.ok)
-        throw new McpUpstreamError(`SSE MCP POST returned HTTP ${response.status}`, {
-          status: response.status,
-        });
-    };
-
-    const sendRequest = async () => {
-      if (requestSent || settled || !postUrl) return;
-      requestSent = true;
-      try {
-        // The SSE transport requires initialize and initialized before the
-        // requested tools/list or tools/call message.
-        await post({
-          jsonrpc: '2.0',
-          method: 'initialize',
-          params: {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            clientInfo: { name: 'hcw-mcp-proxy', version: '1.0.0' },
-          },
-          id: -1,
-        });
-        await post({
-          jsonrpc: '2.0',
-          method: 'notifications/initialized',
-          params: {},
-        });
-        await post(rpcBody);
-      } catch (error) {
-        finish(null, error);
-      }
-    };
-
-    try {
-      const response = await fetchWithTimeout(
-        fetchImpl,
-        sseUrl,
-        {
-          method: 'GET',
-          headers: {
-            Accept: 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            ...authHeaders,
-          },
-          signal: controller.signal,
-        },
-        timeoutMs
-      );
-      if (!response.ok) {
-        return finish(
-          null,
-          new McpUpstreamError(`SSE GET returned HTTP ${response.status}`, {
-            status: response.status,
-          })
-        );
-      }
-      if (!response.body?.getReader) {
-        return finish(null, new McpUpstreamError('SSE server returned no readable event stream'));
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      while (!settled) {
-        const { value, done } = await reader.read();
-        if (done)
-          return finish(null, new McpUpstreamError('SSE stream ended before the MCP response'));
-        buffer += decoder.decode(value, { stream: true });
-        const drained = drainSseFrames(buffer);
-        buffer = drained.tail;
-        for (const frame of drained.frames) {
-          postUrl = sseEndpoint(postUrl, frame, sseUrl);
-          // An OAuth Connect token is for this server only (RFC 8707): a
-          // stream that names its message endpoint on another host, or over
-          // plain http, does not get it.
-          if (postUrl && requireSameOriginEndpoint && !sameOriginHttps(postUrl, sseUrl)) {
-            return finish(
-              null,
-              new McpUpstreamError(
-                'The SSE server named a message endpoint on another host or over http; the sign-in token is not sent there'
-              )
-            );
-          }
-          if (postUrl && !readyTimer) readyTimer = setTimeout(sendRequest, 1_000);
-          if (postUrl && frame.data.includes('SSE Connection established')) {
-            if (readyTimer) clearTimeout(readyTimer);
-            readyTimer = setTimeout(sendRequest, 50);
-          }
-          const matched = matchingSseResponse(frame.data, rpcBody.id);
-          if (matched) finish(matched, null);
-        }
-      }
-    } catch (error) {
-      if (!settled && error?.name !== 'AbortError') finish(null, error);
-    }
-  });
-}
-
 function callMcpRpc({ serverId, url, transport, authHeaders, rpcBody, options }) {
   if (transport === 'sse') return sseRpc(url, authHeaders, rpcBody, options);
   return httpRpc(serverId, url, rpcBody, authHeaders, options);
-}
-
-function extractMcpText(rawResult) {
-  if (typeof rawResult === 'string') return rawResult;
-  if (Array.isArray(rawResult?.content)) {
-    return rawResult.content
-      .filter((item) => item?.type === 'text' && typeof item.text === 'string')
-      .map((item) => item.text)
-      .join('\n');
-  }
-  return JSON.stringify(rawResult ?? {});
-}
-
-function normalizeMcpTools(rpcResult) {
-  const tools = Array.isArray(rpcResult?.result?.tools) ? rpcResult.result.tools : [];
-  return tools.map((tool) => ({
-    name: tool.name || '',
-    description: tool.description || '',
-    inputSchema: tool.inputSchema || {},
-  }));
-}
-
-/**
- * The status and the OAuth error code an upstream failure carries. The
- * server's `error_description` is its own sentence and is not read (#945).
- *
- * @param {unknown} error - what the transport threw
- * @returns {{ status: number|undefined, upstreamError: string|undefined }}
- */
-function errorFields(error) {
-  let upstream = {};
-  try {
-    upstream = parseMcpResponseBody(error.responseBody || '') || {};
-  } catch {
-    upstream = {};
-  }
-  return {
-    status: error.status,
-    upstreamError: upstream.error,
-  };
 }
 
 /**
@@ -492,57 +223,6 @@ function failureBody(authFailure, extra = {}) {
   };
 }
 
-async function markServerError(store, serverId, message, now) {
-  try {
-    await store.patchDoc(MCP_CONTAINER, serverId, {
-      status: 'error',
-      lastTested: now().toISOString(),
-      lastError: message,
-    });
-  } catch {
-    // The upstream failure is the useful result; do not mask it with a status-write failure.
-  }
-}
-
-/**
- * An OAuth server with no live connection: amber "press Connect", not a red
- * error, because nothing failed — nobody has signed in yet, or the sign-in
- * expired.
- */
-async function markServerNeedsConnection(store, serverId, message, now) {
-  try {
-    await store.patchDoc(MCP_CONTAINER, serverId, {
-      status: 'needs_connection',
-      lastTested: now().toISOString(),
-      lastError: message,
-    });
-  } catch {
-    // As above: the refusal is the useful result.
-  }
-}
-
-/**
- * The configured server, or the outcome refusing the call: 500 when the
- * configuration could not be read (`onReadError` gets the error, so each
- * caller logs it its own way), 404 when there is no such server.
- */
-async function loadMcpServer(store, serverId, onReadError) {
-  let server;
-  try {
-    server = await store.readDoc(MCP_CONTAINER, serverId, serverId);
-  } catch (error) {
-    onReadError(error);
-    return {
-      failure: {
-        ok: false,
-        error: 'Failed to read MCP server configuration',
-        httpStatus: 500,
-      },
-    };
-  }
-  if (!server) return { failure: { ok: false, error: 'MCP server not found', httpStatus: 404 } };
-  return { server };
-}
 
 /** The server's URL under the URL rule and the key-name allowlist, or the message refusing it. */
 function validatedMcpUrl(server) {
@@ -586,57 +266,6 @@ function prepareToolCall({ serverId, server, tool, toolArguments }) {
   return { url };
 }
 
-/**
- * The upstream told us the bearer is not (or no longer) good: a 401, or an
- * `invalid_token` in the body. A 403 is not this — a refresh does not grant
- * a scope the token was never given.
- */
-function isTokenRejection(error) {
-  return (
-    error instanceof McpUpstreamError &&
-    (error.status === 401 || errorFields(error).upstreamError === 'invalid_token')
-  );
-}
-
-/**
- * An RPC to a server that signs in with OAuth Connect. Refuses without a live
- * connection (nothing is sent tokenless); refreshes first when the access
- * token has under REFRESH_SKEW_MS left; and on a token rejection refreshes
- * once and retries once. A refresh the server refuses marks the document as
- * needing a connection (mcp-oauth.js) and surfaces as the "press Connect"
- * sentence; one that could not reach the server leaves the original failure
- * standing.
- */
-async function rpcWithOAuth({ serverId, server, send, options }) {
-  const { store, now = () => new Date(), oauthHttp, log } = options;
-  if (oauthConnectionState(server) !== 'connected') {
-    throw new McpOAuthNotConnectedError(notConnectedMessage(server, serverId));
-  }
-  const refresh = (current) =>
-    refreshOAuthToken({ store, serverId, server: current, http: oauthHttp, now, log });
-
-  let current = server;
-  if (tokenExpiresWithin(current, REFRESH_SKEW_MS, now)) {
-    const refreshed = await refresh(current);
-    if (refreshed.ok) current = refreshed.server;
-    else if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.sentence);
-    // Transient: the stored token may still have a minute in it; try it.
-  }
-
-  try {
-    return await send(current);
-  } catch (error) {
-    if (!isTokenRejection(error)) throw error;
-    const refreshed = await refresh(current);
-    if (!refreshed.ok) {
-      if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.sentence);
-      throw error;
-    }
-    // One retry. A second rejection is reported as the auth failure it is.
-    return send(refreshed.server);
-  }
-}
-
 /** One JSON-RPC call to a configured server, with the credential it stores. */
 function rpcOnServer({ serverId, server, url, rpcBody, env, options }) {
   const sendWith = (current, transportOptions) =>
@@ -663,32 +292,35 @@ function rpcOnServer({ serverId, server, url, rpcBody, env, options }) {
   });
 }
 
-/** A tools/call reply as the outcome callMcpTool reports; every shape is a 200. */
-function toolCallOutcome(rpcResult) {
-  if (rpcResult?.error) {
-    // The JSON-RPC error code is kept, when it is one; the server's own
-    // sentence is not (#945).
-    const { code } = rpcResult.error;
+/**
+ * Everything a tool call checks before any upstream request: the names, the
+ * stored server, its URL and tool policy, the arguments, and the caller's own
+ * `authorize`. `{ server, prepared }`, or `{ failure }` as callMcpTool
+ * reports it.
+ */
+async function readyToolCall({ store, log, authorize }, { serverId, tool, toolArguments }) {
+  if (!serverId || !tool) {
     return {
-      ok: false,
-      error: 'The MCP server answered the call with an error.',
-      code: Number.isInteger(code) ? code : codeShaped(code) || null,
-      httpStatus: 200,
+      failure: {
+        ok: false,
+        error: 'serverId and tool are required',
+        httpStatus: 400,
+      },
     };
   }
-  if (!rpcResult || !Object.hasOwn(rpcResult, 'result')) {
-    return {
-      ok: false,
-      error: 'MCP server returned no tool result',
-      httpStatus: 200,
-    };
-  }
-  const rawResult = rpcResult.result;
-  const result = extractMcpText(rawResult);
-  if (rawResult?.isError) {
-    return { ok: false, error: result || 'MCP tool error', httpStatus: 200 };
-  }
-  return { ok: true, result, raw: rawResult, httpStatus: 200 };
+
+  const loaded = await loadMcpServer(store, serverId, (error) =>
+    log.error?.(
+      `[mcp] configuration read failed: ${errorFacts(error)}`
+    )
+  );
+  if (loaded.failure) return loaded;
+  const { server } = loaded;
+
+  const prepared = prepareToolCall({ serverId, server, tool, toolArguments });
+  if (prepared.failure) return prepared;
+  const refusal = authorize ? await authorize({ serverId, server }) : null;
+  return refusal ? { failure: refusal } : { server, prepared };
 }
 
 /**
@@ -742,28 +374,9 @@ export async function callMcpTool({
 }) {
   const serverId = String(rawServerId || '').trim();
   const tool = String(rawTool || '').trim();
-  if (!serverId || !tool) {
-    return {
-      ok: false,
-      error: 'serverId and tool are required',
-      httpStatus: 400,
-    };
-  }
-
-  const loaded = await loadMcpServer(store, serverId, (error) =>
-    log.error?.(
-      `[mcp] configuration read failed: ${errorFacts(error)}`
-    )
-  );
-  if (loaded.failure) return loaded.failure;
-  const { server } = loaded;
-
-  const prepared = prepareToolCall({ serverId, server, tool, toolArguments });
-  if (prepared.failure) return prepared.failure;
-  if (authorize) {
-    const refusal = await authorize({ serverId, server });
-    if (refusal) return refusal;
-  }
+  const ready = await readyToolCall({ store, log, authorize }, { serverId, tool, toolArguments });
+  if (ready.failure) return ready.failure;
+  const { server, prepared } = ready;
 
   try {
     const rpcResult = await rpcOnServer({

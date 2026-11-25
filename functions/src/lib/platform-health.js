@@ -129,6 +129,42 @@ async function safeCheck(provider, check, context) {
 }
 
 /**
+ * One status check per provider, in the order the answer lists them: each
+ * reads the provider's public status feed and answers a STATUS value.
+ */
+const PROVIDER_CHECKS = Object.freeze({
+  async aws(opts) {
+    const buffer = await fetchUpstream('https://status.aws.amazon.com/data.json', {
+      ...opts,
+      as: 'buffer',
+    });
+    if (!buffer) return STATUS.UNKNOWN;
+    const events = JSON.parse(decodeUtf16JsonBuffer(buffer));
+    const active = Array.isArray(events) ? events.filter((e) => e?.status !== '0') : [];
+    return getAwsStatusFromEvents(active);
+  },
+  async azure(opts) {
+    const xml = await fetchUpstream(
+      'https://rssfeed.azure.status.microsoft/en-us/status/feed/',
+      { ...opts, as: 'text' }
+    );
+    if (xml === null) return STATUS.UNKNOWN;
+    return normalizeStatus(!feedHasItems(xml));
+  },
+  async gcp(opts) {
+    const data = await fetchUpstream('https://status.cloud.google.com/incidents.json', opts);
+    if (!Array.isArray(data)) return STATUS.UNKNOWN;
+    // An incident without an `end` is still open.
+    return normalizeStatus(data.filter((incident) => !incident?.end).length === 0);
+  },
+  async github(opts) {
+    const data = await fetchUpstream('https://www.githubstatus.com/api/v2/status.json', opts);
+    if (!data?.status) return STATUS.UNKNOWN;
+    return normalizeStatus(data.status.indicator === 'none');
+  },
+});
+
+/**
  * Query all four providers in parallel.
  *
  * @param {{warn: Function}} context
@@ -137,55 +173,11 @@ async function safeCheck(provider, check, context) {
  */
 export async function getProviderStatuses(context, { fetchImpl = fetch } = {}) {
   const opts = { fetchImpl };
-
-  const entries = await Promise.all([
-    safeCheck(
-      'aws',
-      async () => {
-        const buffer = await fetchUpstream('https://status.aws.amazon.com/data.json', {
-          ...opts,
-          as: 'buffer',
-        });
-        if (!buffer) return STATUS.UNKNOWN;
-        const events = JSON.parse(decodeUtf16JsonBuffer(buffer));
-        const active = Array.isArray(events) ? events.filter((e) => e?.status !== '0') : [];
-        return getAwsStatusFromEvents(active);
-      },
-      context
-    ),
-    safeCheck(
-      'azure',
-      async () => {
-        const xml = await fetchUpstream(
-          'https://rssfeed.azure.status.microsoft/en-us/status/feed/',
-          { ...opts, as: 'text' }
-        );
-        if (xml === null) return STATUS.UNKNOWN;
-        return normalizeStatus(!feedHasItems(xml));
-      },
-      context
-    ),
-    safeCheck(
-      'gcp',
-      async () => {
-        const data = await fetchUpstream('https://status.cloud.google.com/incidents.json', opts);
-        if (!Array.isArray(data)) return STATUS.UNKNOWN;
-        // An incident without an `end` is still open.
-        return normalizeStatus(data.filter((incident) => !incident?.end).length === 0);
-      },
-      context
-    ),
-    safeCheck(
-      'github',
-      async () => {
-        const data = await fetchUpstream('https://www.githubstatus.com/api/v2/status.json', opts);
-        if (!data?.status) return STATUS.UNKNOWN;
-        return normalizeStatus(data.status.indicator === 'none');
-      },
-      context
-    ),
-  ]);
-
+  const entries = await Promise.all(
+    Object.entries(PROVIDER_CHECKS).map(([provider, check]) =>
+      safeCheck(provider, () => check(opts), context)
+    )
+  );
   return Object.fromEntries(entries);
 }
 

@@ -230,6 +230,9 @@ export function resolveMcpAuthHeaders({ oauthToken, apiKeyEnvVar, url, env = pro
  */
 const NO_QUERY_HOSTS = new Set(['mcp.publer.com']);
 
+/** Host names that are this machine; with `127.*`, an MCP server URL may not point at them. */
+const LOOPBACK_HOSTS = new Set(['localhost', '::1', '[::1]', '0.0.0.0']);
+
 /**
  * Reject malformed or credential-bearing URLs before making an outbound call.
  * https is required (ADR 0033): a bearer token over plain http is readable on
@@ -251,13 +254,7 @@ export function validateMcpUrl(value) {
     throw new McpPolicyError('MCP server URL must not contain embedded credentials');
   }
   const host = parsed.hostname.toLowerCase();
-  if (
-    host === 'localhost' ||
-    host === '::1' ||
-    host === '[::1]' ||
-    host === '0.0.0.0' ||
-    host.startsWith('127.')
-  ) {
+  if (LOOPBACK_HOSTS.has(host) || host.startsWith('127.')) {
     throw new McpPolicyError('MCP server URL must not target loopback addresses');
   }
   if (NO_QUERY_HOSTS.has(parsed.hostname) && parsed.search) {

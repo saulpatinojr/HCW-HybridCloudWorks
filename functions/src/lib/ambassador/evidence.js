@@ -233,16 +233,25 @@ export async function importEvidence(ctx, request, auth) {
   const body = await ctx.readBody(request, IMPORT_BODY_MAX);
   if (!body) return json(400, { error: 'Body must be a JSON object' });
   const readerId = str(body.reader, 40);
-  if (readerId) {
-    const reader = CSV_READERS[readerId];
-    if (!reader)
-      return json(400, { error: `reader must be one of ${Object.keys(CSV_READERS).join(', ')}` });
-    const checked = csvText(body);
-    if (checked.error) return checked.error;
-    if (!checked.text) return json(400, { error: 'text is required' });
-    const programIds = stringList(body.programIds);
-    return importFromCsv(ctx, request, { reader, readerId, text: checked.text, programIds }, auth);
-  }
+  return readerId
+    ? importCsvBody(ctx, request, { body, readerId }, auth)
+    : importSourceBody(ctx, request, body, auth);
+}
+
+/** The `{ reader, text }` shape of an import: the pasted CSV, checked, then imported. */
+async function importCsvBody(ctx, request, { body, readerId }, auth) {
+  const reader = CSV_READERS[readerId];
+  if (!reader)
+    return json(400, { error: `reader must be one of ${Object.keys(CSV_READERS).join(', ')}` });
+  const checked = csvText(body);
+  if (checked.error) return checked.error;
+  if (!checked.text) return json(400, { error: 'text is required' });
+  const programIds = stringList(body.programIds);
+  return importFromCsv(ctx, request, { reader, readerId, text: checked.text, programIds }, auth);
+}
+
+/** The `{ sourceModule, ids[] }` shape of an import: the named documents, imported and audited. */
+async function importSourceBody(ctx, request, body, auth) {
   const sourceModule = str(body.sourceModule, 40);
   const reader = IMPORT_READERS[sourceModule];
   if (!reader) return unknownSource();

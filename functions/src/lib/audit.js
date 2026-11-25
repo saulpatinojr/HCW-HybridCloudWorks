@@ -38,8 +38,7 @@ export const CLIENT_AUDIT_ACTIONS = Object.freeze(new Set([
  * Returns an error string if invalid, or null if allowed.
  */
 export function validateClientAuditAction(action) {
-  if (!action || typeof action !== 'string') return 'action is required';
-  const trimmed = action.trim();
+  const trimmed = typeof action === 'string' ? action.trim() : '';
   if (trimmed.length === 0) return 'action is required';
   if (trimmed.length > 120) return 'action exceeds 120 characters';
 

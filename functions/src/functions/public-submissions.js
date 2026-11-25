@@ -33,6 +33,20 @@ const json = (status, body, headers = {}) => ({
 });
 
 /**
+ * Read the request body and check it, as `{ value }` or `{ error }`. A body
+ * that is not JSON gets its own message, ahead of the submission rules.
+ */
+async function readSubmission(request) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return { error: 'Body must be valid JSON' };
+  }
+  return validateSubmission(body);
+}
+
+/**
  * @param {object} [deps] test seam; production uses the real modules
  */
 export function createSubmissionsHandler({
@@ -62,14 +76,7 @@ export function createSubmissionsHandler({
       return json(403, { ok: false, error: 'Forbidden' });
     }
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json(400, { ok: false, error: 'Body must be valid JSON' });
-    }
-
-    const validated = validateSubmission(body);
+    const validated = await readSubmission(request);
     if (validated.error) {
       return json(400, { ok: false, error: validated.error });
     }

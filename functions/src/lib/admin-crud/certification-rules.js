@@ -5,49 +5,12 @@
  * unchanged.
  */
 import { isValidBlobPath } from '../blob-paths.js';
+import { cleanLinkList, isHttpUrl, isImageRef, toCalendarDate } from './cert-values.js';
+
+export { toCalendarDate } from './cert-values.js';
 
 const CERT_DATE_FIELDS = ['issueDate', 'expDate', 'renewalDate'];
 const CERT_URL_FIELDS = ['verifyUrl', 'learnUrl'];
-
-/**
- * A calendar date as plain `YYYY-MM-DD`, from a day, a timestamp (its
- * leading day) or a Date; null for nothing usable. Dates used to be stored
- * as UTC midnight and shown a day early west of Greenwich (ADR 0033 §1).
- */
-export function toCalendarDate(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const text = value instanceof Date ? value.toISOString() : String(value).trim();
-  const head = text.slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(head)) return null;
-  const [y, m, d] = head.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) === head ? head : null;
-}
-
-const isHttpUrl = (value) => typeof value === 'string' && /^https?:\/\/\S+$/i.test(value.trim());
-/** An uploaded badge is stored site-relative (`/api/public/media/…`, blob-paths.js). */
-const isImageRef = (value) =>
-  isHttpUrl(value) || (typeof value === 'string' && /^\/[^\s]+$/.test(value.trim()));
-
-/** One evidence or related-learning entry as `{ label, url }`, or null for an unusable one. */
-function cleanLink(item) {
-  if (typeof item === 'string') {
-    return isHttpUrl(item) ? { label: item.trim(), url: item.trim() } : null;
-  }
-  if (!item || typeof item !== 'object' || !isHttpUrl(item.url)) return null;
-  const url = String(item.url).trim();
-  return {
-    label:
-      String(item.label || '')
-        .trim()
-        .slice(0, 200) || url,
-    url,
-  };
-}
-
-function cleanLinkList(value, max = 50) {
-  if (!Array.isArray(value)) return [];
-  return value.map(cleanLink).filter(Boolean).slice(0, max);
-}
 
 export const CERTIFICATION_FIELDS = Object.freeze([
   'id',
@@ -99,6 +62,21 @@ export const CERTIFICATION_FIELDS = Object.freeze([
   'notes',
 ]);
 
+/** What is wrong with the body as a whole (not an object, unknown keys, a flag that is not a boolean), or null. */
+function certBodyShapeError(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return 'Body must be a JSON object';
+  }
+  const unknown = Object.keys(body).filter((key) => !CERTIFICATION_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return `Unknown field(s) for certification: ${unknown.join(', ')}`;
+  }
+  const notBoolean = ['display', 'featured'].find(
+    (key) => body[key] !== undefined && typeof body[key] !== 'boolean'
+  );
+  return notBoolean ? `${notBoolean} must be a boolean` : null;
+}
+
 /**
  * The certification fields a write may carry, cleaned, or an error
  * sentence (AP-B6). Unknown keys are refused. Every field that has a shape
@@ -106,19 +84,8 @@ export const CERTIFICATION_FIELDS = Object.freeze([
  * issue date, URLs must be http(s), display_order is a whole number.
  */
 export function validateCertification(body, existing = null) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return { error: 'Body must be a JSON object' };
-  }
-  const unknown = Object.keys(body).filter((key) => !CERTIFICATION_FIELDS.includes(key));
-  if (unknown.length > 0) {
-    return { error: `Unknown field(s) for certification: ${unknown.join(', ')}` };
-  }
-  if (body.display !== undefined && typeof body.display !== 'boolean') {
-    return { error: 'display must be a boolean' };
-  }
-  if (body.featured !== undefined && typeof body.featured !== 'boolean') {
-    return { error: 'featured must be a boolean' };
-  }
+  const shapeError = certBodyShapeError(body);
+  if (shapeError) return { error: shapeError };
   const out = { ...body };
   delete out.id;
   for (const step of CERT_STEPS) {
