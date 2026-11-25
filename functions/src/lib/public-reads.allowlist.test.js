@@ -123,22 +123,17 @@ const leakyPublishedDoc = (over = {}) => ({
   ...over,
 });
 
+/** Every field in any of the sets, for a page whose reads span several files. */
+const union = (...sets) => new Set(sets.flatMap((set) => [...set]));
+
 /**
- * The fields frontend source files read off the named variables: `x.field`,
+ * The fields a frontend source file reads off the named variables: `x.field`,
  * `x['field']`, and the names listed in `firstField(x, [...])` or in a
- * `const NAME = [...]` passed to it (#1845: the detail templates moved to
- * that helper and into sibling files, so a path may also be a list).
+ * `const NAME = [...]` passed to it (#1845: the detail templates moved to that
+ * helper and into sibling files). One literal path per call, so the CI filter
+ * guard (scripts/ci-filters.test.mjs) can see which file each test reads.
  */
 function fieldsReadIn(relativePath, variables) {
-  const paths = Array.isArray(relativePath) ? relativePath : [relativePath];
-  const fields = new Set();
-  for (const path of paths) {
-    for (const field of fieldsReadInOne(path, variables)) fields.add(field);
-  }
-  return fields;
-}
-
-function fieldsReadInOne(relativePath, variables) {
   const source = readFileSync(new URL(`../../../frontend/src/${relativePath}`, import.meta.url), 'utf8');
   const names = variables.join('|');
   const fields = new Set();
@@ -295,13 +290,10 @@ describe('getContent — the public article detail', () => {
     const PREVIEW_ONLY = ['contentStatus', 'forgeGrade'];
 
     it('BlogDetailTemplate', () => {
-      const read = fieldsReadIn(
-        [
-          'components/templates/BlogDetailTemplate.jsx',
-          'components/templates/BlogDetailParts.jsx',
-          'components/templates/blogPostModel.js',
-        ],
-        ['article']
+      const read = union(
+        fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+        fieldsReadIn('components/templates/BlogDetailParts.jsx', ['article']),
+        fieldsReadIn('components/templates/blogPostModel.js', ['article'])
       );
       expect(read.size).toBeGreaterThan(30);
       const publicRead = [...read].filter((f) => !PREVIEW_ONLY.includes(f));
@@ -309,14 +301,11 @@ describe('getContent — the public article detail', () => {
     });
 
     it('ArchitectureDetailTemplate', () => {
-      const read = fieldsReadIn(
-        [
-          'components/templates/ArchitectureDetailTemplate.jsx',
-          'components/templates/ArchitectureDetailParts.jsx',
-          'components/templates/ArchitectureDeepDiveTabs.jsx',
-          'components/templates/architectureModel.js',
-        ],
-        ['architecture', 'item']
+      const read = union(
+        fieldsReadIn('components/templates/ArchitectureDetailTemplate.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/ArchitectureDetailParts.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/ArchitectureDeepDiveTabs.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/architectureModel.js', ['architecture', 'item'])
       );
       expect(read.size).toBeGreaterThan(30);
       expect(missingFrom(PUBLIC_CONTENT_DETAIL_FIELDS, read)).toEqual([]);
@@ -377,13 +366,10 @@ describe('getPreview — the signed staging preview', () => {
 
   it('covers every field BlogDetailTemplate and PreviewPage read', () => {
     const read = new Set([
-      ...fieldsReadIn(
-        [
-          'components/templates/BlogDetailTemplate.jsx',
-          'components/templates/BlogDetailParts.jsx',
-          'components/templates/blogPostModel.js',
-        ],
-        ['article']
+      ...union(
+        fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+        fieldsReadIn('components/templates/BlogDetailParts.jsx', ['article']),
+        fieldsReadIn('components/templates/blogPostModel.js', ['article'])
       ),
       ...fieldsReadIn('pages/PreviewPage.jsx', ['item']),
     ]);
