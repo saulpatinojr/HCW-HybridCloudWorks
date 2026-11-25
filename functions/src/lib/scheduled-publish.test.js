@@ -14,9 +14,13 @@ import {
   buildDueQuery,
   buildPublishFailureAlert,
   createScheduledPublisher,
+  dueQueryParameters,
   PUBLISH_ALERT_ID,
   PUBLISH_ALERT_TYPE,
+  SCHEDULED_PUBLISH_STATUSES,
 } from './scheduled-publish.js';
+import { saveContentSchedule } from './content-workflow/schedule.js';
+import { PUBLISHABLE_NORMALIZED_STATUSES } from './cms/content-status.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -58,8 +62,10 @@ describe('buildDueQuery', () => {
     expect(query).toContain('IS_STRING(c.scheduledPublishDate)');
   });
 
-  it('matches only approved, not-yet-live documents whose date has passed', () => {
-    expect(query).toContain("c.contentStatus = 'approved'");
+  it('matches only scheduled-status, not-yet-live documents whose date has passed', () => {
+    // The statuses are a parameter, never spliced into the text (#1887).
+    expect(query).toContain('ARRAY_CONTAINS(@statuses, c.contentStatus)');
+    expect(query).not.toContain("'approved'");
     expect(query).toContain('c.scheduledPublishDate <= @now');
     expect(query).toContain('(NOT IS_DEFINED(c.Live) OR c.Live = false)');
   });
@@ -75,6 +81,116 @@ describe('buildDueQuery', () => {
   it('bounds the batch', () => {
     expect(buildDueQuery(25)).toContain('SELECT TOP 25 ');
     expect(buildDueQuery(5)).toContain('SELECT TOP 5 ');
+  });
+});
+
+describe('SCHEDULED_PUBLISH_STATUSES', () => {
+  it('is approved and forge_ready, both of which the publish pipeline accepts (#1887)', () => {
+    expect([...SCHEDULED_PUBLISH_STATUSES]).toEqual(['approved', 'forge_ready']);
+    for (const status of SCHEDULED_PUBLISH_STATUSES) {
+      expect(PUBLISHABLE_NORMALIZED_STATUSES).toContain(status);
+    }
+  });
+});
+
+/**
+ * An in-memory content container whose `queryDocs` applies the due query's
+ * conditions with the parameters the publisher passed, so a test can schedule
+ * an item through the real `saveContentSchedule` and see whether the timer
+ * picks it up (#1887). It checks the query text it evaluates, so a change to
+ * the clauses fails here instead of drifting from this stand-in.
+ */
+function makeContentStore(docs) {
+  const byId = new Map(docs.map((d) => [d.id, { ...d }]));
+  const store = makeStore([]);
+  store.readDoc = vi.fn(async (container, id) => (container === 'content' ? byId.get(id) ?? null : null));
+  store.patchDoc = vi.fn(async (container, id, updates) => {
+    if (container !== 'content') return {};
+    const doc = { ...byId.get(id), ...updates };
+    byId.set(id, doc);
+    return doc;
+  });
+  store.queryDocs = vi.fn(async (container, query, parameters) => {
+    expect(container).toBe('content');
+    expect(query).toBe(buildDueQuery(25));
+    const p = Object.fromEntries(parameters.map(({ name, value }) => [name, value]));
+    return [...byId.values()]
+      .filter(
+        (d) =>
+          p['@statuses'].includes(d.contentStatus) &&
+          typeof d.scheduledPublishDate === 'string' &&
+          d.scheduledPublishDate <= p['@now'] &&
+          d.Live !== true
+      )
+      .sort((a, b) => a.scheduledPublishDate.localeCompare(b.scheduledPublishDate))
+      .map((d) => ({ id: d.id }));
+  });
+  return { store, byId };
+}
+
+/** Schedule `id` through the real handler, as the Calendar does. */
+async function scheduleThroughHandler(store, id, scheduledPublishDate) {
+  const response = await saveContentSchedule(
+    {
+      guard: { requireRole: vi.fn(async () => ({ user: { oid: 'u1', email: 'a@example.com' }, error: null })) },
+      store,
+      now: () => new Date('2026-05-01T00:00:00.000Z'),
+    },
+    {
+      headers: { get: () => 'vitest' },
+      json: async () => ({ contentId: id, instantPublish: false, scheduledPublishDate }),
+    },
+    context
+  );
+  expect(response.status).toBe(200);
+}
+
+describe('scheduling then the timer (#1887)', () => {
+  it('publishes a forge_ready item that was scheduled', async () => {
+    const { store, byId } = makeContentStore([{ id: 'f1', type: 'blog', contentStatus: 'forge_ready' }]);
+    await scheduleThroughHandler(store, 'f1', '2026-05-15T09:00:00Z');
+    // Scheduling keeps forge_ready; the timer must still see it.
+    expect(byId.get('f1').contentStatus).toBe('forge_ready');
+
+    const publish = makePublish(async (id) => ({ contentId: id }));
+    const summary = await run(store, publish);
+
+    expect(publish.processPublishContent).toHaveBeenCalledTimes(1);
+    expect(publish.processPublishContent.mock.calls[0][0]).toBe('f1');
+    expect(summary).toMatchObject({ due: 1, published: 1, failed: 0 });
+    expect(byId.get('f1').scheduledPublishDate).toBeNull();
+  });
+
+  it('publishes an approved item that was scheduled', async () => {
+    const { store, byId } = makeContentStore([{ id: 'a1', type: 'blog', contentStatus: 'in_review' }]);
+    await scheduleThroughHandler(store, 'a1', '2026-05-15T09:00:00Z');
+    expect(byId.get('a1').contentStatus).toBe('approved');
+
+    const publish = makePublish(async (id) => ({ contentId: id }));
+    const summary = await run(store, publish);
+
+    expect(publish.processPublishContent.mock.calls.map(([id]) => id)).toEqual(['a1']);
+    expect(summary).toMatchObject({ due: 1, published: 1 });
+  });
+
+  it('does not pick up a due item in a status outside the scheduled set', async () => {
+    const { store } = makeContentStore([
+      { id: 'e1', contentStatus: 'editing', scheduledPublishDate: '2026-05-15T09:00:00.000Z', Live: false },
+    ]);
+    const publish = makePublish();
+    const summary = await run(store, publish);
+
+    expect(publish.processPublishContent).not.toHaveBeenCalled();
+    expect(summary.due).toBe(0);
+    expect(dueQueryParameters('x').find((q) => q.name === '@statuses').value).not.toContain('editing');
+  });
+
+  it('does not pick up a scheduled forge_ready item before its date', async () => {
+    const { store } = makeContentStore([{ id: 'f2', type: 'blog', contentStatus: 'forge_ready' }]);
+    await scheduleThroughHandler(store, 'f2', '2026-07-01T09:00:00Z');
+    const publish = makePublish();
+    await run(store, publish);
+    expect(publish.processPublishContent).not.toHaveBeenCalled();
   });
 });
 
@@ -146,7 +262,10 @@ describe('runScheduledPublish', () => {
     const store = makeStore([]);
     await run(store, makePublish());
     const [, , parameters] = store.queryDocs.mock.calls[0];
-    expect(parameters).toEqual([{ name: '@now', value: '2026-06-01T12:00:00.000Z' }]);
+    expect(parameters).toEqual([
+      { name: '@now', value: '2026-06-01T12:00:00.000Z' },
+      { name: '@statuses', value: ['approved', 'forge_ready'] },
+    ]);
   });
 
   it('publishes through processPublishContent, not its own implementation', async () => {
