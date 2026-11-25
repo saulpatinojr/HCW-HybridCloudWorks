@@ -20,14 +20,28 @@ export function getReviewPath(contentId) {
 
 const toDateMaybe = toDate;
 
+// The fields a publish date may arrive under, in the order they are trusted.
+const PUBLISHED_KEYS = [
+  'publishedAt',
+  'blogPublishedAt',
+  'Published At',
+  'publishedDate',
+  'datePublished',
+  'pubDate',
+];
+
+/** The first publish-date field that is set, or the last one's value when none is. */
+function publishedValue(item) {
+  let value;
+  for (const key of PUBLISHED_KEYS) {
+    value = item?.[key];
+    if (value) return value;
+  }
+  return value;
+}
+
 export function formatPublishedDate(item) {
-  const published =
-    item?.publishedAt ||
-    item?.blogPublishedAt ||
-    item?.['Published At'] ||
-    item?.publishedDate ||
-    item?.datePublished ||
-    item?.pubDate;
+  const published = publishedValue(item);
   const publishedDate = toDateMaybe(published);
   if (publishedDate) {
     return {
@@ -75,14 +89,7 @@ export function getEditorPath(contentId) {
 // negative/positive/zero for ascending order; the toolbar negates the
 // result for descending.
 export function getPublishedMs(item) {
-  const v =
-    item?.publishedAt ||
-    item?.blogPublishedAt ||
-    item?.['Published At'] ||
-    item?.publishedDate ||
-    item?.datePublished ||
-    item?.pubDate;
-  return toMillis(v) || null;
+  return toMillis(publishedValue(item)) || null;
 }
 
 export function getIngestedMs(item) {

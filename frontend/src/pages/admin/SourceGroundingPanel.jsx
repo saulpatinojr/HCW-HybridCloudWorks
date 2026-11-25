@@ -33,6 +33,30 @@ const formatCost = (usd) => (usd >= 0.01 ? `$${usd.toFixed(2)}` : `$${usd.toFixe
 
 const KIND_LABEL = { page: 'page', video: 'video' };
 
+/** "1 page" / "2 pages". */
+const countOf = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
+
+/** The line beside the button: how many pages and videos, and how many refused. */
+function sourceSummary(pages, videos, refused) {
+  return `${countOf(pages, 'page')}, ${countOf(videos, 'video')}${refused ? `, ${refused} refused` : ''}`;
+}
+
+/**
+ * What a finished job leaves on screen: the progress line on success, or the
+ * error on anything else.
+ */
+function jobOutcome(job) {
+  const report = job?.result;
+  if (job?.status === 'succeeded' && report) {
+    const audio = report.audioError ? ', without audio' : '';
+    const cost = report.costUsd ? ` · ${formatCost(report.costUsd)}` : '';
+    return { progress: `Drafted from ${report.sourceCount} sources${audio}${cost}`, error: null };
+  }
+  // The job's own sentence — the router's refusal, a source Gemini
+  // could not read — is the thing worth showing.
+  return { progress: null, error: job?.error || `Job ${job?.status}` };
+}
+
 function SourceLine({ line }) {
   if (line.error) {
     return (
@@ -76,12 +100,9 @@ export function SourceGroundingPanel({ platform, examCode, certTitle, onDone }) 
   const pages = valid.filter((line) => line.kind === 'page').length;
   const videos = valid.filter((line) => line.kind === 'video').length;
 
-  const ready =
-    Boolean(examCode?.trim()) &&
-    Boolean(title.trim()) &&
-    valid.length > 0 &&
-    invalid.length === 0 &&
-    !generating;
+  const linesOk = valid.length > 0 && invalid.length === 0;
+  const examText = examCode?.trim();
+  const ready = Boolean(examText) && Boolean(title.trim()) && linesOk && !generating;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -98,17 +119,9 @@ export function SourceGroundingPanel({ platform, examCode, certTitle, onDone }) 
         sources: valid.map(({ kind, url }) => ({ kind, url })),
         onUpdate: (j) => setProgress(`Job ${j.status}…`),
       });
-      const report = job?.result;
-      if (job?.status === 'succeeded' && report) {
-        const audio = report.audioError ? ', without audio' : '';
-        const cost = report.costUsd ? ` · ${formatCost(report.costUsd)}` : '';
-        setProgress(`Drafted from ${report.sourceCount} sources${audio}${cost}`);
-      } else {
-        // The job's own sentence — the router's refusal, a source Gemini
-        // could not read — is the thing worth showing.
-        setProgress(null);
-        setError(job?.error || `Job ${job?.status}`);
-      }
+      const outcome = jobOutcome(job);
+      setProgress(outcome.progress);
+      if (outcome.error) setError(outcome.error);
       await onDone?.();
     } catch (err) {
       setError(err.message);
@@ -126,10 +139,10 @@ export function SourceGroundingPanel({ platform, examCode, certTitle, onDone }) 
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            One episode for {examCode?.trim() ? examCode.trim() : 'the exam code above'}, built from
-            web pages and YouTube videos you choose rather than the study guide. It is a second kind
-            of episode — the guide-grounded ones are unchanged — and it lands as a draft in the same
-            set, marked as source-grounded, with its sources listed beside the transcript.
+            One episode for {examText || 'the exam code above'}, built from web pages and YouTube
+            videos you choose rather than the study guide. It is a second kind of episode — the
+            guide-grounded ones are unchanged — and it lands as a draft in the same set, marked as
+            source-grounded, with its sources listed beside the transcript.
           </p>
           {error && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -175,10 +188,7 @@ export function SourceGroundingPanel({ platform, examCode, certTitle, onDone }) 
               Generate from sources
             </Button>
             <span className="text-xs text-muted-foreground">
-              {progress ||
-                (lines.length > 0
-                  ? `${pages} ${pages === 1 ? 'page' : 'pages'}, ${videos} ${videos === 1 ? 'video' : 'videos'}${invalid.length ? `, ${invalid.length} refused` : ''}`
-                  : null)}
+              {progress || (lines.length > 0 ? sourceSummary(pages, videos, invalid.length) : null)}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">

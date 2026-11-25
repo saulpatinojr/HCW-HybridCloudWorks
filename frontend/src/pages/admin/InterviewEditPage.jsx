@@ -116,6 +116,46 @@ function SourceBox({ id, onSent, readDuration }) {
   );
 }
 
+/** The details' problems, and the new photo's when one was chosen. */
+function detailsAndPhotoProblems(form, photo) {
+  const found = detailsProblems(form);
+  if (!photo) return found;
+  const photoProblem = publicImageFileProblem(photo);
+  if (photoProblem) found.photo = photoProblem;
+  if (!String(form.photoAlt || '').trim()) {
+    found.photoAlt = 'Describe the photo in a few words, for people who cannot see it.';
+  }
+  return found;
+}
+
+/**
+ * Uploads a new guest photo. Resolves { image } on success, or { problem }
+ * with the sentence to show under the photo field. `altText()` reads the
+ * description once the upload is done.
+ */
+async function uploadGuestPhoto(interviewId, photo, altText) {
+  // `covers` is public: send the pixels only, never the camera's metadata.
+  let clean;
+  try {
+    clean = await stripImageMetadata(photo);
+  } catch (failure) {
+    return { problem: failure.message };
+  }
+  const uploaded = await uploadImageFile({
+    container: 'covers',
+    path: `interviews/${interviewId}/guest-${Date.now()}.${imageExtensionFor(clean)}`,
+    file: clean,
+  }).catch(() => null);
+  if (!uploaded?.url) return { problem: 'The photo could not be uploaded. Try again.' };
+  return { image: { src: uploaded.url, alt: altText() } };
+}
+
+/** The stored photo with its new description, when only the description changed. */
+function keptPhotoWithNewAlt(doc, form) {
+  const alt = String(form.photoAlt || '').trim();
+  return doc.image?.src && alt !== doc.image.alt ? { src: doc.image.src, alt } : null;
+}
+
 /** The details section: the guest, the title, the tags and the photo. */
 function DetailsBox({ doc, saving, onSave, onDirty }) {
   // The owner's edits, or null while there are none (then the stored values show).
@@ -137,38 +177,20 @@ function DetailsBox({ doc, saving, onSave, onDirty }) {
   };
 
   const save = async () => {
-    const found = detailsProblems(form);
-    if (photo) {
-      const photoProblem = publicImageFileProblem(photo);
-      if (photoProblem) found.photo = photoProblem;
-      if (!String(form.photoAlt || '').trim()) {
-        found.photoAlt = 'Describe the photo in a few words, for people who cannot see it.';
-      }
-    }
+    const found = detailsAndPhotoProblems(form, photo);
     setProblems(found);
     if (Object.keys(found).length > 0) return;
     const updates = detailsUpdates(form);
     if (photo) {
-      // `covers` is public: send the pixels only, never the camera's metadata.
-      let clean;
-      try {
-        clean = await stripImageMetadata(photo);
-      } catch (failure) {
-        setProblems({ photo: failure.message });
+      const result = await uploadGuestPhoto(doc.id, photo, () => String(form.photoAlt).trim());
+      if (result.problem) {
+        setProblems({ photo: result.problem });
         return;
       }
-      const uploaded = await uploadImageFile({
-        container: 'covers',
-        path: `interviews/${doc.id}/guest-${Date.now()}.${imageExtensionFor(clean)}`,
-        file: clean,
-      }).catch(() => null);
-      if (!uploaded?.url) {
-        setProblems({ photo: 'The photo could not be uploaded. Try again.' });
-        return;
-      }
-      updates.image = { src: uploaded.url, alt: String(form.photoAlt).trim() };
-    } else if (doc.image?.src && String(form.photoAlt || '').trim() !== doc.image.alt) {
-      updates.image = { src: doc.image.src, alt: String(form.photoAlt || '').trim() };
+      updates.image = result.image;
+    } else {
+      const kept = keptPhotoWithNewAlt(doc, form);
+      if (kept) updates.image = kept;
     }
     const ok = await onSave(updates, 'Details saved');
     if (ok) reset();
