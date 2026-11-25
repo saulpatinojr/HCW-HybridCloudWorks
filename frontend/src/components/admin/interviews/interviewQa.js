@@ -2,7 +2,7 @@
  * The Q&A editor's pure rules and the status moves the page offers. Split
  * out of interviewModel.js, whose LIMITS they share.
  */
-import { LIMITS } from './interviewModel';
+import { LIMITS } from './interviewLimits';
 
 /** An empty question for the editor's Add button. */
 export const emptyQaItem = () => ({ q: '', a: '', pullQuote: '' });
