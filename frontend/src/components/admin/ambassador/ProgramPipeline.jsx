@@ -46,6 +46,17 @@ export function evidenceStateByContent(evidenceRows, programId) {
   return states;
 }
 
+/**
+ * Whether a piece can be filed: the same test the server's import applies
+ * (functions/src/lib/ambassador/import-readers.js isLiveContent), so the
+ * button shows exactly when the import would accept the piece. That covers
+ * an older document marked live by its `Status` (review of #1891).
+ */
+export function isLivePiece(piece) {
+  if (!piece || ![undefined, null, '', false].includes(piece.softDeletedAt)) return false;
+  return contentStatusInfo(piece).stage === 'live' || piece.Status === 'Live';
+}
+
 /** The program's reference, as the hand-off sends it. */
 export const programRef = (program) => ({ page: AMBASSADOR_PAGE, id: program.id });
 
@@ -75,7 +86,7 @@ export default function ProgramPipeline({ program, evidenceRows, onFileEvidence,
   const action = (piece) => {
     // Live as every Pipeline page reads it (lib/status.js), so an older
     // document marked live another way is offered too.
-    if (contentStatusInfo(piece).stage !== 'live') return null;
+    if (!isLivePiece(piece)) return null;
     const state = filed.get(String(piece.id));
     if (state === 'program') {
       return (

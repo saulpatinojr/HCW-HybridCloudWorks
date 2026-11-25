@@ -5,7 +5,8 @@
  * program's readiness) and Start application. Editing the catalogue is the
  * Settings tab's job; this tab reads it.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Play } from 'lucide-react';
@@ -24,7 +25,6 @@ import {
 import { ReadsStatus, allLanded } from './Parts';
 import { AdditionalPrograms, ProgramDetails, UpkeepLine, WINDOW_BADGE } from './ProgramParts';
 import { DraftForProgramButton } from './ProgramPipeline';
-import { linkedId } from '@/hooks/useLinkedItem';
 import { LINK_PARAMS } from '@/lib/itemLinks';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -137,7 +137,32 @@ export default function ProgramsTab({ hub, nav }) {
   const reads = [programs, applications];
   // `?program=<id>` opens that program's details: where a Pipeline chip that
   // says "Ambassador · <program>" leads (lib/pageLinks.js, #1886).
-  const [detailsId, setDetailsId] = useState(() => linkedId(LINK_PARAMS.program));
+  // The open program follows `?program=<id>` both ways (review of #1891): a
+  // link, Back or Forward opens or closes it, and opening or closing it here
+  // writes the address, as the Applications tab does with `?application=`.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedProgram = searchParams.get(LINK_PARAMS.program);
+  const [detailsId, setDetailsIdState] = useState(linkedProgram);
+  // When the address changes under the page, follow it (React's "adjust
+  // state while rendering" pattern, not an effect).
+  const [seenProgram, setSeenProgram] = useState(linkedProgram);
+  if (linkedProgram !== seenProgram) {
+    setSeenProgram(linkedProgram);
+    setDetailsIdState(linkedProgram);
+  }
+  const setDetailsId = useCallback(
+    (id) => {
+      setDetailsIdState(id);
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('tab', 'programs');
+        if (id) next.set(LINK_PARAMS.program, id);
+        else next.delete(LINK_PARAMS.program);
+        return next;
+      });
+    },
+    [setSearchParams]
+  );
   const [starting, setStarting] = useState(null);
   const [filing, setFiling] = useState(null);
   const { toast } = useToast();

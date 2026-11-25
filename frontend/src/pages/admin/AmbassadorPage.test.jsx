@@ -588,6 +588,43 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('offers filing for a piece marked live the older way, as the import accepts it (review of #1891)', async () => {
+    searchParams = 'tab=programs&program=program-example';
+    getJSON.mockImplementation(
+      upkeepRoutes({
+        'cms/content': {
+          success: true,
+          items: [{ ...LIVE_PIECE, Live: undefined, contentStatus: 'approved', Status: 'Live' }],
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    const pipeline = await screen.findByTestId('program-pipeline');
+    expect(
+      await within(pipeline).findByRole('button', { name: /File as evidence/ })
+    ).toBeInTheDocument();
+  });
+
+  it('writes the open program into the address, and takes it out on close (review of #1891)', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(upkeepRoutes());
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: 'Details' }));
+    });
+    const opened = setSearchParams.mock.calls.at(-1)[0](new URLSearchParams('tab=programs'));
+    expect(opened.get('program')).toBe('program-example');
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    });
+    const closed = setSearchParams.mock.calls.at(-1)[0](
+      new URLSearchParams('tab=programs&program=program-example')
+    );
+    expect(closed.get('program')).toBeNull();
+    expect(closed.get('tab')).toBe('programs');
+  });
+
   it('says so when a link names a program no longer in the catalogue', async () => {
     searchParams = 'tab=programs&program=program-gone';
     window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-gone');
