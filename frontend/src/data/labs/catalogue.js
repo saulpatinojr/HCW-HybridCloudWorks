@@ -55,6 +55,7 @@
  */
 import { routes, staticRoutes } from '@/lib/routeFactory';
 import { PUBLISHED_ROUTES } from '@/data/publishedRoutes';
+import { TERRAFORM_REQUIRED_VERSION } from '@/lib/landingZone/terraformVersion';
 
 /** Every tool a lab may name; the test refuses anything outside this set. */
 export const LAB_TOOLS = Object.freeze(['az', 'terraform', 'kubectl', 'helm', 'ansible', 'docker']);
@@ -256,13 +257,20 @@ const ARTICLE_AGENT_EXPLAINS = article(
 );
 
 /**
+ * The Terraform line every sample below opens with: the Landing Zone packs'
+ * rule, because the runner checks each sample with the same Terraform the
+ * packs are held to (#1864).
+ */
+const REQUIRED_VERSION_LINE = `  required_version = "${TERRAFORM_REQUIRED_VERSION}"`;
+
+/**
  * A small Terraform root for the runner's `terraform-validate` job: the
  * Landing Zone Builder's management module at the version the builder pins,
  * which the runner has an offline copy of. Fits the job's text payload.
  */
 const LANDING_ZONE_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.12"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    azurerm = {',
   '      source  = "hashicorp/azurerm"',
@@ -288,7 +296,7 @@ const LANDING_ZONE_SAMPLE = md([
 /** The root the walkthrough opens, as the runner's text payload. */
 const PROVIDERS_ONLY_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.9"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    azurerm = {',
   '      source  = "hashicorp/azurerm"',
@@ -334,7 +342,7 @@ const ANSIBLE_SAMPLE = md([
 /** A sample root for the AWS multi-account validation runner job. */
 const AWS_TRANSIT_GATEWAY_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.9"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    aws = {',
   '      source  = "hashicorp/aws"',
@@ -355,7 +363,7 @@ const AWS_TRANSIT_GATEWAY_SAMPLE = md([
 /** A sample root for the Google Cloud Shared VPC validation runner job. */
 const GCP_SHARED_VPC_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.9"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    google = {',
   '      source  = "hashicorp/google"',
@@ -377,7 +385,7 @@ const GCP_SHARED_VPC_SAMPLE = md([
 /** A sample root for the VMware HCX / AVS validation runner job. */
 const VMWARE_HCX_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.9"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    vsphere = {',
   '      source  = "hashicorp/vsphere"',
@@ -409,7 +417,7 @@ const VMWARE_HCX_SAMPLE = md([
 /** A sample root for the Docker agent containment runner job. */
 const DOCKER_SANDBOX_SAMPLE = md([
   'terraform {',
-  '  required_version = ">= 1.9"',
+  REQUIRED_VERSION_LINE,
   '  required_providers {',
   '    docker = {',
   '      source  = "kreuzwerker/docker"',

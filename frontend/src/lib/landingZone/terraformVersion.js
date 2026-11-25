@@ -32,5 +32,10 @@
  * The lab image ships a Terraform inside this range
  * (lab-image/versions.env, TERRAFORM_VERSION). A module bump that raises a
  * floor above 1.12 raises this line, and its row above changes with it.
+ *
+ * The lab's own Terraform (the catalogue's samples, the lab image's smoke
+ * roots and the Coder templates) states this same rule (#1864), so raising it
+ * raises theirs: catalogue.js reads it from here, and
+ * scripts/lab-terraform-version.test.mjs fails until the .tf files match.
  */
 export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';
