@@ -205,13 +205,8 @@
  * `@Microsoft.KeyVault(...)` string. That is not a key; `readKey` says so.
  */
 
-import { AuthoredError, codeShaped, errorCode, errorFacts } from '../http/error-response.js';
-import {
-  DEFAULT_PROVIDER_ORDER,
-  createAiConfigLoader,
-  isFeatureEnabled,
-  resolveProviderOrder,
-} from './ai-config.js';
+import { AuthoredError, codeShaped, errorFacts } from '../http/error-response.js';
+import { createAiConfigLoader, isFeatureEnabled, resolveProviderOrder } from './ai-config.js';
 import { MEDIA_PROVIDERS, PROVIDER_CAPABILITIES } from './provider-order.js';
 // The resolver (ADR 0034 §3, #858): one pure function decides the chain
 // from the selection document, the catalogue and what holds a key. The
@@ -219,10 +214,16 @@ import { MEDIA_PROVIDERS, PROVIDER_CAPABILITIES } from './provider-order.js';
 // that document by the loader (migrate-selection.js).
 import { UNDECLARED_TASK, selectChain } from './select.js';
 import { defaultSelection } from './migrate-selection.js';
-import { AI_TASKS, TASK_NAMES, defaultModeFor, isMediaTask, taskFor } from './tasks.js';
+import {
+  AI_TASKS,
+  TASK_NAMES,
+  defaultModeFor,
+  isMediaTask,
+  taskFor,
+} from './tasks.js';
 import { recommendedModelFor } from './provider-recommendations.js';
 import { featureSource, recordAiUsage } from './usage.js';
-import { COST_TABLE, DEFAULT_MODEL_TABLE, isPriced, modelRatesFor } from './model-tables.js';
+import { DEFAULT_MODEL_TABLE, isPriced } from './model-tables.js';
 // Source grounding (#433): the pure half — source checks, prompt, request
 // body, response readers — is grounding.js; the call is on the router below.
 // The public names are re-exported so callers and tests are unchanged.
@@ -235,7 +236,7 @@ import {
   groundingUnavailable,
   validateGroundingSources,
 } from './grounding.js';
-import { MIN_ATTEMPT_MS, providerShareMs, startBudget } from './time-budget.js';
+import { MIN_ATTEMPT_MS, startBudget } from './time-budget.js';
 import { createKeyVerdictReporter, recordKeyVerdict } from '../key-verdict.js';
 
 export {
@@ -245,136 +246,76 @@ export {
   isYouTubeVideoUrl,
   validateGroundingSources,
 } from './grounding.js';
+import {
+  KEYLESS_PROVIDERS,
+  KEY_ENV,
+  MEDIA_KEY_ENV,
+  PROVIDERS,
+} from './router-base.js';
 
-/**
- * The providers this platform implements, in default preference order.
- *
- * Set and order are deliberately the same list: there is no implemented
- * provider without a place in the order, and no place in the order for a
- * provider that is not implemented. Keeping them as one constant is what stops
- * the two drifting — `ai-config.test.js` asserts the members match.
- *
- * The order changed on 2026-08-23 (owner decision) from Anthropic-first to
- * Gemini-first; the reasoning is on DEFAULT_PROVIDER_ORDER.
- */
-export const PROVIDERS = DEFAULT_PROVIDER_ORDER;
+export {
+  KEYLESS_PROVIDERS,
+  KEY_ENV,
+  MEDIA_KEY_ENV,
+  PROVIDERS,
+} from './router-base.js';
+import {
+  AiFeatureDisabledError,
+  AiNotConfiguredError,
+  JSON_ONLY,
+  getCostEstimate,
+  parseJsonWithFallbacks,
+  readKey,
+  sanitizeJsonText,
+} from './router-base.js';
 
-export const KEY_ENV = Object.freeze({
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  nvidia: 'NVIDIA_API_KEY',
-  // Not a key (header: MICROSOFT FOUNDRY): the endpoint Terraform sets. Its
-  // presence is what makes the provider available; the token is fetched.
-  foundry: 'FOUNDRY_ENDPOINT',
-});
+export {
+  AiFeatureDisabledError,
+  AiNotConfiguredError,
+  getCostEstimate,
+  isRetryableError,
+  parseJsonWithFallbacks,
+  readKey,
+  sanitizeJsonText,
+} from './router-base.js';
+import {
+  CHAT_TIMEOUT_MS,
+  NVIDIA_BASE_URL,
+  NVIDIA_MAX_TOKENS,
+  NVIDIA_TIMEOUT_MS,
+  TEXT_ONLY_PROVIDERS,
+  createFoundryTokenProvider,
+  createRequestPacer,
+  defaultGetToken,
+  foundryBaseUrl,
+  foundryTokenScope,
+  hasNonTextParts,
+  isProviderUnusable,
+  nvidiaRpm,
+  pacedError,
+  postJson,
+  shareEndFor,
+  stripThinking,
+  toAnthropicContent,
+  toGeminiParts,
+  toOpenAiContent,
+  toPlainText,
+  withRetry,
+} from './router-transport.js';
 
-/**
- * Providers with no secret behind them. A 401/403 from one of these is a
- * missing role, not a bad key, so the router reports no key verdict for it:
- * there is no API-keys row to turn red, and the secret catalogue (which the
- * Terraform cross-check holds to the vault references exactly) carries no
- * entry for it. secret-catalog.test.js pins the probed set to the rest.
- */
-export const KEYLESS_PROVIDERS = Object.freeze(['foundry']);
+export {
+  AiBudgetExhaustedError,
+  FOUNDRY_TOKEN_SCOPE,
+  NVIDIA_BASE_URL,
+  NVIDIA_DEFAULT_RPM,
+  createFoundryTokenProvider,
+  createRequestPacer,
+  defaultGetToken,
+  foundryBaseUrl,
+  foundryTokenScope,
+} from './router-transport.js';
 
-/**
- * The media providers' keys (header: THE AUDIO AND IMAGE TASKS). Kept apart
- * from KEY_ENV on purpose: KEY_ENV is the chat providers', read by
- * `availableProviders`, the weekly probe's Test and the API-keys page, and
- * none of those can call a voice or an image model. `availableMediaProviders`
- * reads this one; the resolver's `availability` is the union.
- */
-export const MEDIA_KEY_ENV = Object.freeze({
-  elevenlabs: 'ELEVENLABS_API_KEY',
-  replicate: 'REPLICATE_API_KEY',
-});
-
-// The purpose → model table and the cost table live in model-tables.js
-// (#858, so the catalogue can read them without this module); every caller
-// keeps importing them from here.
 export { COST_TABLE, DEFAULT_MODEL_TABLE, isPriced, modelRatesFor } from './model-tables.js';
-
-export function getCostEstimate(provider, model, promptTokens = 0, completionTokens = 0, at = Date.now()) {
-  const rates = COST_TABLE[provider] || {};
-  if (!isPriced(provider, model)) return 0;
-  // Image costs are supplied by the image caller, never inferred from token counts.
-  const [inRate, outRate] = modelRatesFor(provider, model, at) || (provider === 'nvidia' ? rates.default : null) || [0, 0];
-  return parseFloat(
-    ((promptTokens / 1_000_000) * inRate + (completionTokens / 1_000_000) * outRate).toFixed(8)
-  );
-}
-
-/**
- * No provider can run this call as configured. Every message is written in
- * this module and names the setting to fix, so an admin route may show it
- * (`authoredMessage`, #945); a public route keeps its own sentence.
- */
-export class AiNotConfiguredError extends AuthoredError {
-  /** @param {string} message - the sentence naming what is missing */
-  constructor(message) {
-    super(message);
-    this.name = 'AiNotConfiguredError';
-    this.code = 'AI_NOT_CONFIGURED';
-  }
-}
-
-/**
- * An administrator switched this feature off in the portal. Distinct from
- * AiNotConfiguredError because it is a decision, not a fault: callers that
- * degrade gracefully (skip alt text, publish an ungraded draft) should catch
- * this and carry on, and nothing should page anyone about it.
- */
-export class AiFeatureDisabledError extends AuthoredError {
-  /** @param {string} feature - the feature switched off (authored sentence, #945) */
-  constructor(feature) {
-    super(`The '${feature}' AI feature is turned off in the admin portal.`);
-    this.name = 'AiFeatureDisabledError';
-    this.code = 'AI_FEATURE_DISABLED';
-    this.feature = feature;
-  }
-}
-
-/** An env value that is a real key: non-empty and not an unresolved Key Vault reference. */
-export function readKey(env, name) {
-  const raw = env?.[name];
-  if (typeof raw !== 'string') return '';
-  const value = raw.replace(/^\uFEFF/, '').trim();
-  if (!value || value.startsWith('@Microsoft.KeyVault(')) return '';
-  return value;
-}
-
-export function sanitizeJsonText(text = '') {
-  return String(text)
-    .replace(/```json\n?/g, '')
-    .replace(/```\n?/g, '')
-    .trim();
-}
-
-export function parseJsonWithFallbacks(rawText = '') {
-  const cleaned = sanitizeJsonText(rawText);
-  try {
-    return JSON.parse(cleaned || '{}');
-  } catch {
-    // fall through to object extraction
-  }
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    // Control characters a model leaked into a string value break JSON.parse.
-    return JSON.parse(cleaned.slice(start, end + 1).replace(/[\u0000-\u0019]/g, ' '));
-  }
-  throw new Error('Model response did not contain parseable JSON');
-}
-
-export function isRetryableError(error) {
-  const status = error?.status;
-  if ([408, 429, 500, 502, 503, 504].includes(status)) return true;
-  return /429|503|timeout|temporarily unavailable|rate/i.test(String(error?.message || ''));
-}
-
-const JSON_ONLY =
-  'Return only valid JSON. Do not include markdown code fences, prose, or extra commentary.';
 
 function recordUsage(usageOut, provider, model, promptTokens, completionTokens) {
   if (!Array.isArray(usageOut)) return;
@@ -388,447 +329,6 @@ function recordUsage(usageOut, provider, model, promptTokens, completionTokens) 
     costUsd: getCostEstimate(provider, model, inTokens, outTokens),
     ...(isPriced(provider, model) ? {} : { unpriced: true }),
   });
-}
-
-/**
- * A part a converter cannot carry is refused, never dropped.
- *
- * Until #433 each converter returned null for a shape it did not recognise and
- * filtered it out, so a `fileData` part reached the model as nothing and the
- * model answered — confidently — without it. Nothing errored and nothing
- * logged. The refusal is a 400 on purpose: `isRetryableError` will not retry
- * it and `isProviderUnusable` will not fail over from it, because the next
- * provider would refuse the same part (or, worse, be the one that drops it).
- * The wording avoids every token those two predicates match on.
- */
-function refusePart(provider, part, expected) {
-  const shape =
-    part && typeof part === 'object' ? `{${Object.keys(part).join(', ')}}` : String(typeof part);
-  const err = new Error(
-    `Cannot send a prompt part to ${provider}: expected ${expected}, got ${shape}. Nothing was sent.`
-  );
-  err.status = 400;
-  err.code = 'AI_PART_REFUSED';
-  return err;
-}
-
-/** Multimodal parts → OpenAI content blocks. */
-function toOpenAiContent(parts, prompt) {
-  if (!Array.isArray(parts) || parts.length === 0) return [{ type: 'text', text: prompt }];
-  return parts.map((part) => {
-    if (typeof part?.text === 'string') return { type: 'text', text: part.text };
-    const mime = String(part?.inlineData?.mimeType || '').toLowerCase();
-    if (mime.startsWith('image/') && part?.inlineData?.data) {
-      return {
-        type: 'image_url',
-        image_url: { url: `data:${mime};base64,${part.inlineData.data}` },
-      };
-    }
-    throw refusePart(
-      'openai',
-      part,
-      mime
-        ? `{text} or image/* inline data, not ${mime}`
-        : '{text} or {inlineData:{mimeType:image/*,data}}'
-    );
-  });
-}
-
-/**
- * Parts → one plain string, for a text-only provider. Only text parts are
- * possible here — `chainForParts` keeps anything else away — so any other
- * shape is refused rather than dropped, as everywhere else.
- */
-function toPlainText(parts, prompt) {
-  if (!Array.isArray(parts) || parts.length === 0) return prompt;
-  return parts
-    .map((part) => {
-      if (typeof part?.text === 'string') return part.text;
-      throw refusePart('nvidia', part, '{text}');
-    })
-    .join('\n\n');
-}
-
-/** Multimodal parts → Anthropic content blocks. */
-function toAnthropicContent(parts, prompt) {
-  if (!Array.isArray(parts) || parts.length === 0) return [{ type: 'text', text: prompt }];
-  return parts.map((part) => {
-    if (typeof part?.text === 'string') return { type: 'text', text: part.text };
-    const mime = String(part?.inlineData?.mimeType || '').toLowerCase();
-    if (mime.startsWith('image/') && part?.inlineData?.data) {
-      return {
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: part.inlineData.mimeType,
-          data: part.inlineData.data,
-        },
-      };
-    }
-    throw refusePart(
-      'anthropic',
-      part,
-      mime
-        ? `{text} or image/* inline data, not ${mime}`
-        : '{text} or {inlineData:{mimeType:image/*,data}}'
-    );
-  });
-}
-
-/** Multimodal parts → Gemini parts (already the native shape). */
-function toGeminiParts(parts, prompt) {
-  if (!Array.isArray(parts) || parts.length === 0) return [{ text: prompt }];
-  return parts.map((part) => {
-    if (typeof part?.text === 'string') return { text: part.text };
-    if (part?.inlineData?.mimeType && part?.inlineData?.data) {
-      return {
-        inlineData: {
-          mimeType: part.inlineData.mimeType,
-          data: part.inlineData.data,
-        },
-      };
-    }
-    // A URL the model should fetch is not a part on this endpoint at all — it
-    // is a grounded call; see generateGroundedJsonResponse.
-    throw refusePart('gemini', part, '{text} or {inlineData:{mimeType,data}}');
-  });
-}
-
-// ---------------------------------------------------------------------------
-// NVIDIA API Catalog (#701).
-
-export const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-
-/**
- * The Entra audience the Foundry v1 endpoint accepts. Microsoft's pages name
- * two: the keyless-authentication guide for Foundry resources on the
- * /openai/v1 path says tokens must carry `https://ai.azure.com/.default`,
- * while older Azure OpenAI pages say `https://cognitiveservices.azure.com`.
- * This is the documented one for the resource kind foundry.tf creates;
- * FOUNDRY_TOKEN_SCOPE in the environment overrides it, so a 401 on the other
- * audience is an app setting away rather than a deploy.
- */
-export const FOUNDRY_TOKEN_SCOPE = 'https://ai.azure.com/.default';
-
-/** The audience to request: the environment's override, else FOUNDRY_TOKEN_SCOPE. */
-export const foundryTokenScope = (env) => readKey(env, 'FOUNDRY_TOKEN_SCOPE') || FOUNDRY_TOKEN_SCOPE;
-
-/** The account's base URL for the OpenAI v1 surface, from FOUNDRY_ENDPOINT without a trailing slash. */
-export function foundryBaseUrl(env) {
-  return readKey(env, KEY_ENV.foundry).replace(/\/+$/, '');
-}
-
-/**
- * An Entra token for Foundry, fetched through @azure/identity and reused
- * until five minutes before it expires (#849). `getToken(scope)` is the
- * credential's own shape, `{ token, expiresOnTimestamp }`, so a test hands
- * in a stub and production hands in DefaultAzureCredential: the Function
- * App's system-assigned identity there, `az login` on a workstation.
- */
-export function createFoundryTokenProvider({
-  getToken,
-  now = () => Date.now(),
-  scope = FOUNDRY_TOKEN_SCOPE,
-}) {
-  const EARLY_MS = 5 * 60_000;
-  let cached = null;
-  return async () => {
-    if (cached && cached.expiresOnTimestamp - now() > EARLY_MS) return cached.token;
-    cached = await getToken(scope);
-    return cached.token;
-  };
-}
-
-/**
- * Production's token source: @azure/identity, imported only when Foundry is
- * first called. The specifier is a variable with `@vite-ignore` because the
- * frontend's contract tests import this module through Vite, which would
- * otherwise try to resolve a package only the Function App installs.
- */
-export async function defaultGetToken(scope) {
-  const identity = '@azure/identity';
-  const { DefaultAzureCredential } = await import(/* @vite-ignore */ identity);
-  return new DefaultAzureCredential().getToken(scope);
-}
-
-/**
- * Requests per rolling minute this instance will send to NVIDIA.
- *
- * The account limit is about 40 RPM (issue #701, checked 2026-09-25). 36 leaves
- * headroom for the admin portal's Test button and for clock skew between our
- * window and theirs. `NVIDIA_REQUESTS_PER_MINUTE` overrides it — lower, or
- * higher once NVIDIA raises the account's limit.
- *
- * The guard is per Function App INSTANCE. Two instances can together exceed
- * the account limit; when they do, NVIDIA answers 429, the router retries and
- * then fails over, which is the same degradation by a longer road.
- */
-export const NVIDIA_DEFAULT_RPM = 36;
-
-/** Reasoning models think before they answer; 60 s was sized for chat. */
-const NVIDIA_TIMEOUT_MS = 120_000;
-
-/**
- * A draft is long. Without it some NIM endpoints apply a small default and
- * truncate mid-article; a model whose cap is lower answers 400, which fails
- * over (see the header).
- */
-const NVIDIA_MAX_TOKENS = 8192;
-
-/**
- * A sliding-window pacing guard: at most `limit` grants in any `windowMs`.
- *
- * Sliding rather than a refilling bucket so the bound is exact — a full bucket
- * plus a minute of refill can pass nearly twice the limit inside one rolling
- * minute, which is precisely what an RPM limit counts. `take()` never waits: a
- * refusal is immediate, so the caller fails over instead of holding a request
- * open for up to a minute.
- */
-export function createRequestPacer({ limit, windowMs = 60_000, now = () => Date.now() }) {
-  const grants = [];
-  const prune = (t) => {
-    while (grants.length && t - grants[0] >= windowMs) grants.shift();
-  };
-  return {
-    take() {
-      const t = now();
-      prune(t);
-      if (grants.length >= limit) return false;
-      grants.push(t);
-      return true;
-    },
-    /** Grants inside the current window; for tests and diagnostics. */
-    used() {
-      prune(now());
-      return grants.length;
-    },
-  };
-}
-
-function nvidiaRpm(env) {
-  const n = Number.parseInt(String(env?.NVIDIA_REQUESTS_PER_MINUTE ?? ''), 10);
-  return Number.isInteger(n) && n > 0 ? n : NVIDIA_DEFAULT_RPM;
-}
-
-function pacedError(limit) {
-  const err = new Error(
-    `nvidia pacing guard: ${limit} requests in the last minute already sent from this instance; not sent.`
-  );
-  // 429 so it reads as what it is everywhere else; AI_PACED so withRetry does
-  // not sleep and try again against a window that is still full.
-  err.status = 429;
-  err.code = 'AI_PACED';
-  return err;
-}
-
-/** Providers that take text only, and are left out of a call carrying other parts. */
-const TEXT_ONLY_PROVIDERS = Object.freeze(['nvidia']);
-
-function hasNonTextParts(parts) {
-  return Array.isArray(parts) && parts.some((part) => typeof part?.text !== 'string');
-}
-
-/** Some reasoning models inline their thinking; the answer is what follows it. */
-function stripThinking(text) {
-  return String(text || '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .trim();
-}
-
-/**
- * One chat attempt's timeout for a provider whose table row sets none: every
- * provider but NVIDIA. A budgeted call cuts it shorter, never longer.
- */
-const CHAT_TIMEOUT_MS = 60_000;
-
-async function postJson(fetchImpl, url, { headers, body, timeoutMs = CHAT_TIMEOUT_MS, signal: parentSignal }) {
-  const timeoutController = new AbortController();
-  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
-  const signal = parentSignal
-    ? AbortSignal.any([parentSignal, timeoutController.signal])
-    : timeoutController.signal;
-  if (signal.aborted) {
-    clearTimeout(timer);
-    const err = new Error(signal.reason?.message || 'aborted');
-    err.status = 408;
-    throw err;
-  }
-  try {
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal,
-    });
-    const text = await response.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = null;
-    }
-    if (!response.ok) {
-      const detail = data?.error?.message || data?.message || text.slice(0, 300);
-      const err = new Error(`${response.status} ${detail}`);
-      err.status = response.status;
-      throw err;
-    }
-    return data;
-  } catch (error) {
-    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
-      const err = new Error(`timeout after ${timeoutMs} ms`);
-      err.status = 408;
-      throw err;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Does this error mean the PROVIDER is unusable, or that the REQUEST is bad?
- *
- * The distinction decides whether trying the next provider is worth anything.
- * A rejected key, a missing model or a dead endpoint is specific to one
- * provider and the next one will very likely work. A malformed request will
- * be malformed for all three, and walking the whole chain to prove it just
- * spends money and time on the same failure.
- */
-function isProviderUnusable(error, provider = null) {
-  const status = Number(error?.status);
-  // NVIDIA only: its models differ in context length and accepted
-  // parameters, so its 400 is not evidence the request is bad everywhere
-  // (header). A part we refused ourselves is, and stays put.
-  if (provider === 'nvidia' && [400, 422].includes(status) && error?.code !== 'AI_PART_REFUSED') {
-    return true;
-  }
-  // 401/403 rejected key, 404 unknown model or endpoint.
-  if ([401, 403, 404].includes(status)) return true;
-  // Anything retryable that survived its retries: the provider is not coming
-  // back within this call.
-  if (isRetryableError(error)) return true;
-  return /model|not found|unsupported|deprecated|quota|billing|credit/i.test(
-    String(error?.message || '')
-  );
-}
-
-/**
- * How a budgeted call ends when too little time is left to try the next
- * provider.
- *
- * It names each provider that was tried with its reason, and each that was
- * never reached. "Timed out" on its own would hide which provider spent the
- * time, and that is the one thing the owner needs in order to act. Status
- * 504 and code AI_BUDGET_EXHAUSTED let a handler map it to an HTTP status.
- * Nothing retries it: it is thrown outside withRetry, and after failover.
- */
-function budgetExhausted(budget, attempts, untried) {
-  const seconds = Math.round(budget.totalMs / 1000);
-  const notTried = untried.map((entry) => entry.provider).join(', ');
-  // Each reason is a code, never the provider's own message, so the sentence
-  // stays this module's and an admin route may show it whole (#945).
-  const tried = attempts
-    .map(({ provider, error }) => `${provider} (${attemptReason(error)})`)
-    .join('; ');
-  return new AiBudgetExhaustedError(
-    tried
-      ? `This AI call's ${seconds} s budget ran out after ${tried}. Not tried: ${notTried}.`
-      : `This AI call's ${seconds} s budget left too little time to try any provider (${notTried}).`,
-    attempts.length ? attempts.at(-1).error : undefined
-  );
-}
-
-/**
- * Why one attempt ended, content-free: "timed out" for the router's own
- * timeout, otherwise the error's code or HTTP status.
- *
- * @param {unknown} error - what the attempt threw
- * @returns {string}
- */
-function attemptReason(error) {
-  return error?.status === 408 && !error?.code ? 'timed out' : errorCode(error);
-}
-
-/**
- * The AI call's time budget is spent. Status 504, code AI_BUDGET_EXHAUSTED;
- * the sentence names the providers and their reasons as codes (authored).
- */
-export class AiBudgetExhaustedError extends AuthoredError {
-  /**
-   * @param {string} message - the authored sentence
-   * @param {unknown} [cause] - the last attempt's error, for the log
-   */
-  constructor(message, cause) {
-    super(message, { code: 'AI_BUDGET_EXHAUSTED', status: 504, cause });
-  }
-}
-
-/**
- * When this provider's share of the budget ends, or the AI_BUDGET_EXHAUSTED
- * error when too little is left to start it at all.
- */
-function shareEndFor(now, budget, { chain, index, attempts }) {
-  const startedAt = now();
-  const shareMs = providerShareMs({
-    remainingMs: budget.deadline - startedAt,
-    reserveMs: budget.reserveMs,
-    hasNext: index < chain.length - 1,
-  });
-  if (shareMs === 0) throw budgetExhausted(budget, attempts, chain.slice(index));
-  return startedAt + shareMs;
-}
-
-/**
- * Retry a retryable failure with backoff. `sleep` and `now` are the router's
- * clock, passed in so a test can run the backoff without waiting it out.
- *
- * Two exceptions, both about not waiting for nothing: a pacing refusal
- * (AI_PACED) is never retried — the window is still full two seconds later
- * — and NVIDIA's timeout is not either, because two more 120 s attempts
- * would hold an owner's job for six minutes before failing over.
- *
- * Inside a budget, `shareEnd` is when this provider's share runs out. A
- * retry is made only if the share still holds MIN_ATTEMPT_MS after the
- * backoff. The check is repeated once the wait is over, in case the wait
- * ran long. Otherwise the error goes straight to the failover, which is
- * worth more than a retry that cannot finish.
- */
-async function withRetry(
-  { sleep, now },
-  operation,
-  { maxAttempts = 3, provider = null, shareEnd = null } = {}
-) {
-  let lastError;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      const again = await waitToRetry({ sleep, now }, error, { attempt, maxAttempts, provider, shareEnd });
-      if (!again) break;
-    }
-  }
-  throw lastError;
-}
-
-/** Whether a failure is worth another attempt at all (the two exceptions above, then the retryable kinds). */
-function worthRetrying(error, { attempt, maxAttempts, provider }) {
-  if (error?.code === 'AI_PACED') return false;
-  if (provider === 'nvidia' && Number(error?.status) === 408) return false;
-  return attempt < maxAttempts && isRetryableError(error);
-}
-
-/** Whether the provider's share still holds MIN_ATTEMPT_MS after waiting `waitMs` (always, outside a budget). */
-const shareHolds = (shareEnd, now, waitMs) => shareEnd === null || shareEnd - now() - waitMs >= MIN_ATTEMPT_MS;
-
-/** Wait out the backoff before a retry: false, without waiting, when no retry should be made. */
-async function waitToRetry({ sleep, now }, error, { attempt, maxAttempts, provider, shareEnd }) {
-  if (!worthRetrying(error, { attempt, maxAttempts, provider })) return false;
-  const backoffMs = 2 ** attempt * 1000;
-  if (!shareHolds(shareEnd, now, backoffMs)) return false;
-  await sleep(backoffMs);
-  return shareHolds(shareEnd, now, 0);
 }
 
 /**
