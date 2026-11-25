@@ -1,5 +1,11 @@
 import { useState, useMemo, useCallback } from 'react';
 import { parseModulesFromMarkdown } from '@/lib/moduleParser';
+import {
+  alignedFrameContent,
+  movedList,
+  toggledFrameContent,
+  withSectionContent,
+} from './sectionEdits';
 
 // ── Pure helpers (module-private) ────────────────────────────────────────────
 
@@ -67,11 +73,6 @@ export function getSectionFrameDetails(sectionContent = '') {
   };
 }
 
-function composeSectionWithFrame(details, frameMarkup) {
-  if (details.hasHeading) return `${details.heading}\n\n${frameMarkup}`.trim();
-  return frameMarkup;
-}
-
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -114,13 +115,11 @@ export function useSections(draft, setDraft) {
 
   const reorderSections = useCallback(
     (fromIndex, toIndex) => {
-      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
-      if (fromIndex >= sections.length || toIndex >= sections.length) return;
-      const next = [...sections];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      setDraft(joinSectionsToDraft(next));
-      setSelectedSectionIndex(toIndex);
+      const next = movedList(sections, fromIndex, toIndex);
+      if (next) {
+        setDraft(joinSectionsToDraft(next));
+        setSelectedSectionIndex(toIndex);
+      }
     },
     [sections, setDraft]
   );
@@ -138,20 +137,17 @@ export function useSections(draft, setDraft) {
 
   const updateSelectedSection = useCallback(
     (updatedContent) => {
-      if (!selectedSection) return;
-      updateSectionAtIndex(clampedIndex, updatedContent);
+      if (selectedSection) updateSectionAtIndex(clampedIndex, updatedContent);
     },
     [selectedSection, clampedIndex, updateSectionAtIndex]
   );
 
   const moveSelectedSection = useCallback(
     (direction) => {
-      if (!selectedSection) return;
-      const targetIndex = clampedIndex + direction;
-      if (targetIndex < 0 || targetIndex >= sections.length) return;
-      reorderSections(clampedIndex, targetIndex);
+      // reorderSections ignores a target outside the list.
+      if (selectedSection) reorderSections(clampedIndex, clampedIndex + direction);
     },
-    [reorderSections, sections.length, selectedSection, clampedIndex]
+    [reorderSections, selectedSection, clampedIndex]
   );
 
   const addSectionAfterSelected = useCallback(() => {
@@ -167,21 +163,23 @@ export function useSections(draft, setDraft) {
   }, [sections, selectedSection, clampedIndex, setDraft]);
 
   const removeSelectedSection = useCallback(() => {
-    if (!selectedSection || sections.length <= 1) return;
-    const next = sections.filter((_, i) => i !== clampedIndex);
-    setDraft(joinSectionsToDraft(next));
-    setSelectedSectionIndex(Math.max(0, clampedIndex - 1));
-    setDeletedSections((prev) => [...prev, selectedSection]);
+    if (selectedSection && sections.length > 1) {
+      const next = sections.filter((_, i) => i !== clampedIndex);
+      setDraft(joinSectionsToDraft(next));
+      setSelectedSectionIndex(Math.max(0, clampedIndex - 1));
+      setDeletedSections((prev) => [...prev, selectedSection]);
+    }
   }, [sections, selectedSection, clampedIndex, setDraft]);
 
   const restoreDeletedSection = useCallback(
     (delIdx) => {
       const toRestore = deletedSections[delIdx];
-      if (!toRestore) return;
-      const next = [...sections, toRestore];
-      setDraft(joinSectionsToDraft(next));
-      setSelectedSectionIndex(next.length - 1);
-      setDeletedSections((prev) => prev.filter((_, i) => i !== delIdx));
+      if (toRestore) {
+        const next = [...sections, toRestore];
+        setDraft(joinSectionsToDraft(next));
+        setSelectedSectionIndex(next.length - 1);
+        setDeletedSections((prev) => prev.filter((_, i) => i !== delIdx));
+      }
     },
     [deletedSections, sections, setDraft]
   );
@@ -189,11 +187,12 @@ export function useSections(draft, setDraft) {
   const disableSectionAtIndex = useCallback(
     (index) => {
       const toDisable = sections[index];
-      if (!toDisable) return;
-      const next = sections.filter((_, i) => i !== index);
-      setDraft(joinSectionsToDraft(next));
-      setSelectedSectionIndex(Math.max(0, index > 0 ? index - 1 : 0));
-      setDisabledSections((prev) => [...prev, toDisable]);
+      if (toDisable) {
+        const next = sections.filter((_, i) => i !== index);
+        setDraft(joinSectionsToDraft(next));
+        setSelectedSectionIndex(Math.max(0, index > 0 ? index - 1 : 0));
+        setDisabledSections((prev) => [...prev, toDisable]);
+      }
     },
     [sections, setDraft]
   );
@@ -201,49 +200,31 @@ export function useSections(draft, setDraft) {
   const enableDisabledSection = useCallback(
     (disIdx) => {
       const toEnable = disabledSections[disIdx];
-      if (!toEnable) return;
-      const next = [...sections, toEnable];
-      setDraft(joinSectionsToDraft(next));
-      setSelectedSectionIndex(next.length - 1);
-      setDisabledSections((prev) => prev.filter((_, i) => i !== disIdx));
+      if (toEnable) {
+        const next = [...sections, toEnable];
+        setDraft(joinSectionsToDraft(next));
+        setSelectedSectionIndex(next.length - 1);
+        setDisabledSections((prev) => prev.filter((_, i) => i !== disIdx));
+      }
     },
     [disabledSections, sections, setDraft]
   );
 
   const toggleSelectedSectionTextFrame = useCallback(() => {
-    if (!selectedSection) return;
-    const details = getSectionFrameDetails(selectedSection.content);
-    const next = [...sections];
-
-    if (details.isTextFrame) {
-      const plain = details.frameContent || '';
-      next[clampedIndex] = {
-        ...selectedSection,
-        content: details.hasHeading ? `${details.heading}\n\n${plain}`.trim() : plain,
-      };
-    } else {
-      const base = details.body || 'Write framed text here.';
-      const framed = `<module type="text" align="left">${base}</module>`;
-      next[clampedIndex] = {
-        ...selectedSection,
-        content: composeSectionWithFrame(details, framed),
-      };
+    if (selectedSection) {
+      const content = toggledFrameContent(getSectionFrameDetails(selectedSection.content));
+      setDraft(joinSectionsToDraft(withSectionContent(sections, clampedIndex, content)));
     }
-    setDraft(joinSectionsToDraft(next));
   }, [sections, selectedSection, clampedIndex, setDraft]);
 
   const toggleSelectedSectionFrameAlign = useCallback(
     (align) => {
-      if (!selectedSection || !['left', 'right', 'all'].includes(align)) return;
+      if (!selectedSection) return;
       const details = getSectionFrameDetails(selectedSection.content);
-      if (!details.isTextFrame) return;
-      const framed = `<module type="text" align="${align}">${details.frameContent}</module>`;
-      const next = [...sections];
-      next[clampedIndex] = {
-        ...selectedSection,
-        content: composeSectionWithFrame(details, framed),
-      };
-      setDraft(joinSectionsToDraft(next));
+      const content = alignedFrameContent(details, align);
+      if (content !== null) {
+        setDraft(joinSectionsToDraft(withSectionContent(sections, clampedIndex, content)));
+      }
     },
     [sections, selectedSection, clampedIndex, setDraft]
   );

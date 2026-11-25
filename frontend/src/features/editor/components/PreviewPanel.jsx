@@ -18,11 +18,9 @@ function slugifyHeading(value = '') {
     .replace(/-+/g, '-');
 }
 
-/**
- * Renders a section's content — splitting the text around MODULE placeholders
- * and rendering each module via ModuleContainer.
- */
-function SectionPreview({ section, moduleItems, moduleOffset, onEditModule }) {
+// Splits a section's content around its MODULE placeholders into text parts
+// and module parts; a module part carries the module's index in the whole draft.
+function splitSectionParts(content, moduleOffset) {
   const placeholderRegex = /<!-- MODULE_(\d+) -->/g;
   const renderParts = [];
   let lastIdx = 0;
@@ -30,106 +28,139 @@ function SectionPreview({ section, moduleItems, moduleOffset, onEditModule }) {
   let match;
   placeholderRegex.lastIndex = 0;
 
-  while ((match = placeholderRegex.exec(section.content)) !== null) {
+  while ((match = placeholderRegex.exec(content)) !== null) {
     if (match.index > lastIdx) {
-      renderParts.push({ kind: 'text', content: section.content.slice(lastIdx, match.index) });
+      renderParts.push({ kind: 'text', content: content.slice(lastIdx, match.index) });
     }
     renderParts.push({ kind: 'module', globalIndex: moduleOffset + localModuleCount });
     localModuleCount++;
     lastIdx = match.index + match[0].length;
   }
-  if (lastIdx < section.content.length) {
-    renderParts.push({ kind: 'text', content: section.content.slice(lastIdx) });
+  if (lastIdx < content.length) {
+    renderParts.push({ kind: 'text', content: content.slice(lastIdx) });
+  }
+  return renderParts;
+}
+
+// The module a part points at, or null when the part is not a module.
+function moduleOfPart(part, moduleItems) {
+  return part?.kind === 'module' ? moduleItems[part.globalIndex] : null;
+}
+
+function ModulePairRow({ left, right, editFor }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 md:items-start">
+      <ModuleContainer {...left.module} paired onEdit={editFor(left.globalIndex)} />
+      <ModuleContainer {...right.module} paired onEdit={editFor(right.globalIndex)} />
+    </div>
+  );
+}
+
+// The rows for the module part at `i`, and how many parts they used up.
+function moduleRows(renderParts, i, moduleItems, editFor) {
+  const part = renderParts[i];
+  const module = moduleItems[part.globalIndex];
+  if (!module) return { rows: [], used: 1 };
+
+  const nextPart = renderParts[i + 1];
+  const moduleAfterText = renderParts[i + 2];
+  const nextModule = moduleOfPart(nextPart, moduleItems);
+  const headingBridgeModule = moduleOfPart(moduleAfterText, moduleItems);
+  const current = { module, globalIndex: part.globalIndex };
+
+  if (canPairModules(module, nextModule)) {
+    const right = { module: nextModule, globalIndex: nextPart.globalIndex };
+    return {
+      rows: [<ModulePairRow key={`${i}-pair`} left={current} right={right} editFor={editFor} />],
+      used: 2,
+    };
   }
 
+  if (
+    nextPart?.kind === 'text' &&
+    isHeadingOnlyTextSegment(nextPart.content) &&
+    canPairModules(module, headingBridgeModule)
+  ) {
+    const right = { module: headingBridgeModule, globalIndex: moduleAfterText.globalIndex };
+    return {
+      rows: [
+        <div key={`${i}-heading`} className={HEADING_PROSE_CLASS}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{nextPart.content}</ReactMarkdown>
+        </div>,
+        <ModulePairRow key={`${i}-heading-pair`} left={current} right={right} editFor={editFor} />,
+      ],
+      used: 3,
+    };
+  }
+
+  return {
+    rows: [<ModuleContainer key={i} {...module} onEdit={editFor(part.globalIndex)} />],
+    used: 1,
+  };
+}
+
+function buildPreviewRows(renderParts, moduleItems, onEditModule) {
+  const editFor = (globalIndex) => (onEditModule ? () => onEditModule(globalIndex) : null);
+  const rows = [];
+  let i = 0;
+  while (i < renderParts.length) {
+    const part = renderParts[i];
+    if (part.kind === 'text') {
+      rows.push(
+        <div key={i} className={ARTICLE_PROSE_CLASS}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
+            {part.content}
+          </ReactMarkdown>
+        </div>
+      );
+      i += 1;
+    } else {
+      const { rows: added, used } = moduleRows(renderParts, i, moduleItems, editFor);
+      rows.push(...added);
+      i += used;
+    }
+  }
+  return rows;
+}
+
+/**
+ * Renders a section's content — splitting the text around MODULE placeholders
+ * and rendering each module via ModuleContainer.
+ */
+function SectionPreview({ section, moduleItems, moduleOffset, onEditModule }) {
+  const renderParts = splitSectionParts(section.content, moduleOffset);
   const anchorId = section.level > 0 ? slugifyHeading(section.title) : null;
 
   return (
     <div data-anchor-id={anchorId || undefined} className="mb-6">
-      {(() => {
-        const rows = [];
-        for (let i = 0; i < renderParts.length; i += 1) {
-          const part = renderParts[i];
-          if (part.kind === 'text') {
-            rows.push(
-              <div key={i} className={ARTICLE_PROSE_CLASS}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                  {part.content}
-                </ReactMarkdown>
-              </div>
-            );
-            continue;
-          }
-
-          const module = moduleItems[part.globalIndex];
-          const nextPart = renderParts[i + 1];
-          const partBetween = renderParts[i + 1];
-          const moduleAfterText = renderParts[i + 2];
-          const nextModule = nextPart?.kind === 'module' ? moduleItems[nextPart.globalIndex] : null;
-          const headingBridgeModule =
-            moduleAfterText?.kind === 'module' ? moduleItems[moduleAfterText.globalIndex] : null;
-
-          if (!module) continue;
-
-          if (canPairModules(module, nextModule)) {
-            rows.push(
-              <div key={`${i}-pair`} className="grid gap-4 md:grid-cols-2 md:items-start">
-                <ModuleContainer
-                  {...module}
-                  paired
-                  onEdit={onEditModule ? () => onEditModule(part.globalIndex) : null}
-                />
-                <ModuleContainer
-                  {...nextModule}
-                  paired
-                  onEdit={onEditModule ? () => onEditModule(nextPart.globalIndex) : null}
-                />
-              </div>
-            );
-            i += 1;
-            continue;
-          }
-
-          if (
-            partBetween?.kind === 'text' &&
-            isHeadingOnlyTextSegment(partBetween.content) &&
-            canPairModules(module, headingBridgeModule)
-          ) {
-            rows.push(
-              <div key={`${i}-heading`} className={HEADING_PROSE_CLASS}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{partBetween.content}</ReactMarkdown>
-              </div>
-            );
-            rows.push(
-              <div key={`${i}-heading-pair`} className="grid gap-4 md:grid-cols-2 md:items-start">
-                <ModuleContainer
-                  {...module}
-                  paired
-                  onEdit={onEditModule ? () => onEditModule(part.globalIndex) : null}
-                />
-                <ModuleContainer
-                  {...headingBridgeModule}
-                  paired
-                  onEdit={onEditModule ? () => onEditModule(moduleAfterText.globalIndex) : null}
-                />
-              </div>
-            );
-            i += 2;
-            continue;
-          }
-
-          rows.push(
-            <ModuleContainer
-              key={i}
-              {...module}
-              onEdit={onEditModule ? () => onEditModule(part.globalIndex) : null}
-            />
-          );
-        }
-        return rows;
-      })()}
+      {buildPreviewRows(renderParts, moduleItems, onEditModule)}
     </div>
   );
+}
+
+// Scroll to the selected section's heading (or the top for an untitled one).
+// Returns the effect cleanup when a scroll was scheduled.
+function scrollToSelectedSection(containerRef, selectedSection, editorMode) {
+  if (!selectedSection || editorMode === 'diff') return undefined;
+  if (selectedSection.level <= 0) {
+    containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    return undefined;
+  }
+  const anchorId = slugifyHeading(selectedSection.title);
+  if (!anchorId) return undefined;
+
+  const timeoutId = window.setTimeout(() => {
+    const node = containerRef.current?.querySelector(`[data-anchor-id="${anchorId}"]`);
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 80);
+
+  return () => window.clearTimeout(timeoutId);
+}
+
+function pickSectionsToRender(showFull, sections, selectedSection) {
+  if (showFull) return sections;
+  if (selectedSection) return [selectedSection];
+  return sections.slice(0, 1);
 }
 
 function renderPreviewContent({
@@ -180,37 +211,16 @@ export function PreviewPanel() {
   const containerRef = useRef(null);
 
   // Scroll to selected section heading when selection changes
-  useEffect(() => {
-    if (!selectedSection || editorMode === 'diff') return;
-    if (selectedSection.level <= 0) {
-      containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    const anchorId = slugifyHeading(selectedSection.title);
-    if (!anchorId) return;
+  useEffect(
+    () => scrollToSelectedSection(containerRef, selectedSection, editorMode),
+    [editorMode, selectedSection]
+  );
 
-    const timeoutId = window.setTimeout(() => {
-      const node = containerRef.current?.querySelector(`[data-anchor-id="${anchorId}"]`);
-      if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 80);
+  const sectionsToRender = pickSectionsToRender(showFull, sections, selectedSection);
 
-    return () => window.clearTimeout(timeoutId);
-  }, [editorMode, selectedSection]);
-
-  let sectionsToRender;
-  if (showFull) {
-    sectionsToRender = sections;
-  } else if (selectedSection) {
-    sectionsToRender = [selectedSection];
-  } else {
-    sectionsToRender = sections.slice(0, 1);
-  }
-
-  const offsetForSection = (index) => {
-    if (showFull) return sectionModuleOffsets[index] || 0;
-    // When showing single section, offset is the global offset of that section
-    return sectionModuleOffsets[selectedSectionIndex] || 0;
-  };
+  // When showing single section, offset is the global offset of that section
+  const offsetForSection = (index) =>
+    sectionModuleOffsets[showFull ? index : selectedSectionIndex] || 0;
 
   return (
     <div className="flex flex-col h-full">
