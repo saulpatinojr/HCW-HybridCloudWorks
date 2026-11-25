@@ -764,7 +764,7 @@ export const labs = Object.freeze([
         'Review Transit Gateway Route Attachments',
         md([
           'Examine `transit-gateway.tf` and `spokes.tf` to see how Workload VPCs attach to the central Transit Gateway hub.',
-          'Notice how East-West traffic is isolated via dedicated Route 53 Resolver and Transit Gateway route tables.',
+          'Notice how the two Transit Gateway route tables send traffic between workload VPCs through the hub, and through the firewall when it is selected.',
           '',
           ...bash('cat transit-gateway.tf', 'cat spokes.tf'),
         ])

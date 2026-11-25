@@ -30,21 +30,8 @@ export function variablesTf() {
     ])
   );
 
-  blocks.push(
-    block('variable "corp_count"', [
-      ['description', q('Number of private Corp workload VPCs to provision.')],
-      ['type', 'number'],
-      ['default', '1'],
-    ])
-  );
-
-  blocks.push(
-    block('variable "online_count"', [
-      ['description', q('Number of public edge Online workload VPCs to provision.')],
-      ['type', 'number'],
-      ['default', '1'],
-    ])
-  );
+  // No corp_count or online_count variable: the builder writes one module
+  // per workload VPC, so a count in tfvars would change nothing (#1876).
 
   return file('variables.tf', joinBlocks(blocks));
 }
@@ -52,11 +39,9 @@ export function variablesTf() {
 export function tfvarsExample(state) {
   const lines = [
     '# Sample AWS Landing Zone Configuration Parameters',
-    `aws_region   = "${nearestRegion('aws', state.options?.location, 'us-east-1')}"`,
-    `hub_cidr     = "${state.options?.hubCidr || '10.0.0.0/16'}"`,
-    `spoke_cidr   = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,
-    `corp_count   = ${state.options?.corpCount ?? 1}`,
-    `online_count = ${state.options?.onlineCount ?? 1}`,
+    `aws_region = "${nearestRegion('aws', state.options?.location, 'us-east-1')}"`,
+    `hub_cidr   = "${state.options?.hubCidr || '10.0.0.0/16'}"`,
+    `spoke_cidr = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,
   ];
   if (isSelected(state, 'firewall')) {
     // Empty until someone decides what the workloads may reach (#1871).

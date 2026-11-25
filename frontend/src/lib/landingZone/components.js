@@ -151,7 +151,7 @@ export const OPTIONS = Object.freeze({
     kind: 'count',
     default: 1,
     validate: isLandingZoneCount,
-    help: 'How many online subscriptions to place. Each may expose services to the internet, egresses directly, and still peers to the hub for shared services.',
+    help: 'How many online subscriptions to place. Each may expose services to the internet and still connects to the hub for shared services. On Azure its outbound traffic leaves directly; on AWS and Google Cloud it leaves through the hub.',
   }),
 });
 
