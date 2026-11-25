@@ -953,12 +953,25 @@ so it is recorded here, where every session reads it.
     the hour's allowance is spent and no review happened: wait for the
     minute it names, then ask again for the same head. Once a head has been
     reviewed, ask again only for a head that changed. If a bot's first review has not
-    arrived an hour after it was due (Copilot: after the required checks
-    went green; CodeRabbit: after the first ask that was not rate limited,
-    since a rate-limited ask starts no review), say so on the PR, naming the
-    bot, and treat it as unavailable for that PR: reviews stopped arriving
-    altogether once before (2026-10-03), and a PR does not wait on a
-    reviewer that is not coming.
+    arrived when it was due, say so on the PR, naming the bot, and treat it
+    as unavailable for that PR: reviews stopped arriving altogether once
+    before (2026-10-03), and a PR does not wait on a reviewer that is not
+    coming. **Copilot is due 15 minutes after the required checks went
+    green, and is not waited for at all when it was never asked.** Owner
+    instruction 2026-11-25. The ruleset's **Automatically request Copilot
+    code review** rule asks Copilot only when the author has Copilot code
+    review and AI credits left, which is not always the case; on 2026-11-25
+    five pull requests in a row
+    ([#1865](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1865)
+    to [#1881](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1881))
+    each waited the old full hour for a review that never came. So once the
+    checks are green, read
+    `gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/<n>/requested_reviewers --jq '.users[].login'`
+    and the reviews line above: if Copilot is neither a requested reviewer
+    nor the author of a review, it was not asked and will not come, and the
+    PR proceeds at once; if it was asked, wait at most 15 minutes. CodeRabbit
+    keeps its hour, counted from the first ask that was not rate limited,
+    since a rate-limited ask starts no review.
   - **At most three rounds per bot.** A round is one review of a head by one
     bot, and the fixes pushed in answer to it. Work the loop above for a
     bot's first three reviews; after the third round's fixes are pushed,
@@ -1007,9 +1020,11 @@ so it is recorded here, where every session reads it.
     merging session's to fix in a follow-up pull request, or to hand to the
     owner with its page and the reason to choose.
 
-  The `copilot_code_review` rule is still absent from the `Default` ruleset
-  (20680114). Its parameters were `review_on_push: true` and
-  `review_draft_pull_requests: true`, should the owner want it back.
+  The owner put the `copilot_code_review` rule back on the `Default` ruleset
+  (20680114) on 2026-11-25, with `review_on_push: true` and
+  `review_draft_pull_requests: true`. It asks Copilot only when the author
+  has Copilot code review and AI credits, so a missing review is expected
+  some days; the 15-minute rule above covers it.
 - **Every review conversation is resolved before the merge, including the
   ones that ask for nothing.** Owner instruction 2026-09-06, after a merge
   was blocked with `A conversation must be resolved before this pull request
