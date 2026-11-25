@@ -254,24 +254,16 @@ export default defineConfig(({ mode }) => {
     assertDeployConfig(env);
   }
 
-  // Log injected keys (NOT values) to help debug CI issues. Written to
-  // standard output directly, as console.log did: the linter keeps
-  // console.log out of code, because in the site's own code it would reach
-  // every visitor's browser, and this is a build log instead.
+  // Log injected keys (NOT values) to help debug CI issues.
   const injectedKeys =
     Object.keys(defineConf)
       .map((k) => k.split('.').pop())
       .filter((k) => defineConf[`import.meta.env.${k}`] !== '""')
       .join(', ') || 'None!';
-  process.stdout.write(
-    [
-      '--- CI/CD Build Config ---',
-      `Mode: ${mode}`,
-      `Injected VITE keys: ${injectedKeys}`,
-      '--------------------------',
-      '',
-    ].join('\n')
-  );
+  console.log('--- CI/CD Build Config ---');
+  console.log(`Mode: ${mode}`);
+  console.log(`Injected VITE keys: ${injectedKeys}`);
+  console.log('--------------------------');
 
   return {
     plugins: [

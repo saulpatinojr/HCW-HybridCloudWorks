@@ -16,7 +16,8 @@
  *       terraform-aws-vpc 5.19.0                 >= 1.0
  *       terraform-aws-transit-gateway 2.13.0     >= 0.13.1
  *       terraform-aws-network-firewall 1.1.0     not found: the registry has
- *                                                no 1.1.0 (1.0.2 says >= 1.0)
+ *                                                no 1.1.0 (1.0.2 says >= 1.0);
+ *                                                the bad pin is #1862
  *       terraform-google-network 10.0.0          >= 1.3
  *       terraform-google-log-export 9.0.0        >= 0.13
  *       terraform-google-project-factory 17.1.0  >= 0.13.0

@@ -220,11 +220,13 @@ export default [
     },
   },
   // Scripts and the config files at this folder's root run in Node, not in
-  // a browser.
+  // a browser. package.json sets "type": "module", so they are ES modules:
+  // `nodeBuiltin` leaves out the CommonJS-only names (`require`, `module`,
+  // `__dirname`), which would throw "is not defined" when the script runs.
   {
     files: ['scripts/**', '*.config.{js,mjs,cjs}'],
     languageOptions: {
-      globals: globals.node,
+      globals: globals.nodeBuiltin,
     },
   },
   // These run in Node but drive a real browser, and the callbacks they pass
@@ -234,17 +236,20 @@ export default [
     files: ['e2e/**', 'scripts/audit-published-pages.mjs', 'scripts/axe-theme-scan.mjs'],
     languageOptions: {
       globals: {
-        ...globals.node,
+        ...globals.nodeBuiltin,
         ...globals.browser,
       },
     },
   },
   // .cjs files are CommonJS (require and module.exports), not ES modules.
+  // The two .js validators in scripts/ are CommonJS too: scripts/package.json
+  // exists only to make Node load them that way.
   {
-    files: ['**/*.cjs'],
+    files: ['**/*.cjs', 'scripts/validate-routes.js', 'scripts/validate-provider-pages.js'],
     languageOptions: {
       sourceType: 'commonjs',
-      globals: globals.commonjs,
+      // Node's names including the CommonJS ones (`require`, `__dirname`).
+      globals: globals.node,
       parserOptions: {
         sourceType: 'script',
       },
@@ -263,9 +268,11 @@ export default [
       },
     },
   },
-  // Scripts - CLI tools that use require() and console for output
+  // Scripts and the root config files are command-line and build tools that
+  // print to the terminal, so console output is their job. The rule exists
+  // for the site's own code, where a console line reaches every visitor.
   {
-    files: ['scripts/**/*.{js,jsx,mjs,cjs}'],
+    files: ['scripts/**/*.{js,jsx,mjs,cjs}', '*.config.{js,mjs,cjs}'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
       'no-console': 'off',
