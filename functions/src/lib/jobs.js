@@ -120,117 +120,37 @@ export function createJobHandlers({
  * @returns {Promise<{jobId: string|null, outcome: string}>}
  */
 async function runJob({ store, now, types }, message, context) {
-  const jobId = typeof message?.jobId === 'string' ? message.jobId : '';
-  if (!jobId) {
-    context.warn?.('runJob: message without jobId', message);
-    return { jobId: null, outcome: 'ignored' };
-  }
+  const found = await findQueuedJob(store, message, context);
+  if (found.outcome) return found.outcome;
+  const claim = await claimJob({ store, now, types }, found, context);
+  if (claim.outcome) return claim.outcome;
+  const { jobId, doc, spec, claimed } = claim;
 
-  const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
-  if (!doc) {
-    context.warn?.('runJob: a queued job has no document');
-    return { jobId, outcome: 'missing' };
-  }
-  if (doc.status !== 'queued') {
-    // Duplicate delivery, or an operator cancelled it while it waited.
-    // No job id in these lines: they reach Log Analytics (#1635), and an id is a document id.
-    context.log?.(`runJob: a ${doc.type} job is ${doc.status}; skipping`);
-    return { jobId, outcome: 'skipped' };
-  }
-
-  const spec = types.get(doc.type);
-  const startedAt = now().toISOString();
-  if (!spec) {
-    await store.patchDoc(JOBS_CONTAINER, jobId, {
-      status: 'failed',
-      startedAt,
-      finishedAt: startedAt,
-      error: `Unknown job type ${doc.type} (not registered in this deployment)`,
-    });
-    return { jobId, outcome: 'failed' };
-  }
-
-  // Claim. The etag makes two deliveries race safely: the loser gets 412.
-  let claimed;
-  try {
-    claimed = await store.replaceDocIfMatch(JOBS_CONTAINER, {
-      ...doc,
-      status: 'running',
-      startedAt,
-      attempts: (doc.attempts || 0) + 1,
-    });
-  } catch (error) {
-    if (isPreconditionFailure(error)) {
-      context.log?.(`runJob: a ${doc.type} job was claimed elsewhere`);
-      return { jobId, outcome: 'skipped' };
-    }
-    throw error;
-  }
-
-  const controller = new AbortController();
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(
-      () => {
-        controller.abort(
-          Object.assign(new Error('job timed out'), {
-            code: 'JOB_TIMEOUT',
-          })
-        );
-        reject(
-          Object.assign(new Error('job timed out'), {
-            code: 'JOB_TIMEOUT',
-          })
-        );
-      },
-      spec.timeoutMs
-    );
-  });
+  const deadline = jobDeadline(spec.timeoutMs);
   // Best effort, after the terminal write: a hook failure is logged, never
   // re-thrown — it must not turn a finished job into a poisoned message.
-  const invokeOnComplete = async (info) => {
-    if (typeof spec.onComplete !== 'function') return;
-    try {
-      await spec.onComplete(info, { context, now });
-    } catch (hookError) {
-      context.warn?.(
-        `runJob: onComplete for ${doc.type} failed: ${errorFacts(hookError)}`
-      );
-    }
-  };
+  const invokeOnComplete = (info) => runCompletionHook(spec, info, { context, now, type: doc.type });
 
   try {
     const result = await Promise.race([
       // Inside the job's context, the shared Cosmos and Blob clients
       // refuse a write that starts after the timeout (job-context.js).
       // This code, and the hooks below, run outside it.
-      runAsJob(controller.signal, () =>
+      runAsJob(deadline.controller.signal, () =>
         spec.worker(doc.payload, {
           context,
           job: claimed,
           now,
-          signal: controller.signal,
-          abortSignal: controller.signal,
+          signal: deadline.controller.signal,
+          abortSignal: deadline.controller.signal,
         })
       ),
-      timeout,
+      deadline.timeout,
       // The deadline is the worker's, so it is disarmed the moment the
       // race settles: a worker that finished just inside it must not have
       // its signal fire during the terminal write or the hook below.
-    ]).finally(() => clearTimeout(timer));
-    await store.patchDoc(JOBS_CONTAINER, jobId, {
-      status: 'succeeded',
-      finishedAt: now().toISOString(),
-      result: result === undefined ? null : result,
-      error: null,
-    });
-    context.log?.(`runJob: a ${doc.type} job succeeded`);
-    await invokeOnComplete({
-      job: claimed,
-      status: 'succeeded',
-      result: result === undefined ? null : result,
-      error: null,
-    });
+    ]).finally(deadline.clear);
+    await recordSuccess({ store, now }, { jobId, doc, claimed, result }, { context, invokeOnComplete });
     return { jobId, outcome: 'succeeded' };
   } catch (error) {
     const timedOut = error?.code === 'JOB_TIMEOUT';
@@ -249,23 +169,136 @@ async function runJob({ store, now, types }, message, context) {
         correlationId,
       })
     );
+    const status = timedOut ? 'timeout' : 'failed';
     await store.patchDoc(JOBS_CONTAINER, jobId, {
-      status: timedOut ? 'timeout' : 'failed',
+      status,
       finishedAt: now().toISOString(),
       error: errorText,
     });
-    await invokeOnComplete({
-      job: claimed,
-      status: timedOut ? 'timeout' : 'failed',
-      result: null,
-      error: errorText,
-    });
-    return { jobId, outcome: timedOut ? 'timeout' : 'failed' };
+    await invokeOnComplete({ job: claimed, status, result: null, error: errorText });
+    return { jobId, outcome: status };
   } finally {
     // Already cleared when the race settled; this covers a worker that
     // threw before the race was entered.
-    clearTimeout(timer);
+    deadline.clear();
   }
+}
+
+/**
+ * The queued job a message names: `{ doc }`, or `{ outcome }` when there is
+ * nothing to run (no id, no document, or a job no longer queued).
+ */
+async function findQueuedJob(store, message, context) {
+  const jobId = typeof message?.jobId === 'string' ? message.jobId : '';
+  if (!jobId) {
+    context.warn?.('runJob: message without jobId', message);
+    return { outcome: { jobId: null, outcome: 'ignored' } };
+  }
+
+  const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+  if (!doc) {
+    context.warn?.('runJob: a queued job has no document');
+    return { outcome: { jobId, outcome: 'missing' } };
+  }
+  if (doc.status !== 'queued') {
+    // Duplicate delivery, or an operator cancelled it while it waited.
+    // No job id in these lines: they reach Log Analytics (#1635), and an id is a document id.
+    context.log?.(`runJob: a ${doc.type} job is ${doc.status}; skipping`);
+    return { outcome: { jobId, outcome: 'skipped' } };
+  }
+  return { jobId, doc };
+}
+
+/**
+ * Claim a queued job for this delivery. `{ jobId, doc, spec, claimed }`, or
+ * `{ outcome }` when its type is not registered here (it is failed) or
+ * another delivery claimed it first.
+ */
+async function claimJob({ store, now, types }, { jobId, doc }, context) {
+  const spec = types.get(doc.type);
+  const startedAt = now().toISOString();
+  if (!spec) {
+    await store.patchDoc(JOBS_CONTAINER, jobId, {
+      status: 'failed',
+      startedAt,
+      finishedAt: startedAt,
+      error: `Unknown job type ${doc.type} (not registered in this deployment)`,
+    });
+    return { outcome: { jobId, outcome: 'failed' } };
+  }
+
+  // Claim. The etag makes two deliveries race safely: the loser gets 412.
+  try {
+    const claimed = await store.replaceDocIfMatch(JOBS_CONTAINER, {
+      ...doc,
+      status: 'running',
+      startedAt,
+      attempts: (doc.attempts || 0) + 1,
+    });
+    return { jobId, doc, spec, claimed };
+  } catch (error) {
+    if (isPreconditionFailure(error)) {
+      context.log?.(`runJob: a ${doc.type} job was claimed elsewhere`);
+      return { outcome: { jobId, outcome: 'skipped' } };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The job's deadline: an abort signal for the worker and a promise that
+ * rejects, both at `timeoutMs`, and `clear` to disarm them.
+ */
+function jobDeadline(timeoutMs) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => {
+        controller.abort(
+          Object.assign(new Error('job timed out'), {
+            code: 'JOB_TIMEOUT',
+          })
+        );
+        reject(
+          Object.assign(new Error('job timed out'), {
+            code: 'JOB_TIMEOUT',
+          })
+        );
+      },
+      timeoutMs
+    );
+  });
+  return { controller, timeout, clear: () => clearTimeout(timer) };
+}
+
+/** Run a type's onComplete hook; a throw is logged and never re-thrown. */
+async function runCompletionHook(spec, info, { context, now, type }) {
+  if (typeof spec.onComplete !== 'function') return;
+  try {
+    await spec.onComplete(info, { context, now });
+  } catch (hookError) {
+    context.warn?.(
+      `runJob: onComplete for ${type} failed: ${errorFacts(hookError)}`
+    );
+  }
+}
+
+/** The terminal write for a job that succeeded, then its hook. */
+async function recordSuccess({ store, now }, { jobId, doc, claimed, result }, { context, invokeOnComplete }) {
+  await store.patchDoc(JOBS_CONTAINER, jobId, {
+    status: 'succeeded',
+    finishedAt: now().toISOString(),
+    result: result === undefined ? null : result,
+    error: null,
+  });
+  context.log?.(`runJob: a ${doc.type} job succeeded`);
+  await invokeOnComplete({
+    job: claimed,
+    status: 'succeeded',
+    result: result === undefined ? null : result,
+    error: null,
+  });
 }
 
 // ── Stale-queued sweeper (job-sweeper.js) ───────────────────────────────────
