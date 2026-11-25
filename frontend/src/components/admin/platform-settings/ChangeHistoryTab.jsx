@@ -70,14 +70,16 @@ function useHistory(setting, authReady) {
     setMoreError('');
     try {
       const res = await getJSON(historyRoute({ setting }));
-      if (!current()) return;
-      setEntries(Array.isArray(res?.entries) ? res.entries : []);
-      setNextAfter(res?.nextAfter ?? null);
+      if (current()) {
+        setEntries(Array.isArray(res?.entries) ? res.entries : []);
+        setNextAfter(res?.nextAfter ?? null);
+      }
     } catch (err) {
-      if (!current()) return;
-      setEntries([]);
-      setNextAfter(null);
-      setError(errorText(err));
+      if (current()) {
+        setEntries([]);
+        setNextAfter(null);
+        setError(errorText(err));
+      }
     } finally {
       if (current()) setLoading(false);
     }
@@ -100,9 +102,13 @@ function useHistory(setting, authReady) {
     setMoreError('');
     try {
       const res = await getJSON(historyRoute({ setting, after: nextAfter }));
-      if (mine !== generation.current) return;
-      setEntries((previous) => [...previous, ...(Array.isArray(res?.entries) ? res.entries : [])]);
-      setNextAfter(res?.nextAfter ?? null);
+      if (mine === generation.current) {
+        setEntries((previous) => [
+          ...previous,
+          ...(Array.isArray(res?.entries) ? res.entries : []),
+        ]);
+        setNextAfter(res?.nextAfter ?? null);
+      }
     } catch (err) {
       if (mine === generation.current) setMoreError(errorText(err));
     } finally {

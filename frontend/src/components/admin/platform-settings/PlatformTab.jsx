@@ -123,14 +123,11 @@ function AdminTableRow({ admin, onRoleSelect, onStatusClick }) {
   );
 }
 
-export default function PlatformTab() {
-  const { authReady } = useAuthReady();
+/** The administrators list: read once sign-in is ready, and again on Refresh. */
+function useAdmins(authReady) {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [actionError, setActionError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [confirmTarget, setConfirmTarget] = useState(null);
 
   const fetchAdmins = useCallback(async () => {
     if (!authReady) return;
@@ -172,6 +169,51 @@ export default function PlatformTab() {
     };
   }, [authReady]);
 
+  return { admins, loading, error, fetchAdmins };
+}
+
+// The change each kind of confirmation sends.
+const ADMIN_PATCHES = {
+  role: ({ newRole }) => ({
+    role: newRole,
+    reason: `Role changed to ${newRole} from Platform tab`,
+  }),
+  status: ({ newActive }) => ({
+    active: newActive,
+    reason: `${newActive ? 'Activated' : 'Deactivated'} from Platform tab`,
+  }),
+};
+
+/** Send the confirmed role or status change; an unknown kind sends nothing. */
+async function patchAdmin(target) {
+  if (!Object.hasOwn(ADMIN_PATCHES, target.type)) return;
+  await sendJSON(
+    `${ADMINS_ROUTE}/${encodeURIComponent(target.admin.id)}`,
+    'PATCH',
+    ADMIN_PATCHES[target.type](target)
+  );
+}
+
+function ErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div
+      className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2"
+      role="alert"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+export default function PlatformTab() {
+  const { authReady } = useAuthReady();
+  const { admins, loading, error, fetchAdmins } = useAdmins(authReady);
+  const [actionError, setActionError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
+
   const handleRoleChangeSelect = (admin, newRole) => {
     if (newRole === admin.role) return;
     setActionError(null);
@@ -188,19 +230,8 @@ export default function PlatformTab() {
     setBusy(true);
     setActionError(null);
 
-    const { type, admin, newRole, newActive } = confirmTarget;
     try {
-      if (type === 'role') {
-        await sendJSON(`${ADMINS_ROUTE}/${encodeURIComponent(admin.id)}`, 'PATCH', {
-          role: newRole,
-          reason: `Role changed to ${newRole} from Platform tab`,
-        });
-      } else if (type === 'status') {
-        await sendJSON(`${ADMINS_ROUTE}/${encodeURIComponent(admin.id)}`, 'PATCH', {
-          active: newActive,
-          reason: `${newActive ? 'Activated' : 'Deactivated'} from Platform tab`,
-        });
-      }
+      await patchAdmin(confirmTarget);
       setConfirmTarget(null);
       await fetchAdmins();
     } catch (err) {
@@ -240,25 +271,9 @@ export default function PlatformTab() {
           </Button>
         </CardHeader>
         <CardContent>
-          {error && (
-            <div
-              className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2"
-              role="alert"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+          <ErrorBanner message={error} />
 
-          {actionError && (
-            <div
-              className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2"
-              role="alert"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>{actionError}</span>
-            </div>
-          )}
+          <ErrorBanner message={actionError} />
 
           {loading && (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
