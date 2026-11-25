@@ -57,7 +57,7 @@
  * `todayIso()` — and therefore the "is DATA_AS_OF in the future" assertion —
  * reads. The earlier of the two days is the one that is true for every viewer.
  */
-import { resourceRow, titledModules } from '../educationRows';
+import { resourceRow, titledModules } from '../educationRows.js';
 
 export const DATA_AS_OF = '2026-09-10';
 

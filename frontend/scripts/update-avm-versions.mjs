@@ -22,7 +22,10 @@
  *      same sum `sha256sum` prints and the Dockerfile checks. Where the
  *      smoke payload (lab-image/smoke/terraform-validate-payload/main.tf)
  *      pins the module's block to the exact old version, that pin moves too;
- *      its constraint blocks are left alone.
+ *      its constraint blocks are left alone. An input the new release
+ *      requires, per the hand-written AVM_REQUIRED_INPUTS in avmVersions.js
+ *      (#1868), is added to that block; the builder's emitter reads the same
+ *      rows.
  *   3. When a vendored module moved, regenerates the image's record of what
  *      each builder module calls (#1306). AVM_CHILD_CALLS in versions.env is
  *      keyed by each builder module's version, so step 2 alone leaves the
@@ -78,7 +81,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import prettier from 'prettier';
 
-import { AVM_MODULES } from '../src/lib/landingZone/avmVersions.js';
+import { AVM_MODULES, AVM_REQUIRED_INPUTS } from '../src/lib/landingZone/avmVersions.js';
 import {
   EditRefused,
   RegistryError,
@@ -227,6 +230,7 @@ async function checkModule(module, fetchImpl) {
     smokePinMoved: null,
     smokeFrom: null,
     smokeTo: null,
+    smokeAdded: [],
   };
 }
 
@@ -257,10 +261,12 @@ async function applyBump(state, result, fetchImpl) {
   const envSource = result.vendored
     ? rewriteEnv(state.envSource, result.name, result.from, result.to, result.sha256)
     : state.envSource;
-  const payload = rewriteSmokePin(state.payloadSource, result.name, result.from, result.to);
+  const inputs = AVM_REQUIRED_INPUTS.filter((row) => row.module === result.name);
+  const payload = rewriteSmokePin(state.payloadSource, result.name, result.from, result.to, inputs);
   result.smokePinMoved = payload.moved;
   result.smokeFrom = payload.from ?? null;
   result.smokeTo = payload.to ?? null;
+  result.smokeAdded = payload.added ?? [];
   return { pinsSource, envSource, payloadSource: payload.source };
 }
 

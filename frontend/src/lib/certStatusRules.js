@@ -4,7 +4,7 @@
  * re-exports everything here; see its header for why the status is worked
  * out from dates at render time.
  */
-import { formatIsoDate, isIsoDate, isPastDate, todayIso } from './certDates';
+import { formatIsoDate, isIsoDate, isPastDate, todayIso } from './certDates.js';
 
 // `upcoming` is a version a vendor has announced but nobody can sit yet (AWS
 // SAP-C03 before 2026-11-17); it becomes `active` on its `availableDate`.

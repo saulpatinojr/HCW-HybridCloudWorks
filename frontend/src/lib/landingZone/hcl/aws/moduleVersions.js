@@ -18,7 +18,8 @@
  * change. 1.0.2 is the newest release that works with aws 5.x, and its
  * inputs are the ones the generator writes.
  */
-import { registryModule } from '../cloudPack';
+// With its `.js` ending, so plain Node can load this file (see registryModule.js).
+import { registryModule } from '../registryModule.js';
 
 export const AWS_VERIFIED_ON = '2026-11-25';
 

@@ -20,7 +20,7 @@
  *       terraform-google-network 10.0.0          >= 1.3
  *       terraform-google-log-export 10.0.0       >= 1.3 (was 9.0.0, #1863)
  *       terraform-google-project-factory 17.1.0  >= 0.13.0
- *       terraform-google-cloud-storage 7.0.0     >= 0.13 (simple_bucket)
+ *       log-export 10.0.0 //modules/storage      >= 1.3 (the log bucket, #1870)
  *
  *     None sets an upper bound. Each module's full record, providers
  *     included, is its `requires` in hcl/aws/moduleVersions.js and

@@ -1,36 +1,11 @@
 /**
  * The parts the AWS and GCP landing-zone packs share: how a pinned registry
- * module is written down, the order the files are emitted in, and the README
- * that lists them. Each provider folder supplies only what differs.
+ * module is written down (registryModule.js), the order the files are emitted
+ * in, and the README that lists them. Each provider folder supplies only what
+ * differs.
  */
 import { isSelected, normalizeState } from '../state';
 import { file } from './format';
-
-/**
- * A pinned Terraform registry module. Its `name` is its registry source.
- *
- * `requires` is what the release at `version` asks of Terraform and its
- * providers, copied by hand from its versions.tf files (its own and those of
- * the submodules it calls): `{ terraform: '<constraint>', providers: {
- * <name>: '<constraint>' }, readAt: '<version>' }`. `readAt` names the
- * release they were read from, and a test fails when it differs from
- * `version`, so bumping a pin forces a fresh read of its versions.tf.
- * cloudModuleVersions.test.js checks the pack's own
- * pins against it, so a bump that needs a newer provider fails a test
- * instead of `terraform init` (#1862, #1863).
- */
-export const registryModule = (source, version, summary, requires) =>
-  Object.freeze({
-    name: source,
-    source,
-    version,
-    summary,
-    requires: Object.freeze({
-      terraform: requires.terraform,
-      readAt: requires.readAt,
-      providers: Object.freeze({ ...requires.providers }),
-    }),
-  });
 
 /**
  * Emit one provider's pack for a builder state: `terraform.tf` and
@@ -57,7 +32,7 @@ export function emitCloudPack(state, pack) {
     files.push(pack.workloads(normalized));
   }
 
-  files.push(pack.variables(), pack.tfvars(normalized));
+  files.push(pack.variables(normalized), pack.tfvars(normalized));
   files.push(pack.readme(normalized, files));
   return files;
 }
@@ -73,6 +48,7 @@ export function emitCloudPack(state, pack) {
  * @param {string} readme.terraformVersion the Terraform engine constraint
  * @param {string} readme.providerLine the provider requirement, as one Markdown list item
  * @param {string[]} readme.guardrails the guardrail list items
+ * @param {string[]} [readme.sections] extra Markdown lines placed before the guardrails
  */
 export function cloudReadme({
   title,
@@ -82,6 +58,7 @@ export function cloudReadme({
   terraformVersion,
   providerLine,
   guardrails,
+  sections = [],
 }) {
   const fileList = files.map((f) => `- \`${f.path}\``).join('\n');
 
@@ -118,6 +95,7 @@ export function cloudReadme({
     'terraform validate',
     '```',
     '',
+    ...sections,
     '## Security & Governance Guardrails',
     '',
     ...guardrails,

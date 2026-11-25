@@ -149,6 +149,7 @@ nav:
       - Docker Scout and the add-on images: runbooks/docker-scout.md
       - Dependency review across the nine repositories: runbooks/dependency-review.md
       - Add-on guide drift check: runbooks/addon-guide-drift.md
+      - "Landing Zone Builder: AWS and GCP module pins": runbooks/landing-zone-module-pins.md
       - Add an interview: runbooks/add-an-interview.md
       - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
       - Private Second Brain: runbooks/second-brain.md

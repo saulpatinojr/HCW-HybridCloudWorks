@@ -4,8 +4,8 @@
  * these so a stale row is a red build. Split out of certStatus.js, which
  * re-exports everything here.
  */
-import { isIsoDate, isPastDate, todayIso, utcDay } from './certDates';
-import { CERT_STATUSES } from './certStatusRules';
+import { isIsoDate, isPastDate, todayIso, utcDay } from './certDates.js';
+import { CERT_STATUSES } from './certStatusRules.js';
 
 /**
  * Every field on a catalogue row that holds a `YYYY-MM-DD`. This is the one

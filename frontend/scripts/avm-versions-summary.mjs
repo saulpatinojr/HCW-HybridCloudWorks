@@ -53,7 +53,15 @@ function payloadLine(result) {
   if (!result.smokePinMoved) return null;
   const from = result.smokeFrom ?? result.from;
   const to = result.smokeTo ?? result.to;
-  return `- ${code(PAYLOAD_PATH)}: its block for this module read ${code(`version = "${from}"`)} and now reads ${code(`version = "${to}"`)}, so smoke.sh still rewrites one block per builder module.`;
+  const added = result.smokeAdded ?? [];
+  const inputs = added.length
+    ? ` It also now sets ${added.map(code).join(', ')}, which this release requires (${code('AVM_REQUIRED_INPUTS')} in ${code(PINS_PATH)}).`
+    : '';
+  const version =
+    from === to
+      ? `its block for this module keeps ${code(`version = "${from}"`)}, which the release still meets.`
+      : `its block for this module read ${code(`version = "${from}"`)} and now reads ${code(`version = "${to}"`)}, so smoke.sh still rewrites one block per builder module.`;
+  return `- ${code(PAYLOAD_PATH)}: ${version}${inputs}`;
 }
 
 const driftParts = (drift) =>
