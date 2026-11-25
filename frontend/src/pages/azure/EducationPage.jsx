@@ -26,6 +26,13 @@ import {
 } from './education/AzureEducationSections';
 import { HorizontalTimeline } from './education/azureTimeline';
 
+/** The status each filter button (other than All) keeps. */
+const STATUS_BY_FILTER = {
+  Active: 'active',
+  Beta: 'beta',
+  Expiring: 'expiring',
+  Retired: 'retired',
+};
 const STATUS_ORDER = { active: 0, beta: 1, expiring: 2, retired: 3 };
 const APPLIED_SKILLS_COLLAPSED_ROWS = 3;
 
@@ -280,12 +287,7 @@ export default function AzureEducationPage() {
 
   const filteredCerts = certs.filter((c) => {
     const levelOk = levelFilter === 'All' || c.level === levelFilter;
-    const statusOk =
-      statusFilter === 'All' ||
-      (statusFilter === 'Active' && c.status === 'active') ||
-      (statusFilter === 'Beta' && c.status === 'beta') ||
-      (statusFilter === 'Expiring' && c.status === 'expiring') ||
-      (statusFilter === 'Retired' && c.status === 'retired');
+    const statusOk = statusFilter === 'All' || c.status === STATUS_BY_FILTER[statusFilter];
     return levelOk && statusOk;
   });
 

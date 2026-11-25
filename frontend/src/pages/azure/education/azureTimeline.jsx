@@ -175,19 +175,17 @@ export function buildMonthColumns(events) {
 export const COL_WIDTH = 160; // px per month column
 export const TRACK_HEIGHT = 56; // px per event row
 export const HEADER_HEIGHT = 40;
+/** The width an event's label takes on the timeline, in px. */
+const EVENT_W = 130;
 
-export function HorizontalTimeline({ events }) {
-  const [tooltip, setTooltip] = React.useState(null);
+/**
+ * The timeline's scroll box and its left/right buttons: each button is on
+ * only while there is more to see that way, and moves the view by 300px.
+ */
+function useScrollButtons() {
   const [canScrollLeft, setCanScrollLeft] = React.useState(false);
   const [canScrollRight, setCanScrollRight] = React.useState(false);
   const scrollContainerRef = React.useRef(null);
-  // The catalogue date while pre-rendering and hydrating, the real date after;
-  // called before any early return so the hook order is stable. See lib/certStatus.js.
-  const today = useToday(DATA_AS_OF);
-  const [todayYear, todayMonth] = today.split('-').map(Number);
-
-  const { months, minDate, maxDate } = buildMonthColumns(events);
-  const liveCount = events.filter((ev) => ev.live).length;
 
   // Check scroll position to enable/disable buttons
   const checkScrollPosition = React.useCallback(() => {
@@ -221,6 +219,40 @@ export function HorizontalTimeline({ events }) {
     }
   }, [checkScrollPosition]);
 
+  return { scrollContainerRef, canScrollLeft, canScrollRight, scrollLeft, scrollRight };
+}
+
+/**
+ * Each event's row, so that no two overlap (greedy lane packing): an event
+ * takes the first row whose last event ended 8px or more before it starts.
+ */
+function packLanes(sortedEvents, xForDate) {
+  const laneEnds = []; // x-end per lane
+  return sortedEvents.map((ev) => {
+    const x = xForDate(ev.date);
+    let lane = laneEnds.findIndex((end) => end + 8 <= x);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(x + EVENT_W);
+    } else {
+      laneEnds[lane] = x + EVENT_W;
+    }
+    return lane;
+  });
+}
+
+export function HorizontalTimeline({ events }) {
+  const [tooltip, setTooltip] = React.useState(null);
+  const { scrollContainerRef, canScrollLeft, canScrollRight, scrollLeft, scrollRight } =
+    useScrollButtons();
+  // The catalogue date while pre-rendering and hydrating, the real date after;
+  // called before any early return so the hook order is stable. See lib/certStatus.js.
+  const today = useToday(DATA_AS_OF);
+  const [todayYear, todayMonth] = today.split('-').map(Number);
+
+  const { months, minDate, maxDate } = buildMonthColumns(events);
+  const liveCount = events.filter((ev) => ev.live).length;
+
   if (!months.length) return null;
 
   const totalMs = maxDate - minDate;
@@ -231,23 +263,8 @@ export function HorizontalTimeline({ events }) {
     return Math.round((ms / totalMs) * totalWidth);
   }
 
-  // Assign events to non-overlapping rows (greedy lane packing)
-  const lanes = [];
   const sortedEvts = [...events].sort(byIsoDate);
-  const laneEnds = []; // x-end per lane
-  const EVENT_W = 130;
-  const eventLanes = sortedEvts.map((ev) => {
-    const x = xForDate(ev.date);
-    let lane = laneEnds.findIndex((end) => end + 8 <= x);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(x + EVENT_W);
-      lanes.push(lane);
-    } else {
-      laneEnds[lane] = x + EVENT_W;
-    }
-    return lane;
-  });
+  const eventLanes = packLanes(sortedEvts, xForDate);
 
   const numLanes = Math.max(...eventLanes, 0) + 1;
   const svgHeight = HEADER_HEIGHT + numLanes * TRACK_HEIGHT + 16;
