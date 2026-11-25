@@ -39,10 +39,11 @@ function soonest(task, clock, now) {
   return runs.length ? new Date(Math.min(...runs.map((run) => run.getTime()))) : null;
 }
 
-function ScheduleCell({ task, clock, now }) {
+/** The schedule in words, the line as written, and (on a UTC clock) the next run. */
+function ScheduleLines({ task, clock, now }) {
   const next = soonest(task, clock, now);
   return (
-    <td className="py-2 pr-4 text-xs">
+    <>
       {task.schedules.map((schedule) => (
         <div key={schedule} className="mb-1 last:mb-0">
           <div className="font-medium text-foreground">{describeSchedule(schedule, { clock })}</div>
@@ -50,11 +51,120 @@ function ScheduleCell({ task, clock, now }) {
         </div>
       ))}
       {next ? <div className="mt-1 text-muted-foreground">Next: {formatRunTime(next)}</div> : null}
-    </td>
+    </>
   );
 }
 
-function GroupTable({ group, now }) {
+/** The task's plain name and, under it, its file or code name. */
+function TaskName({ task }) {
+  return (
+    <>
+      <div className="font-medium">{task.name}</div>
+      <code className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+        {task.code}
+      </code>
+    </>
+  );
+}
+
+/** What the task does, and what it leaves behind when there is something to say. */
+function TaskDoes({ task }) {
+  return (
+    <>
+      <div>{task.does}</div>
+      {task.leaves ? (
+        <div className="mt-1 text-muted-foreground">Leaves behind: {task.leaves}</div>
+      ) : null}
+    </>
+  );
+}
+
+function OpenLink({ task }) {
+  return (
+    <a
+      href={task.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+      aria-label={`Open ${task.name} (opens in a new tab)`}
+    >
+      Open <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+    </a>
+  );
+}
+
+/**
+ * On a phone each task is a stacked block, because four columns do not fit
+ * in a card about 300px wide: the table would push "What it does" and the
+ * link off to the side. From the `sm` width up the table is shown instead.
+ */
+function StackedList({ group, rows, now }) {
+  return (
+    <ul
+      className="divide-y divide-border/60 sm:hidden"
+      aria-label={`Scheduled tasks that run in ${group.label}`}
+    >
+      {rows.map((task) => (
+        <li key={task.id} className="space-y-2 py-3 text-xs first:pt-1">
+          <div className="text-sm">
+            <TaskName task={task} />
+          </div>
+          <div>
+            <ScheduleLines task={task} clock={group.clock} now={now} />
+          </div>
+          <TaskDoes task={task} />
+          <OpenLink task={task} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function GroupTable({ group, rows, now }) {
+  return (
+    <div className="hidden overflow-x-auto sm:block">
+      <table className="w-full min-w-[42rem] text-left text-sm">
+        <caption className="sr-only">Scheduled tasks that run in {group.label}</caption>
+        <thead className="border-b border-border text-xs uppercase text-muted-foreground">
+          <tr>
+            <th scope="col" className="w-[24%] py-2 pr-4 font-medium">
+              Task
+            </th>
+            <th scope="col" className="w-[24%] py-2 pr-4 font-medium">
+              Schedule
+            </th>
+            <th scope="col" className="py-2 pr-4 font-medium">
+              What it does
+            </th>
+            <th scope="col" className="py-2 font-medium">
+              <span className="sr-only">Open</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((task) => (
+            <tr key={task.id} className="border-b border-border/60 align-top last:border-0">
+              <td className="py-2 pr-4">
+                <TaskName task={task} />
+              </td>
+              <td className="py-2 pr-4 text-xs">
+                <ScheduleLines task={task} clock={group.clock} now={now} />
+              </td>
+              <td className="py-2 pr-4 text-xs">
+                <TaskDoes task={task} />
+              </td>
+              <td className="whitespace-nowrap py-2">
+                <OpenLink task={task} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function GroupSection({ group, now }) {
   const rows = ROWS_BY_GROUP[group.id];
   const headingId = `scheduled-tasks-${group.id}`;
   return (
@@ -66,57 +176,8 @@ function GroupTable({ group, now }) {
         </span>
       </h4>
       <p className="text-xs text-muted-foreground">{group.explain}</p>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[42rem] text-left text-sm">
-          <caption className="sr-only">Scheduled tasks that run in {group.label}</caption>
-          <thead className="border-b border-border text-xs uppercase text-muted-foreground">
-            <tr>
-              <th scope="col" className="w-[24%] py-2 pr-4 font-medium">
-                Task
-              </th>
-              <th scope="col" className="w-[24%] py-2 pr-4 font-medium">
-                Schedule
-              </th>
-              <th scope="col" className="py-2 pr-4 font-medium">
-                What it does
-              </th>
-              <th scope="col" className="py-2 font-medium">
-                <span className="sr-only">Open</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((task) => (
-              <tr key={task.id} className="border-b border-border/60 align-top last:border-0">
-                <td className="py-2 pr-4">
-                  <div className="font-medium">{task.name}</div>
-                  <code className="break-all font-mono text-[11px] text-muted-foreground">
-                    {task.code}
-                  </code>
-                </td>
-                <ScheduleCell task={task} clock={group.clock} now={now} />
-                <td className="py-2 pr-4 text-xs">
-                  <div>{task.does}</div>
-                  {task.leaves ? (
-                    <div className="mt-1 text-muted-foreground">Leaves behind: {task.leaves}</div>
-                  ) : null}
-                </td>
-                <td className="whitespace-nowrap py-2">
-                  <a
-                    href={task.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
-                    aria-label={`Open ${task.name} (opens in a new tab)`}
-                  >
-                    Open <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-                  </a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <StackedList group={group} rows={rows} now={now} />
+      <GroupTable group={group} rows={rows} now={now} />
     </section>
   );
 }
@@ -141,7 +202,7 @@ export default function ScheduledTasksTab({ now = new Date() }) {
       </CardHeader>
       <CardContent className="space-y-8 pt-0">
         {SCHEDULE_GROUPS.map((group) => (
-          <GroupTable key={group.id} group={group} now={now} />
+          <GroupSection key={group.id} group={group} now={now} />
         ))}
       </CardContent>
     </Card>

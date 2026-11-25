@@ -190,7 +190,7 @@ describe('tabs', () => {
       'true'
     );
     expect(screen.getByRole('heading', { name: /GitHub Actions/ })).toBeTruthy();
-    expect(screen.getByText('Update AVM Versions')).toBeTruthy();
+    expect(screen.getAllByText('Update AVM Versions').length).toBeGreaterThan(0);
     expect(routesAsked()).toEqual([]);
     expect(postJSON).not.toHaveBeenCalled();
   });

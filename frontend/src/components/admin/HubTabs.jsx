@@ -43,7 +43,7 @@ export function nextTabIndex(key, current, count) {
 // The tray: a grid whose columns are each at least 9rem (11.5rem from the
 // `sm` width up) and share out what is left equally.
 const LIST =
-  'grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-1 rounded-xl border border-border bg-muted/60 p-1 sm:grid-cols-[repeat(auto-fit,minmax(11.5rem,1fr))]';
+  'grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-1 rounded-xl border border-border bg-muted/60 p-1 sm:grid-cols-[repeat(auto-fit,minmax(min(100%,11.5rem),1fr))]';
 
 // Shared by every tab. The text is centred and may wrap; the outline is the
 // keyboard focus ring, offset so it shows even round the filled tab.

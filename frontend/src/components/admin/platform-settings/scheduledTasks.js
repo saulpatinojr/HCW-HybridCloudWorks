@@ -40,21 +40,21 @@ export const SCHEDULE_GROUPS = Object.freeze([
     label: 'Function App',
     clock: 'UTC',
     explain:
-      'Timers inside the site’s own back end, the Function App func-site-prod-cus-01 (resource group rg-web-site-prod-cus). Each one fires on schedule but does its work only while its switch is on (the enabled_timers list in Terraform); switched off, it stops at once. The link opens the code that sets the schedule.',
+      'Timers inside the site’s own back end, the Function App func-site-prod-cus-01 (resource group rg-web-site-prod-cus). Each one fires on schedule but does its work only while its switch is on (the enabled_timers list in Terraform); switched off, it stops at once. They report problems through Azure alerts, Telegram and the Health page, not through GitHub, so the daily Claude session does not pick them up. The link opens the code that sets the schedule.',
   },
   {
     id: 'lab-host',
     label: 'Lab host',
     clock: 'lab host clock',
     explain:
-      'Timers on the lab server, installed by its Ansible playbook (the scripted setup in lab-host/). Times are read on the lab host’s own clock, and most wait up to a few minutes more at random so they do not all start at once. A missed run, while the host was off, usually runs at the next start-up.',
+      'Timers on the lab server, installed by its Ansible playbook (the scripted setup in lab-host/). Times are read on the lab host’s own clock, and most wait up to a few minutes more at random so they do not all start at once. A missed run, while the host was off, usually runs at the next start-up. Most raise an Azure alert when a run fails; the daily Claude session cannot read those.',
   },
   {
     id: 'claude',
     label: 'Claude',
     clock: 'UTC',
     explain:
-      'A scheduled Claude Code session. It lives in the owner’s Claude account, not in this repository, so it is listed and changed at claude.ai/code.',
+      'A scheduled Claude Code session that finishes what the GitHub Actions jobs leave behind. It lives in the owner’s Claude account, not in this repository, so it is listed and changed at claude.ai/code.',
   },
 ]);
 
@@ -156,7 +156,7 @@ export const SCHEDULED_TASKS = Object.freeze([
     'Lab supply chain',
     ['45 6 * * 2'],
     'Checks whether the software the lab host pins has fallen behind, and whether the lab images carry known vulnerabilities.',
-    'Opens a pull request to move the pins, and opens or comments on an issue for vulnerabilities.'
+    'Up to three pull requests that move the pins, one per pin set (host, image base, image tools), and an issue, opened or commented on, for vulnerabilities.'
   ),
   workflow(
     'monitor-deploy-drift.yml',
@@ -190,8 +190,8 @@ export const SCHEDULED_TASKS = Object.freeze([
     'publish-lab-image.yml',
     'Publish lab image',
     ['20 5 * * 2'],
-    'Rebuilds, tests and publishes the two lab images to Docker Hub, so they pick up the week’s security updates.',
-    'New images on Docker Hub.'
+    'Rebuilds both lab images from main without the build cache, and publishes them only when the packages in the full image changed, so they pick up Debian’s security fixes.',
+    'New images on Docker Hub, and the chore/lab-pins-image-digests pull request that pins them.'
   ),
   workflow(
     'remove-ci-access-windows.yml',
@@ -247,7 +247,7 @@ export const SCHEDULED_TASKS = Object.freeze([
   ),
   timer(
     ['checkAgentHealth', 'Check lab agent health', '0 */5 * * * *', 'schedulers.js'],
-    'Marks lab agents that stopped reporting; once an hour it also checks lab drift, the Coder status token, the delivery monitor and the Cost page’s budgets.',
+    'Marks lab agents that stopped reporting. Once an hour it also reads lab drift, checks the Coder status token and reads the delivery monitor; every few hours it refreshes the Cost page’s figures and checks budgets, credits and renewals.',
     'A Telegram message when something goes red or comes back.'
   ),
   timer(
@@ -296,7 +296,8 @@ export const SCHEDULED_TASKS = Object.freeze([
   ),
   timer(
     ['monitorPublishingPipeline', 'Publishing watchdog', '0 0 */6 * * *', 'schedulers.js'],
-    'Looks for articles stuck part-way through publishing.'
+    'Looks for content stuck on its way out: a scheduled item more than 45 minutes past its time and still not live, or an item marked published that has not been live for more than 6 hours.',
+    'A publishing_pipeline_stalled_items alert (critical for an overdue scheduled item, warning otherwise) and a count in the day’s digest.'
   ),
   timer(
     ['fetchBlogListings', 'Fetch blog listings', '0 15 */6 * * *', 'schedulers.js'],
@@ -354,7 +355,8 @@ export const SCHEDULED_TASKS = Object.freeze([
   ),
   timer(
     ['generateReviewerDigest', 'Reviewer digest', '0 0 7 * * *', 'schedulers.js'],
-    'Builds the daily digest of what is waiting for review.'
+    'Takes a snapshot of the review queue: how many items are in each review state (counted up to 200 each) and the latest 30 news-feed items, grouped by provider. It sends nothing.',
+    'The day’s snapshot in workflow_digests/<date>.'
   ),
   timer(
     ['sendReminders', 'Send reminders', '0 0 13 * * *', 'schedulers.js'],
@@ -367,11 +369,13 @@ export const SCHEDULED_TASKS = Object.freeze([
   ),
   timer(
     ['reVerifyCertifications', 'Re-check certifications', '0 0 0 * * 0', 'schedulers.js'],
-    'Re-checks the certifications shown on the About page against their issuers and republishes them.'
+    'Checks every certification’s expiry date and, for a Credly badge link, whether the badge page now says “Unable to verify badge”. It marks a certification inactive, or active again, accordingly.',
+    'The public certifications list republished, only when something changed.'
   ),
   timer(
     ['checkLiveLinks', 'Check live links', '0 0 6 * * 1', 'schedulers.js'],
-    'Checks the links in published content for ones that no longer work.'
+    'Reads up to 300 live items and checks each one’s own public page and its source link (not the links inside the article). Not found (404), gone (410) or no answer at all counts as broken.',
+    'A link_rot_detected alert and a count in the day’s digest.'
   ),
   timer(
     ['probeAiProviders', 'Test AI providers', '0 15 6 * * 1', 'schedulers.js'],
@@ -385,13 +389,15 @@ export const SCHEDULED_TASKS = Object.freeze([
   ),
   timer(
     ['scrapeSkillsHubRss', 'Skills Hub feed', '0 0 9 * * 5', 'schedulers.js'],
-    'Reads the Microsoft Skills Hub feed for new items.'
+    'Reads the Microsoft Skills Hub blog feed for certification news (a beta exam, a retirement, general availability, an exam update). It creates no articles.',
+    'New certification events in certEvents.'
   ),
 
   // ── Lab host ───────────────────────────────────────────────────────────────
   labTimer(
     ['portainer', 'hcw-portainer-check.timer', 'Portainer check', 'OnUnitActiveSec=15min'],
-    'Reads Portainer (the container dashboard on the lab host) and reports what it sees to the site’s Health page through the lab agent.'
+    'Reads Portainer (the container dashboard on the lab host) and reports what it sees to the site’s Health page through the lab agent.',
+    'A result on the Health page; a failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     [
@@ -401,22 +407,22 @@ export const SCHEDULED_TASKS = Object.freeze([
       'OnUnitActiveSec=15min',
     ],
     'Starts a throwaway container shaped like a lab workspace and checks that it can still reach Coder and the lab repository.',
-    'A failed run raises the lab unit-failed alert.'
+    'A failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     ['hardening', 'hcw-playbook-drift.timer', 'Playbook drift check', 'OnCalendar=*-*-* 03:00:00'],
     'Runs the lab host’s playbook in check mode (changing nothing) to see whether the host has drifted from it.',
-    'A warning in the host’s system log when it has.'
+    'On drift, a warning in the host’s system log and a failed run, which raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     ['coder', 'coder-postgres-backup.timer', 'Coder database backup', 'OnCalendar=*-*-* 03:30:00'],
     'Dumps Coder’s PostgreSQL database, keeping seven days on the host, and uploads the dump to Azure Storage when backups are on.',
-    'A dump file under /var/backups/coder.'
+    'A dump file under /var/backups/coder; a failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     ['backups', 'hcw-vault-backup.timer', 'Vault snapshot', 'OnCalendar=*-*-* 03:45:00'],
     'Takes a snapshot of the lab’s Vault (its secret store), keeping seven days on the host, and uploads it to Azure Storage.',
-    'A snapshot file under /var/backups/vault.'
+    'A snapshot file under /var/backups/vault; a failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     [
@@ -426,20 +432,22 @@ export const SCHEDULED_TASKS = Object.freeze([
       'OnCalendar=*-*-* 04:00:00',
     ],
     'Checks the lab agent’s and Vault’s certificates and warns when one expires soon.',
-    'A warning in the host’s system log.'
+    'A warning in the host’s system log only: this one raises no alert when it fails.'
   ),
   labTimer(
     ['hardening', 'hcw-reboot-when-idle.timer', 'Reboot when idle', 'OnCalendar=*-*-* 04:30:00'],
-    'Reboots the host when an update asked for it, but only with nobody signed in and no job running; otherwise it asks again the next night.'
+    'Reboots the host when an update asked for it, but only with nobody signed in and no job running; otherwise it asks again the next night.',
+    'A failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     ['coder', 'hcw-coder-automation.timer', 'Coder automation', 'OnCalendar=*-*-* 05:45:00'],
-    'Renews the site’s read-only Coder status token, deletes the old ones, renews its own credential and reports to the site.'
+    'Renews the site’s read-only Coder status token, deletes the old ones, renews its own credential and reports to the site.',
+    'A failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
   labTimer(
     ['hardening', 'hcw-held-upgradable.timer', 'Held packages report', 'OnCalendar=*-*-* 07:15:00'],
     'Reports packages held back from upgrading, and a reboot that is still waiting.',
-    'A line in the host’s system log.'
+    'A line in the host’s system log; a failed run raises the lab unit-failed alert in Azure (alert-lab-unit-failed).'
   ),
 
   // ── Claude ─────────────────────────────────────────────────────────────────
@@ -449,7 +457,7 @@ export const SCHEDULED_TASKS = Object.freeze([
     name: 'Daily: finish what the scheduled jobs left',
     code: 'Claude Code scheduled task',
     schedules: ['13 9 * * *'],
-    does: 'A Claude Code session that picks up what the jobs above leave behind (a failed run, an update pull request that needs hand edits, an issue they opened), fixes, finishes and merges it under the repository’s rules, and reports to the owner. It lives in the owner’s Claude account, not in this repository.',
+    does: 'A Claude Code session that reads this list and finishes what the GitHub Actions jobs leave behind (failed runs, the pull requests and issues they open): it fixes, finishes and merges under the repository’s rules, and reports to the owner. The Function App and lab host timers report through Azure alerts instead, which it cannot read. It lives in the owner’s Claude account, not in this repository.',
     leaves: 'A report to the owner, and merged fixes.',
     href: 'https://claude.ai/code',
   },

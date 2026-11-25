@@ -16,8 +16,14 @@
  *     that register them;
  *   - every systemd timer the lab host playbook installs
  *     (lab-host/ansible/roles/<role>/templates/*.timer.j2), with each
- *     `{{ variable }}` filled in from group_vars/all.yml, else the role's
- *     defaults, the way Ansible would.
+ *     `{{ variable }}` filled in the way Ansible would: the role's
+ *     vars/main.yml first, then group_vars/all.yml, then the role's
+ *     defaults. A timer variable set in the inventory (which would win over
+ *     group_vars) fails the test, because this test does not read it.
+ *
+ * A workflow's cron lines are counted as well as read: a `cron:` line this
+ * test cannot read (written in a shape it does not know) fails rather than
+ * being skipped.
  *
  * The one row it cannot check is the daily Claude session, which lives in the
  * owner's Claude account; it only checks that row is there.
@@ -42,6 +48,7 @@ const FUNCTIONS = join(REPO, 'functions', 'src', 'functions');
 const INVENTORY = join(REPO, 'functions', 'function-inventory.json');
 const ROLES = join(REPO, 'lab-host', 'ansible', 'roles');
 const GROUP_VARS = join(REPO, 'lab-host', 'ansible', 'group_vars', 'all.yml');
+const ANSIBLE_INVENTORY = join(REPO, 'lab-host', 'ansible', 'inventory');
 const BLOB = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/';
 
 /**
@@ -62,21 +69,34 @@ const TIMER_FILES = [
 const listed = (group) =>
   new Map(SCHEDULED_TASKS.filter((t) => t.group === group).map((t) => [t.id, t]));
 
-/** Each scheduled workflow: file name → { name, crons }. Comment lines are skipped. */
+/**
+ * One `- cron: ...` list item, quoted or not, with an optional comment after
+ * it. The value is group 2 (quoted) or group 3 (bare).
+ */
+const CRON_ITEM = /^\s*-\s*cron:\s*(?:(['"])(.+?)\1|([^'"#\s][^#]*?))\s*(?:#.*)?$/;
+
+/**
+ * Each scheduled workflow: file name → { name, crons, cronLines }. Comment
+ * lines are skipped. `cronLines` counts every other line that mentions
+ * `cron:`, so a line in a shape CRON_ITEM does not read shows up as a
+ * difference between the two.
+ */
 function scheduledWorkflows() {
   const found = new Map();
   for (const file of readdirSync(WORKFLOWS)) {
     if (!/\.ya?ml$/.test(file)) continue;
     const text = readFileSync(join(WORKFLOWS, file), 'utf8');
     const crons = [];
+    let cronLines = 0;
     for (const line of text.split(/\r?\n/)) {
-      if (/^\s*#/.test(line)) continue;
-      const cron = /^\s*-\s*cron:\s*(['"])(.+?)\1\s*(?:#.*)?$/.exec(line);
-      if (cron) crons.push(cron[2]);
+      if (/^\s*#/.test(line) || !/\bcron:/.test(line)) continue;
+      cronLines += 1;
+      const cron = CRON_ITEM.exec(line);
+      if (cron) crons.push(cron[2] ?? cron[3]);
     }
-    if (crons.length === 0) continue;
+    if (cronLines === 0) continue;
     const name = /^name:\s*(['"]?)(.+?)\1\s*$/m.exec(text);
-    found.set(file, { name: name ? name[2] : file, crons });
+    found.set(file, { name: name ? name[2] : file, crons, cronLines });
   }
   return found;
 }
@@ -117,7 +137,31 @@ function yamlValue(text, key) {
   return match ? match[2] : undefined;
 }
 
-/** Each lab host timer: unit file name → { role, schedule }, with its variables filled in. */
+/** A role's YAML file as text, or '' when the role has none. */
+function roleFile(role, folder) {
+  const path = join(ROLES, role, folder, 'main.yml');
+  return existsSync(path) ? readFileSync(path, 'utf8') : '';
+}
+
+/** Every file under the Ansible inventory folder: relative path → text. */
+function inventoryFiles(dir = ANSIBLE_INVENTORY, prefix = '') {
+  const files = new Map();
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      for (const [name, text] of inventoryFiles(path, `${prefix}${entry.name}/`)) files.set(name, text);
+    } else {
+      files.set(`${prefix}${entry.name}`, readFileSync(path, 'utf8'));
+    }
+  }
+  return files;
+}
+
+/**
+ * Each lab host timer: unit file name → { role, schedule, variables }, with
+ * its variables filled in. Ansible's order, highest first: the role's vars,
+ * then group_vars/all.yml, then the role's defaults.
+ */
 function labTimers() {
   const groupVars = readFileSync(GROUP_VARS, 'utf8');
   const found = new Map();
@@ -129,16 +173,19 @@ function labTimers() {
       const text = readFileSync(join(templates, file), 'utf8');
       const line = text.split(/\r?\n/).find((l) => /^(OnCalendar|OnUnitActiveSec)=/.test(l));
       if (!line) throw new Error(`${role}/templates/${file} has no OnCalendar= or OnUnitActiveSec= line`);
-      const defaultsPath = join(ROLES, role, 'defaults', 'main.yml');
-      const defaults = existsSync(defaultsPath) ? readFileSync(defaultsPath, 'utf8') : '';
+      const roleVars = roleFile(role, 'vars');
+      const defaults = roleFile(role, 'defaults');
+      const variables = [];
       const schedule = line.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, name) => {
-        const resolved = yamlValue(groupVars, name) ?? yamlValue(defaults, name);
+        variables.push(name);
+        const resolved =
+          yamlValue(roleVars, name) ?? yamlValue(groupVars, name) ?? yamlValue(defaults, name);
         if (resolved === undefined || resolved.includes('{{')) {
           throw new Error(`${role}/templates/${file}: cannot fill in {{ ${name} }}`);
         }
         return resolved;
       });
-      found.set(file.replace(/\.j2$/, ''), { role, schedule });
+      found.set(file.replace(/\.j2$/, ''), { role, schedule, variables });
     }
   }
   return found;
@@ -164,6 +211,13 @@ describe('the Scheduled tasks list', () => {
       expect(task.does.length, task.id).toBeGreaterThan(20);
       expect(task.href, task.id).toMatch(/^https:\/\//);
     }
+  });
+
+  it('reads every cron line in every workflow, quoted or not', () => {
+    const unread = [...scheduledWorkflows()]
+      .filter(([, { crons, cronLines }]) => crons.length !== cronLines)
+      .map(([file, { crons, cronLines }]) => `${file}: ${cronLines} cron lines, ${crons.length} read`);
+    expect(unread, 'Write each schedule as a `- cron: ...` list item, one per line').toEqual([]);
   });
 
   it('lists every scheduled workflow, by its own name and with every cron line it has', () => {
@@ -194,6 +248,20 @@ describe('the Scheduled tasks list', () => {
       expect(rows.get(name).schedules, `${name}: its schedule`).toEqual([schedule]);
       expect(rows.get(name).href, `${name}: its link`).toBe(`${BLOB}functions/src/functions/${file}`);
     }
+  });
+
+  it('finds no lab host timer variable set in the inventory, which this test does not read', () => {
+    const names = new Set([...labTimers().values()].flatMap((t) => t.variables));
+    const found = [];
+    for (const [path, text] of inventoryFiles()) {
+      for (const name of names) {
+        if (new RegExp(`^\\s*${name}\\s*:`, 'm').test(text)) found.push(`${name} in inventory/${path}`);
+      }
+    }
+    expect(
+      found,
+      'An inventory value wins over group_vars and the role defaults this test reads, so the list could show the wrong time. Set it in group_vars/all.yml instead, or teach this test to read the inventory'
+    ).toEqual([]);
   });
 
   it('lists every lab host timer with its schedule, linked to its template', () => {

@@ -86,6 +86,29 @@ describe('ScheduledTasksTab', () => {
     expect(within(row).getByRole('link').getAttribute('href')).toBe('https://claude.ai/code');
   });
 
+  it('on a phone, stacks each task with everything the table row has, in the same order', () => {
+    renderTab();
+    for (const group of SCHEDULE_GROUPS) {
+      const list = screen.getByRole('list', { name: `Scheduled tasks that run in ${group.label}` });
+      // Hidden from the `sm` width up, where the table (hidden below it) takes over.
+      expect(list.className).toContain('sm:hidden');
+      expect(tableOf(group.label).closest('div').className).toMatch(/\bhidden\b.*\bsm:block\b/);
+      const items = within(list).getAllByRole('listitem');
+      const rowNames = within(tableOf(group.label))
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => within(row).getAllByRole('cell')[0].querySelector('div').textContent);
+      expect(items.map((item) => item.querySelector('.font-medium').textContent)).toEqual(rowNames);
+    }
+    const list = screen.getByRole('list', { name: 'Scheduled tasks that run in GitHub Actions' });
+    const item = within(list).getByText('Update AVM Versions').closest('li');
+    expect(within(item).getByText('Every Tuesday at 06:30 UTC')).toBeTruthy();
+    expect(within(item).getByText('30 6 * * 2')).toBeTruthy();
+    expect(within(item).getByText('Next: Tue 1 Dec, 06:30 UTC')).toBeTruthy();
+    expect(within(item).getByText(/Leaves behind: Opens a pull request/)).toBeTruthy();
+    expect(within(item).getByRole('link', { name: /Open Update AVM Versions/ })).toBeTruthy();
+  });
+
   it('lists the most frequent first, then in the order the week meets them', () => {
     renderTab();
     const names = within(tableOf('GitHub Actions'))
