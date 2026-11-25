@@ -46,17 +46,8 @@ export const STATE_PRESENTATION = Object.freeze({
   },
 });
 
-/** "3 min ago" for an ISO time, or null when there is none to describe. */
-export function relativeTime(iso, now = Date.now()) {
-  if (!iso) return null;
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return null;
-  const seconds = Math.round((now - then) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  return `${Math.floor(seconds / 86400)} d ago`;
-}
+// Kept exported from here: the Integrations tabs import it from this file.
+export { relativeTime } from '@/components/admin/shared/relativeTime';
 
 export function StateDot({ state }) {
   const presentation = STATE_PRESENTATION[state] ?? STATE_PRESENTATION.never;

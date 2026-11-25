@@ -184,6 +184,46 @@ function AlertList({ state, filter, onFilter, actionsFor }) {
   );
 }
 
+/** Run one change; say what happened in a toast either way. Resolves true when it saved. */
+async function runWithToast(toast, work, success) {
+  try {
+    await work();
+    if (success) toast({ title: success });
+    return true;
+  } catch (caught) {
+    toast({
+      title: 'That change was not saved',
+      description: caught?.message || 'Try again in a moment.',
+      variant: 'destructive',
+    });
+    return false;
+  }
+}
+
+/** Build and save the calendar file; a failure is said, not thrown from a click. */
+function downloadCalendarFileOrSay(alerts, toast) {
+  try {
+    downloadIcs(buildIcs(alerts));
+  } catch {
+    toast({
+      title: 'The calendar file could not be made',
+      description: 'Reload the page and try again.',
+      variant: 'destructive',
+    });
+  }
+}
+
+/** The alert being edited, or null while adding one or editing none. */
+function findEditingAlert(alerts, editing) {
+  if (!editing || editing === 'new') return null;
+  return alerts.find((a) => a.id === editing);
+}
+
+// The form shows while adding, or while editing an alert that still exists.
+function showsForm(editing, editingAlert) {
+  return editing !== null && (editing === 'new' || Boolean(editingAlert));
+}
+
 /**
  * @param {{ state: ReturnType<typeof import('./useCalendarAlerts').default> }} props
  *   the alerts the Calendar page holds; the panel changes them through it
@@ -198,7 +238,7 @@ export default function CalendarAlertsPanel({ state }) {
   const [deleting, setDeleting] = useState(false);
 
   const { alerts, today, status } = state;
-  const editingAlert = editing && editing !== 'new' ? alerts.find((a) => a.id === editing) : null;
+  const editingAlert = findEditingAlert(alerts, editing);
   const openCount = alerts.filter((alert) => alert.state !== 'done').length;
 
   // The pop-up's "All alerts" arrives with #alerts: bring the panel into view.
@@ -208,21 +248,7 @@ export default function CalendarAlertsPanel({ state }) {
     }
   }, [hash, status]);
 
-  /** Run one change; say what happened in a toast either way. */
-  async function run(work, success) {
-    try {
-      await work();
-      if (success) toast({ title: success });
-      return true;
-    } catch (caught) {
-      toast({
-        title: 'That change was not saved',
-        description: caught?.message || 'Try again in a moment.',
-        variant: 'destructive',
-      });
-      return false;
-    }
-  }
+  const run = (work, success) => runWithToast(toast, work, success);
 
   const actionsFor = (alert) => ({
     done: () => run(() => state.markDone(alert.id), 'Marked done'),
@@ -248,18 +274,7 @@ export default function CalendarAlertsPanel({ state }) {
     setPendingDelete(null);
   }
 
-  /** Build and save the calendar file; a failure is said, not thrown from a click. */
-  function downloadCalendarFile() {
-    try {
-      downloadIcs(buildIcs(alerts));
-    } catch {
-      toast({
-        title: 'The calendar file could not be made',
-        description: 'Reload the page and try again.',
-        variant: 'destructive',
-      });
-    }
-  }
+  const downloadCalendarFile = () => downloadCalendarFileOrSay(alerts, toast);
 
   return (
     <section id="alerts" aria-labelledby="calendar-alerts-heading" className="scroll-mt-4">
@@ -307,7 +322,7 @@ export default function CalendarAlertsPanel({ state }) {
             private to this portal.
           </p>
 
-          {editing !== null && (editing === 'new' || editingAlert) && (
+          {showsForm(editing, editingAlert) && (
             <AlertForm
               key={editing}
               alert={editingAlert}

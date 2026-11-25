@@ -1,5 +1,6 @@
 import React from 'react';
 import { Card } from '@/components/ui/card';
+import ColumnHeads from '@/components/admin/shared/ColumnHeads';
 
 /**
  * The Entra configuration this site runs on (#519).
@@ -94,20 +95,15 @@ export function EntraConfigurationCard({ expectations, error }) {
       <div className="overflow-x-auto rounded-md border border-border/60 bg-muted/20">
         <table className="w-full text-left text-xs">
           <thead className="text-muted-foreground">
-            <tr>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Value
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                In this browser
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                Enforced by the API
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                What changing it breaks
-              </th>
-            </tr>
+            <ColumnHeads
+              labels={[
+                'Value',
+                'In this browser',
+                'Enforced by the API',
+                'What changing it breaks',
+              ]}
+              cellClassName="px-3 py-2 font-medium"
+            />
           </thead>
           <tbody>
             {rows.map((row) => (

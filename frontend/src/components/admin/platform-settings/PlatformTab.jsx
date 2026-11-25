@@ -16,6 +16,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal';
 import { getJSON, sendJSON } from '@/lib/api';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { Shield, UserX, UserCheck, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import ColumnHeads from '@/components/admin/shared/ColumnHeads';
 
 export const ADMINS_ROUTE = 'cms/admins';
 export const AVAILABLE_ROLES = ['viewer', 'editor', 'publisher', 'super_admin'];
@@ -276,20 +277,10 @@ export default function PlatformTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm" aria-label="Administrators">
                 <thead className="border-b border-border text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="py-3 px-4 font-medium">
-                      Administrator
-                    </th>
-                    <th scope="col" className="py-3 px-4 font-medium">
-                      Role
-                    </th>
-                    <th scope="col" className="py-3 px-4 font-medium">
-                      Status
-                    </th>
-                    <th scope="col" className="py-3 px-4 font-medium">
-                      Actions
-                    </th>
-                  </tr>
+                  <ColumnHeads
+                    labels={['Administrator', 'Role', 'Status', 'Actions']}
+                    cellClassName="py-3 px-4 font-medium"
+                  />
                 </thead>
                 <tbody className="divide-y divide-border">
                   {admins.map((admin) => (

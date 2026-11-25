@@ -16,56 +16,16 @@
  * nothing here asks for one.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAuthReady } from '@/hooks/useAuthReady';
-import { getJSON } from '@/lib/api';
+import useGuardedRouteRead from './useGuardedRouteRead';
 
 export const SECRETS_ROUTE = 'cms/secrets';
 
+// The read, its generation guard and its wait for sign-in are shared with the
+// credential register (useGuardedRouteRead.js).
 export default function useSecretStatus() {
-  // Every cms/secrets route is super_admin, so a fetch before the token exists
-  // is a guaranteed 401 that renders as "could not load".
-  const { authReady } = useAuthReady();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const generation = useRef(0);
-
-  // State is only ever set in the promise callbacks, and only by the newest load.
-  const fetchStatus = useCallback((mine) => {
-    const current = () => mine === generation.current;
-    return getJSON(SECRETS_ROUTE)
-      .then((response) => {
-        if (!current()) return;
-        setData(response);
-        setError(null);
-      })
-      .catch((err) => {
-        if (!current()) return;
-        setData(null);
-        setError(err?.message ?? 'Could not load credential status.');
-      })
-      .finally(() => {
-        if (current()) setLoading(false);
-      });
-  }, []);
-
-  // Refresh pressed before sign-in finishes would be that same 401, so it waits
-  // for auth like the first load; the effect below loads as soon as it is ready.
-  const reload = useCallback(() => {
-    if (!authReady) return Promise.resolve();
-    const mine = ++generation.current;
-    setLoading(true);
-    return fetchStatus(mine);
-  }, [authReady, fetchStatus]);
-
-  useEffect(() => {
-    if (!authReady) return undefined;
-    fetchStatus(++generation.current);
-    return () => {
-      generation.current += 1;
-    };
-  }, [authReady, fetchStatus]);
-
+  const { data, loading, error, reload } = useGuardedRouteRead(
+    SECRETS_ROUTE,
+    'Could not load credential status.'
+  );
   return { data, loading, error, reload };
 }

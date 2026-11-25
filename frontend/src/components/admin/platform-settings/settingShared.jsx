@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { AlertTriangle, Loader2, RefreshCw, Save } from 'lucide-react';
 import { getJSON, sendJSON } from '@/lib/api';
+import { relativeTime as relativeTimeFrom } from '@/components/admin/shared/relativeTime';
 
 // The same lists the server allowlists (functions/src/lib/platform-settings.js).
 export const HERO_PROVIDERS = Object.freeze([
@@ -126,16 +127,8 @@ export const putSetting = (route, body, etag) =>
 export const SELECT_CLASS =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 
-export const relativeTime = (iso) => {
-  if (!iso) return null;
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return null;
-  const seconds = Math.round((Date.now() - then) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  return `${Math.floor(seconds / 86400)} d ago`;
-};
+/** "3 min ago" for an ISO time, or null (the shared admin wording). */
+export const relativeTime = (iso) => relativeTimeFrom(iso);
 
 const EMPTY_META = Object.freeze({ exists: false, stored: null, updatedAt: null, problem: null });
 

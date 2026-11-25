@@ -34,8 +34,8 @@ const EMPTY = Object.freeze({
   busy: null,
 });
 
-export function useForgeQueue({ enabled = true } = {}) {
-  const [state, setState] = useState(EMPTY);
+/** A ref that is true while the component is mounted. */
+function useMountedRef() {
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -43,6 +43,51 @@ export function useForgeQueue({ enabled = true } = {}) {
       mounted.current = false;
     };
   }, []);
+  return mounted;
+}
+
+/**
+ * The state after a server answer: a list answer (`items`) replaces the
+ * queue; a mutation answer (`changed`, `removed`) is merged into it.
+ */
+function withAnswer(current, answer) {
+  const items = Array.isArray(answer.items)
+    ? answer.items
+    : mergeDelta(current.items, answer.changed, answer.removed);
+  return {
+    ...current,
+    status: 'ready',
+    items,
+    total: items.length,
+    max: answer.max ?? current.max,
+    error: null,
+  };
+}
+
+/** The body of useForgeQueue's `run` (see there). */
+async function runQueueCall(call, { begin, onError }, { setState, mounted, take }) {
+  setState((current) => ({ ...current, ...begin(current), error: null }));
+  try {
+    const answer = await call();
+    return mounted.current ? take(answer) : answer;
+  } catch (err) {
+    if (mounted.current) setState((current) => ({ ...current, ...onError(err) }));
+    return null;
+  } finally {
+    if (mounted.current) setState((current) => ({ ...current, busy: null }));
+  }
+}
+
+/** Call `load` every REFRESH_MS while `active`. Returns the effect cleanup. */
+function pollWhile(active, load) {
+  if (!active) return undefined;
+  const timer = setInterval(load, REFRESH_MS);
+  return () => clearInterval(timer);
+}
+
+export function useForgeQueue({ enabled = true } = {}) {
+  const [state, setState] = useState(EMPTY);
+  const mounted = useMountedRef();
 
   /**
    * The server's answer becomes the state: a list answer (`items`) replaces
@@ -52,19 +97,7 @@ export function useForgeQueue({ enabled = true } = {}) {
    */
   const take = useCallback((answer) => {
     if (!answer?.ok) throw new Error(answer?.error || 'The queue did not answer.');
-    setState((current) => {
-      const items = Array.isArray(answer.items)
-        ? answer.items
-        : mergeDelta(current.items, answer.changed, answer.removed);
-      return {
-        ...current,
-        status: 'ready',
-        items,
-        total: items.length,
-        max: answer.max ?? current.max,
-        error: null,
-      };
-    });
+    setState((current) => withAnswer(current, answer));
     return answer;
   }, []);
 
@@ -74,19 +107,8 @@ export function useForgeQueue({ enabled = true } = {}) {
    * null when it failed; nothing is written after unmount.
    */
   const run = useCallback(
-    async (call, { begin, onError }) => {
-      setState((current) => ({ ...current, ...begin(current), error: null }));
-      try {
-        const answer = await call();
-        return mounted.current ? take(answer) : answer;
-      } catch (err) {
-        if (mounted.current) setState((current) => ({ ...current, ...onError(err) }));
-        return null;
-      } finally {
-        if (mounted.current) setState((current) => ({ ...current, busy: null }));
-      }
-    },
-    [take]
+    (call, steps) => runQueueCall(call, steps, { setState, mounted, take }),
+    [mounted, take]
   );
 
   const load = useCallback(
@@ -107,11 +129,7 @@ export function useForgeQueue({ enabled = true } = {}) {
 
   // Re-read while a job is running, so forged/failed arrive on their own.
   const forging = state.items.some((item) => item.status === 'forging');
-  useEffect(() => {
-    if (!enabled || !forging) return undefined;
-    const timer = setInterval(load, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [enabled, forging, load]);
+  useEffect(() => pollWhile(enabled && forging, load), [enabled, forging, load]);
 
   /** One write: `busy` names it, the answer replaces the list, an error lands on the state. */
   const write = useCallback(
