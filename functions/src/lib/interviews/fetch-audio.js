@@ -270,7 +270,7 @@ async function storeStream({ storage, failed }, source, { path, contentType }) {
   });
   const discard = () => storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path).catch(() => {});
   try {
-    await storage.uploadBlobFromStream(INTERVIEWS_AUDIO_CONTAINER, path, counted, UPLOAD_BLOCK_BYTES, contentType);
+    await storage.uploadBlobFromStream(INTERVIEWS_AUDIO_CONTAINER, path, counted, contentType, { bufferSize: UPLOAD_BLOCK_BYTES });
   } catch (error) {
     await discard();
     throw await recordFailure(failed, fetchFailure(pipeError || error));

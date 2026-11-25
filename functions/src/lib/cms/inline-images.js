@@ -254,7 +254,7 @@ export function createInlineImageRehoster({
         // Provenance without the query string: enough to say where the copy
         // came from, not enough to replay a signed or tracking URL.
         await storage.uploadBlob(INLINE_IMAGE_CONTAINER, blobPath, buffer, contentType, {
-          sourceUrl: sourceOf(url),
+          metadata: { sourceUrl: sourceOf(url) },
         });
         rewritten.push({ from: url, to: mediaUrlFor(INLINE_IMAGE_CONTAINER, blobPath) });
       } catch (error) {

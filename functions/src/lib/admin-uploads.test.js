@@ -166,7 +166,7 @@ describe('uploadFile', () => {
 
     expect(res.status).toBe(409);
     // The condition has to be requested, or the service never raises the 409.
-    const [, , , , , options] = storage.uploadBlob.mock.calls[0];
+    const [, , , , options] = storage.uploadBlob.mock.calls[0];
     expect(options).toEqual({ overwrite: false });
     // A conflict is an ordinary outcome, not something to log as a failure.
     expect(context.error).not.toHaveBeenCalledWith('uploadFile failed:', conflict);

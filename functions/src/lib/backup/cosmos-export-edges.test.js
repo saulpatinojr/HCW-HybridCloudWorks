@@ -129,7 +129,7 @@ describe('createExportBlobStore', () => {
     return {
       blobs,
       uploadBlobFromStream: vi.fn(async () => 'https://x/y'),
-      uploadBlob: vi.fn(async (_c, name, body, _ct, _meta, { overwrite } = {}) => {
+      uploadBlob: vi.fn(async (_c, name, body, _ct, { overwrite } = {}) => {
         if (overwrite === false && blobs.has(name)) {
           throw Object.assign(new Error('BlobAlreadyExists'), {
             statusCode: 409,
@@ -160,9 +160,8 @@ describe('createExportBlobStore', () => {
       'cosmos-export',
       'full/2026-09-13/content.ndjson.gz',
       stream,
-      UPLOAD_BUFFER_BYTES,
       'application/gzip',
-      { tier: 'Cool', metadata: { runId: 'r' } }
+      { bufferSize: UPLOAD_BUFFER_BYTES, tier: 'Cool', metadata: { runId: 'r' } }
     );
   });
 
@@ -256,7 +255,7 @@ describe('createExportBlobStore', () => {
     const storage = fakeStorage();
     const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
     expect(await store.uploadGzipStream('2026/cosmos/blogs.ndjson.gz', Readable.from([]), { conditions: { ifNoneMatch: '*' } })).toBe(true);
-    expect(storage.uploadBlobFromStream.mock.calls[0][5]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
+    expect(storage.uploadBlobFromStream.mock.calls[0][4]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
     for (const refusal of [{ statusCode: 409, code: 'BlobAlreadyExists' }, { statusCode: 412, code: 'ConditionNotMet' }]) {
       storage.uploadBlobFromStream = vi.fn(async () => {
         throw Object.assign(new Error('refused'), refusal);
@@ -323,7 +322,6 @@ describe('createExportBlobStore', () => {
       'state/content.json',
       expect.any(Buffer),
       'application/json',
-      {},
       { overwrite: true }
     );
 
@@ -336,7 +334,6 @@ describe('createExportBlobStore', () => {
       'full/2026-09-13/manifest.json',
       expect.any(Buffer),
       'application/json',
-      {},
       { overwrite: true }
     );
   });
@@ -350,7 +347,6 @@ describe('createExportBlobStore', () => {
       'state/content.json',
       expect.any(Buffer),
       'application/json',
-      {},
       { overwrite: true }
     );
   });

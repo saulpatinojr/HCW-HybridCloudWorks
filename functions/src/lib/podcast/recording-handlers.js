@@ -270,8 +270,10 @@ async function storeAndQueue(h, request, context, { auth, enqueue }) {
     uploadPath,
     buffer,
     media.contentType,
-    { source: 'recording-upload', uploadedBy: String(auth.user?.oid || '') },
-    { overwrite: false }
+    {
+      metadata: { source: 'recording-upload', uploadedBy: String(auth.user?.oid || '') },
+      overwrite: false,
+    }
   );
 
   const queued = await queueUpload(h, { payload, auth, enqueue, context });

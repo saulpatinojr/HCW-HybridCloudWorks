@@ -76,7 +76,7 @@ async function storeMirror({ store, storage, fetchImage, log }, container, doc, 
   const { buffer, contentType } = fetched;
   const ext = requireImageExtension(contentType);
   const blobPath = `${doc.id}/images/${spec.blobName}.${ext}`;
-  await storage.uploadBlob(container, blobPath, buffer, contentType, { sourceUrl: newUrl });
+  await storage.uploadBlob(container, blobPath, buffer, contentType, { metadata: { sourceUrl: newUrl } });
   const field = rowyImageField({
     downloadURL: downloadUrlFor(container, blobPath, newUrl),
     blobPath,
@@ -138,7 +138,7 @@ async function storeTemplateCover({ store, storage, log }, doc, title) {
   const blobPath = `${doc.id}/images/generated-cover.svg`;
   const buffer = Buffer.from(svg, 'utf8');
   await storage.uploadBlob('blogs', blobPath, buffer, 'image/svg+xml', {
-    sourceUrl: 'generated',
+    metadata: { sourceUrl: 'generated' },
   });
   const field = rowyImageField({
     downloadURL: mediaUrlFor('blogs', blobPath),
@@ -172,7 +172,7 @@ async function generateTemplateCover(d, doc) {
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function }} deps.store
- * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, metadata)
+ * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, { metadata })
  * @param {(url: string) => Promise<{buffer?: Buffer, contentType: string, refused?: string, reason?: string}>} [deps.fetchImage]
  * @param {{ log?: Function, warn?: Function, error?: Function }} [deps.log]
  */

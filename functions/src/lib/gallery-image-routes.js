@@ -355,7 +355,7 @@ export async function importGalleryImageRoute(deps, { request, user }) {
   const nowIso = now().toISOString();
   const title = String(body.title || '').trim() || importFileName(url) || 'Imported image';
   const blobPath = importBlobPath(title, ext, nowIso);
-  await storage.uploadBlob('covers', blobPath, buffer, contentType, { sourceUrl: source });
+  await storage.uploadBlob('covers', blobPath, buffer, contentType, { metadata: { sourceUrl: source } });
   const doc = importedImageDoc({
     id: uuid(),
     body,

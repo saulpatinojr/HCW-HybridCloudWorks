@@ -342,8 +342,7 @@ export async function generateCoversForContent(
     const { buffer, contentType } = fetched;
     const blobPath = aiCoverBlobPath(contentId, target, stamp);
     await storage.uploadBlob('covers', blobPath, buffer, contentType, {
-      contentId,
-      slot: target,
+      metadata: { contentId, slot: target },
     });
     const publicUrl = mediaUrlFor('covers', blobPath);
     generatedUrls[target] = publicUrl;

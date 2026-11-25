@@ -111,8 +111,7 @@ export async function generateCuratedArticleImage(ctx, request, context) {
     // article's curated image rather than adding a second one.
     const blobPath = `curated-${articleId}.png`;
     await storage.uploadBlob('covers', blobPath, buffer, contentType, {
-      articleId,
-      slot: 'curated',
+      metadata: { articleId, slot: 'curated' },
     });
     const imageUrl = mediaUrlFor('covers', blobPath);
     const nowIso = now().toISOString();

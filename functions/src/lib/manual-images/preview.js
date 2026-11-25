@@ -104,8 +104,7 @@ async function generatePreviewSlot(ctx, slot, run) {
   // (ADR 0033 §6.2); old un-stamped paths still resolve.
   const blobPath = `preview-${articleId}-${slot}-${compact(stamp)}.png`;
   await storage.uploadBlob('covers', blobPath, buffer, contentType, {
-    articleId,
-    slot,
+    metadata: { articleId, slot },
   });
   const imageUrl = mediaUrlFor('covers', blobPath);
   const imageId = uuid();

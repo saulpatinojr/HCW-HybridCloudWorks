@@ -155,9 +155,9 @@ export function createExportBlobStore({
           targetContainer(name),
           name,
           stream,
-          UPLOAD_BUFFER_BYTES,
           'application/gzip',
           {
+            bufferSize: UPLOAD_BUFFER_BYTES,
             tier,
             metadata,
             ...(conditions ? { conditions } : {}),
@@ -173,7 +173,7 @@ export function createExportBlobStore({
     async putJson(name, value, { overwrite = true } = {}) {
       const body = Buffer.from(JSON.stringify(value, null, 2), 'utf8');
       try {
-        await storage.uploadBlob(targetContainer(name), name, body, 'application/json', {}, { overwrite });
+        await storage.uploadBlob(targetContainer(name), name, body, 'application/json', { overwrite });
         return true;
       } catch (error) {
         if (!overwrite && isAlreadyExists(error)) return false;

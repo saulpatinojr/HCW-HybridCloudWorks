@@ -233,7 +233,7 @@ async function storeSample({ storage }, rendered, at) {
       SAMPLE_AUDIO_PATH,
       rendered.audio,
       rendered.contentType,
-      { sourceKind: 'sample' }
+      { metadata: { sourceKind: 'sample' } }
     );
     return { audioUrl: `${SAMPLE_MEDIA_URL}?v=${at.getTime()}`, audioError: null };
   } catch (error) {

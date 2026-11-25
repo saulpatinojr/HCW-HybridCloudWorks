@@ -329,7 +329,6 @@ async function uploadFile({ guard, storage, store, now, uuid, normalizeImage }, 
       storedPath,
       buffer,
       storedType,
-      {},
       { overwrite: false }
     );
 
@@ -362,7 +361,7 @@ async function uploadFile({ guard, storage, store, now, uuid, normalizeImage }, 
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
- * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, metadata, options) → public URL
+ * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, { metadata, overwrite }) → public URL
  * @param {object} [deps.store] - Cosmos store for audit recording (optional)
  * @param {Function} [deps.now]
  * @param {Function} [deps.uuid]

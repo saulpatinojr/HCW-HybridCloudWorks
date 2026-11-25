@@ -130,8 +130,8 @@ export function getContainerClient(containerName) {
  * @param {string} blobName - Blob path (e.g. 'blogId/images/cover.png')
  * @param {Buffer|ReadableStream} content - File content
  * @param {string} contentType - MIME type (e.g. 'image/png')
- * @param {object} [metadata] - Custom metadata key-value pairs
  * @param {object} [options]
+ * @param {object} [options.metadata={}] - Custom metadata key-value pairs
  * @param {boolean} [options.overwrite=true] - When false, the upload is
  *   conditioned on `If-None-Match: *` and the service answers 409
  *   `BlobAlreadyExists` rather than replacing an existing blob. Opt-in rather
@@ -139,14 +139,9 @@ export function getContainerClient(containerName) {
  *   same deterministic keys on purpose, keep working unchanged (T-307).
  * @returns {Promise<string>} URL of the uploaded blob
  */
-export async function uploadBlob(
-  containerName,
-  blobName,
-  content,
-  contentType,
-  metadata = {},
-  options = {}
-) {
+export async function uploadBlob(containerName, blobName, content, contentType, options = {}) {
+  refuseUnknownOptions('uploadBlob', options, UPLOAD_BLOB_OPTIONS);
+  const { metadata = {}, overwrite } = options;
   refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
@@ -154,7 +149,7 @@ export async function uploadBlob(
   await blockBlobClient.upload(content, Buffer.byteLength(content), {
     blobHTTPHeaders: { blobContentType: contentType },
     metadata,
-    ...(options.overwrite === false ? { conditions: { ifNoneMatch: '*' } } : {}),
+    ...(overwrite === false ? { conditions: { ifNoneMatch: '*' } } : {}),
   });
 
   return blockBlobClient.url;
@@ -168,13 +163,13 @@ export async function uploadBlob(
  * @param {string} containerName
  * @param {string} blobName
  * @param {import('node:stream').Readable} stream
- * @param {number} [bufferSize] - bytes per uploaded block. This is the SDK's
- *   `bufferSize`, not the stream's length: the parameter used to be named
- *   `streamLength`, which is what `uploadStream`'s second positional is NOT.
- *   Nothing called it under the old name. `undefined` takes the SDK default
- *   (8 MiB).
  * @param {string} contentType
  * @param {object} [options]
+ * @param {number} [options.bufferSize] - bytes per uploaded block. This is
+ *   the SDK's `bufferSize`, not the stream's length: the parameter used to be
+ *   named `streamLength`, which is what `uploadStream`'s second positional is
+ *   NOT. Nothing called it under the old name. `undefined` takes the SDK
+ *   default (8 MiB).
  * @param {string} [options.tier] - access tier to write at, e.g. 'Cool'
  * @param {Record<string, string>} [options.metadata]
  * @param {{ ifNoneMatch?: string, ifMatch?: string }} [options.conditions] -
@@ -185,19 +180,13 @@ export async function uploadBlob(
  *   (backup/archive-job.js).
  * @returns {Promise<string>} Blob URL
  */
-export async function uploadBlobFromStream(
-  containerName,
-  blobName,
-  stream,
-  bufferSize,
-  contentType,
-  options = {}
-) {
+export async function uploadBlobFromStream(containerName, blobName, stream, contentType, options = {}) {
+  refuseUnknownOptions('uploadBlobFromStream', options, UPLOAD_STREAM_OPTIONS);
   refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
-  await blockBlobClient.uploadStream(stream, bufferSize, undefined, {
+  await blockBlobClient.uploadStream(stream, options.bufferSize, undefined, {
     blobHTTPHeaders: { blobContentType: contentType },
     ...(options.metadata ? { metadata: options.metadata } : {}),
     ...(options.tier ? { tier: options.tier } : {}),
@@ -205,6 +194,21 @@ export async function uploadBlobFromStream(
   });
 
   return blockBlobClient.url;
+}
+
+// The option names each upload understands. Both uploads used to take more
+// arguments one after another (metadata and then options; a block size
+// before the type). A caller still written the old way would hand its
+// metadata where the options go and lose it without a sound, so a name not
+// on these lists stops the upload with a plain error instead.
+const UPLOAD_BLOB_OPTIONS = new Set(['metadata', 'overwrite']);
+const UPLOAD_STREAM_OPTIONS = new Set(['bufferSize', 'tier', 'metadata', 'conditions']);
+
+function refuseUnknownOptions(fn, options, known) {
+  const unknown = Object.keys(options || {}).filter((key) => !known.has(key));
+  if (unknown.length > 0) {
+    throw new TypeError(`${fn}: unknown option(s) ${unknown.join(', ')}`);
+  }
 }
 
 /**
