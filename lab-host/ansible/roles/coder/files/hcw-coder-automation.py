@@ -110,6 +110,7 @@ credential yet (push-template).
 """
 
 import argparse
+import collections
 import contextlib
 import datetime
 import fcntl
@@ -156,6 +157,13 @@ ROTATION_CREDENTIAL = "the rotation credential"
 ROTATION_LIFETIME = datetime.timedelta(days=365)
 ROTATION_RENEW_BEFORE_EXPIRY = datetime.timedelta(days=60)
 
+# The two kinds of token this helper makes: the name it starts from (the day
+# is added after it), how long it lasts, its scopes (None is unscoped) and
+# what messages call it.
+TokenKind = collections.namedtuple("TokenKind", "prefix lifetime scopes what")
+STATUS_KIND = TokenKind(STATUS_PREFIX, STATUS_LIFETIME, STATUS_SCOPES, "status token")
+ROTATION_KIND = TokenKind(ROTATION_PREFIX, ROTATION_LIFETIME, None, "rotation credential")
+
 # A Coder token, <id>-<secret>, letters and digits either side of one hyphen;
 # hcw-coder-template-push accepts the same shape. Looser than Coder's 10 and
 # 22, so a format change there does not lock the helper out.
@@ -192,9 +200,27 @@ CONFIG_KEYS = {
 # The environment every program this helper starts gets, and nothing more: the
 # token never travels in one, and a proxy variable cannot reach them.
 CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# The sandbox systemd-run puts the site's CLI in, each as a --property.
+CLI_SANDBOX = (
+    "Environment=NODE_ENV=production",
+    "NoNewPrivileges=yes",
+    "PrivateTmp=yes",
+    "ProtectSystem=full",
+    "ProtectHome=yes",
+)
 
 me = "hcw-coder-automation"
 SECRETS = set()
+
+
+class Context:
+    """What the steps of one run or seed share: the Coder client, the settings, the state and when it started."""
+
+    def __init__(self, coder, config, state, started):
+        self.coder = coder
+        self.config = config
+        self.state = state
+        self.started = started
 
 
 class Failure(Exception):
@@ -517,19 +543,20 @@ def list_tokens(coder, token, user):
     return [key for key in keys if isinstance(key, dict) and isinstance(key.get("id"), str)]
 
 
-def create_token(coder, token, user, base_name, lifetime, scopes, what):
-    """POST a new token; a name already in use (409) gets -2, -3 and so on."""
-    body = {"lifetime": int(lifetime.total_seconds()) * NANOSECONDS}
-    if scopes:
-        body["scopes"] = list(scopes)
+def create_token(context, token, user, kind):
+    """POST a new token of this kind, named for the day the run started; a name already in use (409) gets -2, -3 and so on."""
+    base_name = f"{kind.prefix}{day(context.started)}"
+    body = {"lifetime": int(kind.lifetime.total_seconds()) * NANOSECONDS}
+    if kind.scopes:
+        body["scopes"] = list(kind.scopes)
     for attempt in range(1, 10):
         name = base_name if attempt == 1 else f"{base_name}-{attempt}"
         body["token_name"] = name
-        status, answer = coder.call("POST", f"/api/v2/users/{user}/keys/tokens", token, body)
+        status, answer = context.coder.call("POST", f"/api/v2/users/{user}/keys/tokens", token, body)
         if status == 409:
             continue
         if status != 201 or not isinstance(answer, dict) or not TOKEN.match(str(answer.get("key", ""))):
-            raise Failure(f"Coder refused to create the {what} {name} (HTTP {status})")
+            raise Failure(f"Coder refused to create the {kind.what} {name} (HTTP {status})")
         return remember(answer["key"]), name
     raise Failure(f"every name from {base_name} to {base_name}-9 is already a token of {user}")
 
@@ -567,7 +594,7 @@ def retire(coder, token, state, identifier):
     return gone
 
 
-def discard_new_credential(coder, token, owner_ref, new, name, state, user):
+def discard_new_credential(context, token, owner_ref, new, name):
     """Delete a new rotation credential that failed before it was stored.
 
     Returns what became of it, for the error. When Coder does not delete it,
@@ -575,14 +602,14 @@ def discard_new_credential(coder, token, owner_ref, new, name, state, user):
     """
     identifier = key_id(new)
     try:
-        gone = delete_key(coder, token, owner_ref, identifier)
+        gone = delete_key(context.coder, token, owner_ref, identifier)
     except Failure:
         gone = False
     if gone:
         return f"the new rotation credential {name} was deleted"
-    mark_for_deletion(state, identifier)
+    mark_for_deletion(context.state, identifier)
     return (f"deleting the new rotation credential {name} failed too; the next run deletes it, "
-            f"or delete it by hand among {user}'s tokens in Coder")
+            f"or delete it by hand among {context.config['status_user']}'s tokens in Coder")
 
 
 def retry_discards(coder, token, state):
@@ -620,29 +647,18 @@ def deliver(config, status_token, report):
     if status_token is not None:
         payload["statusToken"] = status_token
     timeout = config["report_timeout_seconds"]
-    argv = [
-        config["systemd_run"],
-        "--pipe",
-        "--wait",
-        "--quiet",
-        "--collect",
-        "--service-type=exec",
-        f"--uid={config['agent_user']}",
-        f"--gid={config['agent_group']}",
-        f"--property=EnvironmentFile={config['agent_env_file']}",
-        f"--property=WorkingDirectory={config['agent_app_dir']}",
-        "--property=Environment=NODE_ENV=production",
-        "--property=NoNewPrivileges=yes",
-        "--property=PrivateTmp=yes",
-        "--property=ProtectSystem=full",
-        "--property=ProtectHome=yes",
+    properties = [
+        f"EnvironmentFile={config['agent_env_file']}",
+        f"WorkingDirectory={config['agent_app_dir']}",
+        *CLI_SANDBOX,
         # systemd stops the CLI itself before this helper gives up on it, so
         # a hung CLI never outlives the run that started it.
-        f"--property=RuntimeMaxSec={timeout}",
-        "--",
-        config["node"],
-        config["report_cli"],
+        f"RuntimeMaxSec={timeout}",
     ]
+    argv = [config["systemd_run"], "--pipe", "--wait", "--quiet", "--collect", "--service-type=exec",
+            f"--uid={config['agent_user']}", f"--gid={config['agent_group']}"]
+    argv += [f"--property={setting}" for setting in properties]
+    argv += ["--", config["node"], config["report_cli"]]
     try:
         completed = subprocess.run(
             argv,
@@ -701,14 +717,14 @@ def clip(errors):
 # --- run --------------------------------------------------------------------
 
 
-def renew_rotation(coder, config, token, state, started):
+def renew_rotation(context, token):
     """A new rotation credential: create, check, store, then delete the old one.
 
     Returns (new token, its expiry, a failure to delete the old one or None).
     """
+    coder, config, state = context.coder, context.config, context.state
     user = config["status_user"]
-    new, name = create_token(coder, token, "me", f"{ROTATION_PREFIX}{day(started)}",
-                             ROTATION_LIFETIME, None, "rotation credential")
+    new, name = create_token(context, token, "me", ROTATION_KIND)
     try:
         check_identity(coder, new, user, f"the new rotation credential {name}")
         expires = parse_time(own_key(coder, new, key_id(new), f"the new rotation credential {name}").get("expires_at"))
@@ -716,7 +732,7 @@ def renew_rotation(coder, config, token, state, started):
         save_state(config, state)
         store_credential(config["credential_file"], new)
     except Failure as error:
-        outcome = discard_new_credential(coder, token, "me", new, name, state, user)
+        outcome = discard_new_credential(context, token, "me", new, name)
         raise Failure(f"{error}; {outcome}") from None
     state["rotationTokenExpiresAt"] = iso(expires)
     say(f"stored a new rotation credential, {name}; it expires on {day(expires)}")
@@ -725,10 +741,10 @@ def renew_rotation(coder, config, token, state, started):
     return new, expires, "the new rotation credential is stored, but Coder did not delete the previous one; the next run deletes it"
 
 
-def renew_status(coder, config, token, state, started, previous_id):
+def renew_status(context, token, previous_id):
     """A new status token: create, check, hand to the site, and record it as live."""
-    new, name = create_token(coder, token, "me", f"{STATUS_PREFIX}{day(started)}",
-                             STATUS_LIFETIME, STATUS_SCOPES, "status token")
+    coder, config, state, started = context.coder, context.config, context.state, context.started
+    new, name = create_token(context, token, "me", STATUS_KIND)
     new_id = key_id(new)
     try:
         status, body = coder.call("GET", "/api/v2/workspaces?q=status:running", new)
@@ -762,8 +778,9 @@ def renew_status(coder, config, token, state, started, previous_id):
     say(f"the site stored the new status token {name}; it expires on {day(expires)}")
 
 
-def renew_status_if_due(coder, config, token, keys, state, started, force):
+def renew_status_if_due(context, token, keys, force):
     """Renew when the token the site holds is due. True when a new one went live."""
+    config, state, started = context.config, context.state, context.started
     status_keys = [key for key in keys if is_status_key(key)]
     live_id = state.get("statusTokenId")
     if live_id:
@@ -794,7 +811,7 @@ def renew_status_if_due(coder, config, token, keys, state, started, force):
     if reason is None:
         return False
     say(f"renewing the site's status token: {reason}")
-    renew_status(coder, config, token, state, started, reference["id"] if reference else None)
+    renew_status(context, token, reference["id"] if reference else None)
     return True
 
 
@@ -824,12 +841,13 @@ def prune(coder, token, keys, state, started):
     return deleted
 
 
-def usable_rotation_credential(coder, config, args, state, started, errors):
+def usable_rotation_credential(context, args, errors):
     """The stored rotation credential, checked and renewed when due, or None when it cannot be used.
 
     A problem that still leaves a working credential (its renewal failed, or
     the old one was not deleted) is added to `errors` and the run goes on.
     """
+    coder, config, state = context.coder, context.config, context.state
     try:
         token = read_credential(config["credential_file"])
         if token is None:
@@ -840,10 +858,10 @@ def usable_rotation_credential(coder, config, args, state, started, errors):
         check_identity(coder, token, config["status_user"], ROTATION_CREDENTIAL)
         expires = parse_time(own_key(coder, token, key_id(token), ROTATION_CREDENTIAL).get("expires_at"))
         state["rotationTokenExpiresAt"] = iso(expires)
-        if args.rotate_credential or expires - started < ROTATION_RENEW_BEFORE_EXPIRY:
+        if args.rotate_credential or expires - context.started < ROTATION_RENEW_BEFORE_EXPIRY:
             say(f"renewing the rotation credential, which expires on {day(expires)}")
             try:
-                token, expires, problem = renew_rotation(coder, config, token, state, started)
+                token, expires, problem = renew_rotation(context, token)
                 if problem:
                     errors.append(problem)
             except Failure as error:
@@ -854,21 +872,21 @@ def usable_rotation_credential(coder, config, args, state, started, errors):
     return token
 
 
-def tidy_status_tokens(coder, config, token, state, started, rotate_now, errors):
+def tidy_status_tokens(context, token, rotate_now, errors):
     """With a working rotation credential: finish listed deletions, renew the site's token when due, prune.
 
     Each failure is added to `errors`; the first step's failure does not stop the second.
     """
-    user = config["status_user"]
+    coder, user = context.coder, context.config["status_user"]
     try:
-        retry_discards(coder, token, state)
+        retry_discards(coder, token, context.state)
     except Failure as error:
         errors.append(str(error))
     try:
         keys = list_tokens(coder, token, user)
-        if renew_status_if_due(coder, config, token, keys, state, started, rotate_now):
+        if renew_status_if_due(context, token, keys, rotate_now):
             keys = list_tokens(coder, token, user)
-        prune(coder, token, keys, state, started)
+        prune(coder, token, keys, context.state, context.started)
     except Failure as error:
         errors.append(str(error))
 
@@ -880,9 +898,10 @@ def run(config, args):
     with locked(config):
         state = load_state(config)
         started = now()
-        token = usable_rotation_credential(coder, config, args, state, started, errors)
+        context = Context(coder, config, state, started)
+        token = usable_rotation_credential(context, args, errors)
         if token is not None:
-            tidy_status_tokens(coder, config, token, state, started, args.rotate_now, errors)
+            tidy_status_tokens(context, token, args.rotate_now, errors)
         report = report_fields(state, started, source_digest_or_none(config))
         if errors:
             report["lastError"] = clip(errors)
@@ -984,9 +1003,8 @@ def store_seeded_credential(coder, config, state, owner, existing):
     Returns (its name, its expiry, a sentence about the previous one or "").
     """
     user = config["status_user"]
-    started = now()
-    new, name = create_token(coder, owner, user, f"{ROTATION_PREFIX}{day(started)}",
-                             ROTATION_LIFETIME, None, "rotation credential")
+    context = Context(coder, config, state, now())
+    new, name = create_token(context, owner, user, ROTATION_KIND)
     replacing = existing is not None and existing != new
     try:
         check_identity(coder, new, user, f"the new rotation credential {name}")
@@ -996,7 +1014,7 @@ def store_seeded_credential(coder, config, state, owner, existing):
             save_state(config, state)
         store_credential(config["credential_file"], new)
     except Failure as error:
-        outcome = discard_new_credential(coder, owner, user, new, name, state, user)
+        outcome = discard_new_credential(context, owner, user, new, name)
         save_state(config, state)
         raise Failure(f"{error}; {outcome}") from None
     note = ""
@@ -1119,13 +1137,15 @@ def published_record(config, state, name):
     return record
 
 
-def publish_one(config, args, token, state, name, directory):
+def publish_one(config, args, token, state, template):
     """Publish one template when its files or autostop changed, and record it. A Failure on error.
 
     Every error is a Failure, reading the template's files included, so
     push_template's per-template handling sees it and the next template is
-    still tried (CodeRabbit, #1100).
+    still tried (CodeRabbit, #1100). `template` is a (name, directory) pair
+    from templates_to_publish.
     """
+    name, directory = template
     try:
         digest = template_digest(config, directory)
     except OSError as error:
@@ -1201,7 +1221,7 @@ def push_template(config, args):
         failed = []
         for name, directory in templates:
             try:
-                publish_one(config, args, token, state, name, directory)
+                publish_one(config, args, token, state, (name, directory))
             except Failure as error:
                 warn(f"publishing {name} failed: {error}")
                 failed.append(name)
