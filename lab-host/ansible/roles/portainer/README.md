@@ -95,7 +95,8 @@ lab-host probes; the card goes critical when no report has arrived for 45
 minutes, so a timer that stops is seen too.
 
 **What it reads.** `/usr/local/libexec/hcw-portainer-check` (Python 3,
-standard library only, `files/hcw-portainer-check`) makes six kinds of
+standard library only, `files/hcw-portainer-check` and its modules in
+`files/hcw_portainer_check/`, below) makes six kinds of
 `GET` against `https://127.0.0.1:9443/api`, each with the token in
 `X-API-Key`:
 
@@ -129,6 +130,29 @@ be read at all. The journal gets one summary line in the same terms
 ```text
 hcw-portainer-check: checked: Portainer <version> EE up; environment local up with 8 containers (7 running, 0 unhealthy, 0 restarting, 1 exited); 7 images checked, 0 outdated; licence valid to 2027-09-26; reported to the site
 ```
+
+**The modules.** Until 2026-11-25 the check was the one file
+`files/hcw-portainer-check`, which Qlty (the code-quality scanner) rated too
+complex to review as one piece. It is now a package,
+`files/hcw_portainer_check/`, split by job: `common.py` (settings, the token
+scrub, messages, the configuration and the credential), `api.py`
+(Portainer's API), `report.py` (the report's fields), `reads.py` (the reads,
+in the order a run makes them), `delivery.py` (the site's CLI) and `cli.py`
+(the run). The functions moved unchanged (#1845). The role installs it in
+`/usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check/` (directories
+`root:root` `0750`, files `root:root` `0640`, listed in `vars/main.yml`'s
+`portainer_helper_modules`) and the coder role's launcher,
+`../coder/files/hcw-lab-python-launch.py`, as
+`/usr/local/libexec/hcw-lab-python-launch`. The script in
+`/usr/local/libexec` is only the way in: it hands the launcher the module
+directory and the package name, and the launcher refuses to import anything,
+printing one line naming the path and exiting 1, unless every directory from
+`/` down to the package and every file in it is root's alone to write, with
+no symbolic link and nothing else beside the package (`../coder/README.md`,
+"The modules", has the reasons). The role also removes any `*.py` in the
+package that is no longer listed, and any `__pycache__` folder. A timer run
+that starts while `bootstrap.sh` is copying the modules can fail once with
+an import error; the next run, after the copy, works.
 
 **How it reaches the site.** Through the lab agent's own CLI,
 `vps-agent/bin/report-host-check.js`, run as the agent's user with the
@@ -285,7 +309,8 @@ only where a real run has installed it, and the check is not run.
 
 ## Tests
 
-`tests/hcw-portainer-check.test.py` runs the script as it ships against a
+`tests/hcw-portainer-check.test.py` runs the script as it ships, its modules
+staged in a scratch directory and checked by the launcher there, against a
 fake Portainer (a decoy environment with Id 1 beside the local one with Id
 3, Docker's container list, an image verdict per container, every method
 but `GET` answered 405 and recorded), a fake `systemd-run` that reads the

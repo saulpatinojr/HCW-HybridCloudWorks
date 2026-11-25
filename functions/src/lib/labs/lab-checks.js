@@ -33,7 +33,7 @@
  * the host ran bootstrap.sh would read as fine. The question that failed on
  * 2026-10-08 (finding 8) is narrower and exact: after the host converged, did
  * the publish follow? The host computes both digests with one function
- * (template_digest in hcw-coder-automation.py, over the files
+ * (template_digest in hcw_coder_automation/template_source.py, over the files
  * hcw-coder-template-push publishes and the autostop it sets), so a pair that
  * differs means one thing. Whether the converged commit is main's is the
  * drift check's question, and the two together cover main → host → Coder.

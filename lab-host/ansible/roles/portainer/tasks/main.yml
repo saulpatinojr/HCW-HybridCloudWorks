@@ -178,6 +178,111 @@
     - portainer_enabled | bool
     - portainer_check_enabled | bool
 
+# The check's modules (#1845). hcw-portainer-check is only the way in: it
+# loads /usr/local/libexec/hcw-lab-python-launch, which refuses to import
+# anything unless every directory down to the package and every file in it
+# is root's and writable by root alone, with nothing else beside the package.
+# The paths are written here, not as variables, because both scripts name
+# them as constants. The modules go in before the script that imports them,
+# so a timer run between two tasks never finds a new script without them.
+# The launcher refuses to run if a folder above the modules is not root's or
+# can be written by a group or other users. Check those folders here first, so
+# a host laid out that way stops this run with a clear message instead of
+# installing modules the timer would then refuse to load.
+- name: Read the folders above the check's modules
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: [/, /usr, /usr/local, /usr/local/lib]
+  register: portainer_lab_parent_dirs
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Check the folders above the check's modules are root's and writable by root alone
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+      - not item.stat.islnk
+      - item.stat.uid == 0
+      - not item.stat.wgrp
+      - not item.stat.woth
+    fail_msg: >-
+      {{ item.item }} must be a real folder owned by root and not writable by a
+      group or other users, or the root helpers refuse to run. Fix its owner or
+      mode (for example chmod g-w,o-w and chown root) and run bootstrap.sh again.
+    quiet: true
+  loop: "{{ portainer_lab_parent_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Create the directories for the check's modules, writable by root only
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - /usr/local/lib/hcw-lab
+    - /usr/local/lib/hcw-lab/portainer-check
+    - /usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Install the check's modules
+  ansible.builtin.copy:
+    src: "hcw_portainer_check/{{ item }}"
+    dest: "/usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check/{{ item }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ portainer_helper_modules }}"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+# A module a later change renamed or dropped would otherwise stay installed,
+# and a __pycache__ folder is nothing the role copied, so both are removed.
+- name: Find files in the check's package that are not its modules
+  ansible.builtin.find:
+    paths: /usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check
+    patterns: ["*.py", "__pycache__"]
+    excludes: "{{ portainer_helper_modules }}"
+    file_type: any
+    hidden: true
+  register: portainer_stale_modules
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Remove the check's files that are not its modules
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ portainer_stale_modules.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Install the launcher that checks the modules before the check imports them
+  ansible.builtin.copy:
+    src: "{{ portainer_launcher_source }}"
+    dest: /usr/local/libexec/hcw-lab-python-launch
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
 - name: Install the check
   ansible.builtin.copy:
     src: hcw-portainer-check

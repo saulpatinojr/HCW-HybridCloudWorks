@@ -109,7 +109,7 @@ function errorValue(raw) {
   return { value: raw.replace(EMBEDDED_KEY, REDACTED_KEY).trim() };
 }
 
-/** The host's template_digest (hcw-coder-automation.py): SHA-256, 64 lower-case hex characters. */
+/** The host's template_digest (hcw_coder_automation/template_source.py): SHA-256, 64 lower-case hex characters. */
 const TEMPLATE_DIGEST = /^[0-9a-f]{64}$/;
 
 function digestValue(key, raw) {
