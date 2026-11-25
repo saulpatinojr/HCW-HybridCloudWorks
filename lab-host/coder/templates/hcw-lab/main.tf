@@ -34,7 +34,9 @@
 # this file changes on main.
 
 terraform {
-  required_version = ">= 1.9.0"
+  # Same rule as the Landing Zone packs (frontend/src/lib/landingZone/terraformVersion.js).
+  # Coder runs this with the Terraform built into its own image, which this rule admits.
+  required_version = ">= 1.12, < 2.0"
 
   required_providers {
     coder = {

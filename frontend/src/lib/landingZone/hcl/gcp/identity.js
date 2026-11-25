@@ -1,4 +1,4 @@
-import { block, file, joinBlocks, obj, q } from '../format';
+import { block, file, joinBlocks, key, obj, q } from '../format';
 
 export function identityTf() {
   const blocks = [];
@@ -26,11 +26,13 @@ export function identityTf() {
       [
         'attribute_mapping',
         obj([
-          ['google.subject', q('assertion.sub')],
-          ['attribute.repository', q('assertion.repository')],
+          // Quoted keys: a bare `google.subject` reads as a reference.
+          [key('google.subject'), q('assertion.sub')],
+          [key('attribute.repository'), q('assertion.repository')],
         ]),
       ],
-      ['oidc', obj([['issuer_uri', q('https://token.actions.githubusercontent.com')]])],
+      // `oidc` is a nested block in the google provider, not an attribute.
+      ...block('oidc', [['issuer_uri', q('https://token.actions.githubusercontent.com')]]),
     ])
   );
 

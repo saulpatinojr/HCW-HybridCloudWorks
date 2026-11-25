@@ -69,8 +69,21 @@ export function block(header, items) {
 /** A `{ … }` object value for a nested attribute. */
 export const obj = (items) => ['{', ...body(items), '}'];
 
-/** A `[ … ]` list value, one element per line, trailing commas as fmt keeps them. */
-export const list = (elements) => ['[', ...elements.map((e) => `${e},`), ']'];
+/**
+ * A `[ … ]` list value, one element per line, trailing commas as fmt keeps
+ * them. An element may be a multi-line value from `obj()`: its inner lines
+ * are indented one level and its closing line takes the comma. Before this,
+ * an object element was joined into one broken line, which Terraform refused.
+ */
+export const list = (elements) => [
+  '[',
+  ...elements.flatMap((e) =>
+    Array.isArray(e)
+      ? [e[0], ...e.slice(1, -1).map((l) => (l === '' ? '' : INDENT + l)), `${e[e.length - 1]},`]
+      : [`${e},`]
+  ),
+  ']',
+];
 
 /** `{ path, content }` with LF line endings and one newline at EOF. */
 export const file = (path, lines) => ({ path, content: `${lines.join('\n')}\n` });

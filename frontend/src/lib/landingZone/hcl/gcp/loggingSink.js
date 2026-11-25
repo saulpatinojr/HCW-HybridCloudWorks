@@ -4,6 +4,7 @@ import { GCP_MODULES } from './moduleVersions';
 export function loggingSinkTf() {
   const blocks = [];
   const logModule = GCP_MODULES.logExport;
+  const bucketModule = GCP_MODULES.cloudStorage;
 
   blocks.push(
     block('module "org_log_export"', [
@@ -23,8 +24,8 @@ export function loggingSinkTf() {
 
   blocks.push(
     block('module "audit_destination_bucket"', [
-      ['source', q('terraform-google-modules/cloud-storage/google')],
-      ['version', q('~> 6.0')],
+      ['source', q(bucketModule.source)],
+      ['version', q(bucketModule.version)],
       ['name', q('hcw-gcp-audit-logs-\${var.organization_id}')],
       ['project_id', 'var.logging_project_id'],
       ['location', 'var.gcp_region'],

@@ -10,7 +10,11 @@ const SERVICE_PROJECT_APIS = [
   'monitoring.googleapis.com',
 ];
 
-/** One project-factory module for workload `i` of a kind (`corp` or `online`). */
+/**
+ * One project-factory module for workload `i` of a kind (`corp` or `online`).
+ * project-factory names the host project `svpc_host_project_id` and wants
+ * each subnet as its full path, not its short name.
+ */
 function serviceProject(kind, i, subnet) {
   const pfModule = GCP_MODULES.projectFactory;
   return block(`module "${kind}_service_project_${i}"`, [
@@ -21,8 +25,13 @@ function serviceProject(kind, i, subnet) {
     ['org_id', 'var.organization_id'],
     ['billing_account', 'var.billing_account_id'],
     ['folder_id', `google_folder.${kind}.folder_id`],
-    ['shared_vpc', 'var.host_project_id'],
-    ['shared_vpc_subnets', list([q(subnet)])],
+    ['svpc_host_project_id', 'var.host_project_id'],
+    [
+      'shared_vpc_subnets',
+      list([
+        q(`projects/\${var.host_project_id}/regions/\${var.gcp_region}/subnetworks/${subnet}`),
+      ]),
+    ],
     ['activate_apis', list(SERVICE_PROJECT_APIS.map(q))],
   ]);
 }

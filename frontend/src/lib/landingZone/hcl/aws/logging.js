@@ -1,7 +1,11 @@
-import { block, file, joinBlocks, obj, q } from '../format';
+import { block, file, joinBlocks, q } from '../format';
 
 export function loggingTf() {
   const blocks = [];
+
+  // The account id in the bucket name below comes from this lookup; without
+  // it `terraform validate` stops on an undeclared data source.
+  blocks.push(['data "aws_caller_identity" "current" {}']);
 
   // Central KMS Log Key
   blocks.push(
@@ -23,18 +27,14 @@ export function loggingTf() {
   blocks.push(
     block('resource "aws_s3_bucket_server_side_encryption_configuration" "audit_encryption"', [
       ['bucket', 'aws_s3_bucket.audit_logs.id'],
-      [
+      // `rule` and the block inside it are nested blocks, not attributes.
+      ...block(
         'rule',
-        obj([
-          [
-            'apply_server_side_encryption_by_default',
-            obj([
-              ['kms_master_key_id', 'aws_kms_key.log_key.arn'],
-              ['sse_algorithm', q('aws:kms')],
-            ]),
-          ],
-        ]),
-      ],
+        block('apply_server_side_encryption_by_default', [
+          ['kms_master_key_id', 'aws_kms_key.log_key.arn'],
+          ['sse_algorithm', q('aws:kms')],
+        ])
+      ),
     ])
   );
 

@@ -80,7 +80,7 @@ export default function WorkbenchShowcase() {
                   Topology Canvas: Hub &amp; Spoke
                 </span>
                 <span className="text-slate-300 text-xs bg-slate-800/80 px-2 py-0.5 rounded">
-                  Terraform 1.9+
+                  Terraform 1.12+
                 </span>
               </div>
 

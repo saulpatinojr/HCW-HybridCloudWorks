@@ -16,6 +16,7 @@ import { FALLBACK_JOB_TYPES } from '@/components/admin/labs/labsView';
 import { emitFiles } from '@/lib/landingZone/hcl/index';
 import { DEFAULT_STATE } from '@/lib/landingZone/state';
 import { ZIP_NAME } from '@/pages/tools/landingZone/LzFiles';
+import { TERRAFORM_REQUIRED_VERSION } from '@/lib/landingZone/index';
 import {
   CODER_APPS_ORIGIN,
   CODER_GITHUB_SIGN_IN_PATH,
@@ -436,5 +437,24 @@ describe('RUN_LOCALLY_COMMANDS', () => {
       expect(command).not.toMatch(/#/);
       expect(command).not.toMatch(/\n/);
     }
+  });
+});
+
+// The runner checks each Terraform sample with the lab image's Terraform, the
+// same one the Landing Zone packs are held to, so a sample states the packs'
+// rule. They said ">= 1.9" with nothing saying why until #1864.
+describe('the Terraform samples’ version rule (#1864)', () => {
+  const terraformSamples = labs
+    .filter((lab) => lab.validation?.jobType === 'terraform-validate')
+    .map((lab) => [lab.id, lab.validation.samplePayload]);
+
+  it('finds the samples it checks', () => {
+    expect(terraformSamples.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(terraformSamples)('%s states the packs’ rule', (_name, payload) => {
+    expect(payload.match(/required_version\s*=\s*"[^"]*"/g)).toEqual([
+      `required_version = "${TERRAFORM_REQUIRED_VERSION}"`,
+    ]);
   });
 });

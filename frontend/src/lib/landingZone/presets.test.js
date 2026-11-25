@@ -10,6 +10,9 @@ import {
   estimateMonthlyBaseline,
   presetHref,
 } from './presets';
+import { AVM_MODULES } from './avmVersions';
+import { AWS_MODULES } from './hcl/aws/moduleVersions';
+import { GCP_MODULES } from './hcl/gcp/moduleVersions';
 
 describe('Landing Zone Builder architectural presets (presets.js)', () => {
   it('defines five distinct presets with unique ids and non-empty labels', () => {
@@ -105,6 +108,23 @@ describe('Landing Zone Builder architectural presets (presets.js)', () => {
       const mappedIds = pack.componentsMapping.map((c) => c.id);
       expect(mappedIds).toEqual(COMPONENT_IDS);
     }
+  });
+
+  // The card once showed module versions two or more releases behind what
+  // the packs write (#1862, #1863). Every module row must be a real pin.
+  it.each([
+    ['azure', AVM_MODULES],
+    ['aws', AWS_MODULES],
+    ['gcp', GCP_MODULES],
+  ])('the %s card shows only versions the pack pins', (cloud, modules) => {
+    const pins = new Map(Object.values(modules).map((m) => [m.source, `v${m.version}`]));
+    const moduleRows = MULTI_CLOUD_PACKS[cloud].pinnedModules.filter((row) =>
+      row.name.includes('/')
+    );
+    const providerRows = moduleRows.filter((row) => row.name.startsWith('hashicorp/'));
+    const rows = moduleRows.filter((row) => !providerRows.includes(row));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.version).toBe(pins.get(row.name));
   });
 
   it('defines AWS and GCP architectural presets and computes accurate FinOps baselines', () => {
