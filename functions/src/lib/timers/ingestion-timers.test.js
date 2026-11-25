@@ -9,6 +9,7 @@ import {
   normalizePublerPost,
 } from './publer-sync.js';
 import {
+  FIRECRAWL_SCRAPE_URL,
   createBlogListingsScrape,
   listingsLogSummary,
   scrapeListingPage,
@@ -491,14 +492,14 @@ describe('Publer rejected credential (#358)', () => {
 });
 
 describe('blog listings (Firecrawl)', () => {
-  it('calls the v1 scrape endpoint with the schema and resolves relative URLs', async () => {
+  it('calls the v2 scrape endpoint with the schema and resolves relative URLs', async () => {
     const fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
         success: true,
         data: {
-          extract: {
+          json: {
             articles: [
               { url: '/blog/a', title: 'A' },
               { url: 'https://x/b', title: 'B' },
@@ -516,12 +517,18 @@ describe('blog listings (Firecrawl)', () => {
       { url: 'https://x/b', title: 'B' },
     ]);
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe('https://api.firecrawl.dev/v1/scrape');
+    expect(url).toBe('https://api.firecrawl.dev/v2/scrape');
     expect(init.headers.Authorization).toBe('Bearer fc');
-    expect(JSON.parse(init.body)).toMatchObject({
-      url: 'https://aws.amazon.com/blogs/',
-      formats: ['extract'],
-    });
+    // The whole v2 body (#1848): the schema sits inside `formats`, and
+    // neither v1's `extract` field nor a `prompt` is sent.
+    const sent = JSON.parse(init.body);
+    expect(Object.keys(sent).sort()).toEqual(['formats', 'url']);
+    expect(sent.url).toBe('https://aws.amazon.com/blogs/');
+    expect(sent.formats).toHaveLength(1);
+    expect(Object.keys(sent.formats[0]).sort()).toEqual(['schema', 'type']);
+    expect(sent.formats[0].type).toBe('json');
+    expect(sent.formats[0].schema.required).toEqual(['articles']);
+    expect(sent.formats[0].schema.properties.articles.items.required).toEqual(['url', 'title']);
     expect(resolveArticleUrl('https://[', 'https://h.test/blog/')).toBe('');
     expect(resolveArticleUrl('x/y', 'https://h.test/l/')).toBe('https://h.test/l/x/y');
     expect(resolveArticleUrl('../post', 'https://h.test/blog/category/')).toBe('https://h.test/blog/post');
@@ -534,6 +541,24 @@ describe('blog listings (Firecrawl)', () => {
     await expect(scrapeListingPage({ apiKey: 'fc', fetch: failing }, 'https://s')).rejects.toThrow(
       'Firecrawl scrape failed for https://s: quota'
     );
+  });
+
+  it('reads articles from the v2 place only, so a v1-shaped answer is not mistaken for one (#1848)', async () => {
+    /** The articles a scrape returns for one response body. */
+    const articlesFor = (body) =>
+      scrapeListingPage(
+        { apiKey: 'fc', fetch: vi.fn(async () => ({ ok: true, status: 200, json: async () => body })) },
+        'https://h.test/blog/'
+      );
+    const one = [{ url: 'https://h.test/a', title: 'A' }];
+    expect(await articlesFor({ success: true, data: { json: { articles: one } } })).toEqual(one);
+    // v1 put them under `data.extract`, or `extract` at the top.
+    expect(await articlesFor({ success: true, data: { extract: { articles: one } } })).toEqual([]);
+    expect(await articlesFor({ success: true, extract: { articles: one } })).toEqual([]);
+    // A page with no articles, or an answer with no json part, is an empty list.
+    expect(await articlesFor({ success: true, data: { json: {} } })).toEqual([]);
+    expect(await articlesFor({ success: true, data: {} })).toEqual([]);
+    expect(FIRECRAWL_SCRAPE_URL).not.toMatch(/\/v1\//);
   });
 
   it('carries what failed as a field, so nothing has to read the sentence (#1794)', async () => {
@@ -614,7 +639,7 @@ describe('blog listings (Firecrawl)', () => {
         json: async () => ({
           success: true,
           data: {
-            extract: {
+            json: {
               articles: [
                 { url: 'https://x/new', title: 'N' },
                 { url: 'https://x/dup', title: 'D' },

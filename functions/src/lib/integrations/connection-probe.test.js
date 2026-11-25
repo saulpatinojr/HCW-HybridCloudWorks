@@ -168,8 +168,10 @@ describe('the probe table', () => {
     );
     expect(PROBES.firecrawl.settings).toEqual(['FIRECRAWL_API_KEY']);
     expect(PROBES.firecrawl.buildRequest({ values: ENV }).url).toBe(
-      'https://api.firecrawl.dev/v1/team/credit-usage'
+      'https://api.firecrawl.dev/v2/team/credit-usage'
     );
+    // Version 1 of Firecrawl's API stops answering on 2026-12-10 (#1848).
+    expect(PROBES.firecrawl.buildRequest({ values: ENV }).url).not.toMatch(/\/v1\//);
   });
 
   it('asks Qlty who the token belongs to, a read that depends on no project', () => {

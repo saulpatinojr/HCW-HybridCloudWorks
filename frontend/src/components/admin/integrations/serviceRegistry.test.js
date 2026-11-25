@@ -127,6 +127,8 @@ describe('the service registry', () => {
       'streamyard',
       'plaud',
       'anthropic',
+      // A paid plan since 2026-11-25 (#1848).
+      'firecrawl',
       'qlty',
       'copilot-review',
       'hybrid-lab',
@@ -299,10 +301,25 @@ describe('the service registry', () => {
       postJSON.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { data: { remaining_credits: 412 } },
+        data: { data: { remainingCredits: 412 } },
       });
       await expect(runnerFor('firecrawl')()).resolves.toBe('Connected — 412 credits remaining.');
       expect(postJSON).toHaveBeenLastCalledWith('connectionProbe', { probe: 'firecrawl' });
+      // Version 1 of Firecrawl's API spelled the field `remaining_credits`
+      // (#1848). An answer in that shape is not read as a count.
+      postJSON.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { data: { remaining_credits: 412 } },
+      });
+      await expect(runnerFor('firecrawl')()).resolves.toBe('Connected to Firecrawl.');
+      // A balance of nothing is still a count, and the owner needs to see it.
+      postJSON.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { data: { remainingCredits: 0 } },
+      });
+      await expect(runnerFor('firecrawl')()).resolves.toBe('Connected — 0 credits remaining.');
       postJSON.mockResolvedValueOnce({ ok: false, status: 401, error: 'Unauthenticated' });
       await expect(runnerFor('replicate')()).rejects.toThrow(/Unauthenticated/);
     });

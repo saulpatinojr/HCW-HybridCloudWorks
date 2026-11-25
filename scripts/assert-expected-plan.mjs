@@ -829,18 +829,11 @@ export const DECLARED = [
   },
 
   // #1777: the yearly clean-up of talk proposals that were not accepted
-  // (functions/src/lib/timers/proposal-strip.js). The plan after the merge
-  // adds its switch, off: the job only counts until the setting is "true".
-  // Delete the first entry once that run has applied. The second is the
-  // arming plan, a one-line pull request made after the owner has read a
-  // dry-run count and said yes; it stays until that has applied.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.PROPOSAL_STRIP_ENABLED",
-    before: undefined,
-    after: "false",
-    reason: "#1777: the proposal clean-up's switch declared, off (dry run)",
-  },
+  // (functions/src/lib/timers/proposal-strip.js). Its switch, declared off,
+  // applied on 2026-11-24 with the runs the owner confirmed that day, so that
+  // entry is gone and a plan that adds the switch from nothing is unexpected.
+  // What is left is the arming plan the owner asked for on 2026-11-25; delete
+  // it once that run has applied.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.PROPOSAL_STRIP_ENABLED",

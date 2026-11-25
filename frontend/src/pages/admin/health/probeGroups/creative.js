@@ -33,8 +33,8 @@ export const CREATIVE_PROBES = [
   }),
   fromService('firecrawl', {
     hub: 'creative',
-    covers: 'Reading a submitted URL into clean text.',
-    impact: 'URL submissions cannot be summarised.',
+    covers: 'Finding new articles on blog listing pages.',
+    impact: 'Blog pages that have no feed bring in no new drafts.',
     action: 'Top up credits or rotate the key.',
   }),
   snapshotProbe({
