@@ -44,6 +44,7 @@ import {
   summarize,
   tarballUrl,
 } from './update-avm-versions.mjs';
+import { AVM_REQUIRED_INPUTS } from '../src/lib/landingZone/avmVersions.js';
 
 /** The shape of avmVersions.js: one-line pins and one Prettier has broken. */
 const PINS = [
@@ -444,6 +445,73 @@ describe('the smoke payload', () => {
         expected
       );
     }
+  });
+
+  describe('adds an input the new release requires (#1868)', () => {
+    // The payload's real connectivity block, pinned exactly. 0.18.2 made
+    // `location` required; 0.18.1 refuses it, so it is added only on the move.
+    const name = 'avm-ptn-alz-connectivity-hub-and-spoke-vnet';
+    const block = [
+      'module "connectivity" {',
+      `  source  = "Azure/${name}/azurerm"`,
+      '  version = "0.18.1"',
+      '}',
+      '',
+    ].join('\n');
+    const inputs = AVM_REQUIRED_INPUTS.filter((row) => row.module === name);
+
+    it('adds location when the pin moves past 0.18.2', () => {
+      const result = rewriteSmokePin(block, name, '0.18.1', '0.18.4', inputs);
+      expect(result).toMatchObject({
+        moved: true,
+        from: '0.18.1',
+        to: '0.18.4',
+        added: ['location'],
+      });
+      expect(result.source).toBe(
+        block.replace(
+          '  version = "0.18.1"\n',
+          '  version = "0.18.4"\n\n  location = "centralus"\n'
+        )
+      );
+    });
+
+    it('adds nothing below the release that requires it, and nothing twice', () => {
+      const older = block.replace('"0.18.1"', '"0.18.0"');
+      const below = rewriteSmokePin(older, name, '0.18.0', '0.18.1', inputs);
+      expect(below).toMatchObject({ moved: true, to: '0.18.1', added: [] });
+      expect(below.source).not.toContain('location');
+      const once = rewriteSmokePin(block, name, '0.18.1', '0.18.4', inputs).source;
+      const again = rewriteSmokePin(once, name, '0.18.4', '0.18.5', inputs);
+      expect(again.source.match(/location =/g)).toHaveLength(1);
+      expect(again.added).toEqual([]);
+    });
+
+    it('names the added input in the pull request summary', () => {
+      const line = summarize({
+        today: '2026-12-01',
+        results: [
+          {
+            name,
+            publishedAt: null,
+            requiredProviders: ['azapi', 'azurerm', 'modtm', 'random'],
+            drift: { added: [], removed: [], unknown: false },
+            releaseNotes: releaseNotesUrl(name, '0.18.4'),
+            terraformTf: `https://github.com/Azure/terraform-azurerm-${name}/blob/v0.18.4/terraform.tf`,
+            vendored: true,
+            sha256: 'c'.repeat(64),
+            from: '0.18.1',
+            to: '0.18.4',
+            moved: true,
+            smokePinMoved: true,
+            smokeFrom: '0.18.1',
+            smokeTo: '0.18.4',
+            smokeAdded: ['location'],
+          },
+        ],
+      });
+      expect(line).toContain('It also now sets `location`, which this release requires');
+    });
   });
 
   it('refuses a pin that is not at the version that was read, and a doubled block', () => {

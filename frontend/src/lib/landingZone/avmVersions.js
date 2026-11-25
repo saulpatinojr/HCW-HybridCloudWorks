@@ -124,6 +124,50 @@ export const AVM_UPGRADE_NOTES = Object.freeze([
   }),
 ]);
 
+/**
+ * Top-level inputs a module started to require at a release, so a block
+ * that left them out stops validating once the pin reaches that release
+ * (#1868). Written by hand from the release's `variables.tf`, like the notes
+ * above; the weekly update does not read inputs. Two places read each row
+ * while the module's pin is at or above `since`: the builder's emitter
+ * passes `builderValue`, and the weekly update adds `smokeValue` to the
+ * smoke payload's block for the module when it moves the pin past `since`
+ * (lab-image/smoke/terraform-validate-payload/main.tf). Below `since` the
+ * input is left out on purpose: the older release has no such variable, and
+ * Terraform refuses an argument the module does not declare.
+ *
+ * connectivity 0.18.2 added `variable "location"` (string, not nullable, no
+ * default) in a patch release whose notes do not mention it; 0.18.1 has no
+ * such variable.
+ */
+export const AVM_REQUIRED_INPUTS = Object.freeze([
+  Object.freeze({
+    module: 'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
+    input: 'location',
+    since: '0.18.2',
+    builderValue: 'var.location',
+    smokeValue: '"centralus"',
+    url: 'https://github.com/Azure/terraform-azurerm-avm-ptn-alz-connectivity-hub-and-spoke-vnet/blob/v0.18.2/variables.tf',
+  }),
+]);
+
+/** `1.2.3` compared as numbers: negative, zero or positive. */
+function compareRelease(a, b) {
+  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
+
+/**
+ * The AVM_REQUIRED_INPUTS rows that apply to one module at a version (by
+ * default its pin), in table order. Empty below every row's `since`.
+ */
+export function requiredInputs(name, version = AVM_MODULES[name]?.version) {
+  if (!version) return [];
+  return AVM_REQUIRED_INPUTS.filter(
+    (row) => row.module === name && compareRelease(version, row.since) >= 0
+  );
+}
+
 export const PROVIDER_PINS = Object.freeze([
   Object.freeze({ name: 'alz', source: 'azure/alz', version: '~> 0.21' }),
   Object.freeze({ name: 'azapi', source: 'Azure/azapi', version: '~> 2.12' }),

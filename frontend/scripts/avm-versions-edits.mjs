@@ -281,8 +281,14 @@ export function nextSmokeConstraint(constraint, toVersion) {
  * builder's own pin, and a different one means the two have drifted. Two
  * blocks for one module is a reshaped file and is refused too. Returns the
  * text, whether it moved, and the constraint before and after.
+ *
+ * `inputs` are the module's rows of AVM_REQUIRED_INPUTS in avmVersions.js
+ * (#1868): an input the module started to require at `since`. Each one the
+ * new release requires and the block does not set yet is added under the
+ * version line as `<input> = <smokeValue>`, and named in `added`, so the
+ * payload still validates at the release it now pins.
  */
-export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
+export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion, inputs = []) {
   assertRelease(toVersion);
   const source = String(payloadSource);
   const pattern = new RegExp(
@@ -303,12 +309,40 @@ export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
     );
   }
   const next = nextSmokeConstraint(current, toVersion);
-  if (next === null) return { source, moved: false };
+  const repinned = next === null ? source : source.replace(pattern, `$1${next}$3`);
+  const { source: withInputs, added } = addRequiredInputs(repinned, pattern, inputs, toVersion);
+  if (next === null && added.length === 0) return { source, moved: false };
   return {
-    source: source.replace(pattern, `$1${next}$3`),
+    source: withInputs,
     moved: true,
     from: current,
-    to: next,
+    to: next ?? current,
+    added,
+  };
+}
+
+/**
+ * Add each input the release requires (`since` at or below `toVersion`)
+ * that the block does not set, one line each, after a blank line under the
+ * block's version line. The block runs from its `source` line to the first
+ * line that is a lone `}`.
+ */
+function addRequiredInputs(source, pattern, inputs, toVersion) {
+  const [match] = [...source.matchAll(pattern)];
+  const start = match.index;
+  const versionEnd = start + match[0].length;
+  const closing = source.indexOf('\n}', versionEnd);
+  const body = source.slice(start, closing === -1 ? source.length : closing);
+  const missing = inputs.filter(
+    (row) =>
+      compareVersions(toVersion, row.since) >= 0 &&
+      !new RegExp(`^\\s*${escapeRegExp(row.input)}\\s*=`, 'm').test(body)
+  );
+  if (missing.length === 0) return { source, added: [] };
+  const lines = missing.map((row) => `  ${row.input} = ${row.smokeValue}`).join('\n');
+  return {
+    source: `${source.slice(0, versionEnd)}\n\n${lines}${source.slice(versionEnd)}`,
+    added: missing.map((row) => row.input),
   };
 }
 
@@ -521,7 +555,15 @@ function payloadLine(result) {
   if (!result.smokePinMoved) return null;
   const from = result.smokeFrom ?? result.from;
   const to = result.smokeTo ?? result.to;
-  return `- ${code(PAYLOAD_PATH)}: its block for this module read ${code(`version = "${from}"`)} and now reads ${code(`version = "${to}"`)}, so smoke.sh still rewrites one block per builder module.`;
+  const added = result.smokeAdded ?? [];
+  const inputs = added.length
+    ? ` It also now sets ${added.map(code).join(', ')}, which this release requires (${code('AVM_REQUIRED_INPUTS')} in ${code(PINS_PATH)}).`
+    : '';
+  const version =
+    from === to
+      ? `its block for this module keeps ${code(`version = "${from}"`)}, which the release still meets.`
+      : `its block for this module read ${code(`version = "${from}"`)} and now reads ${code(`version = "${to}"`)}, so smoke.sh still rewrites one block per builder module.`;
+  return `- ${code(PAYLOAD_PATH)}: ${version}${inputs}`;
 }
 
 const driftParts = (drift) =>
