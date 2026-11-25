@@ -477,7 +477,7 @@ stays in code; the owner does not want it editable from the portal.
 
 | Service | What a Page adds | Where |
 |---|---|---|
-| Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-ref.js`, `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
+| Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
 | Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
 | Telegram reminders | Rows on the reminders sheet; today only the credential register writes rows by itself | `functions/src/lib/timers/reminders.js`, `functions/src/lib/credentials/reminders.js` |

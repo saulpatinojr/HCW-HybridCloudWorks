@@ -1,13 +1,13 @@
 /**
  * The two halves of "which Pages can send work into the Pipeline" (#1886):
- * the server's ORIGIN_PAGES (functions/src/lib/page-links/origin-ref.js), which
+ * the server's ORIGIN_PAGES (functions/src/lib/page-links/origin-pages.js), which
  * checks a reference, and this build's ORIGIN_RECORD_PATHS, which opens one.
  * A Page added to one and not the other fails here, as does one with no nav
  * entry (its name and icon come from the nav registry) or a link that names a
  * parameter no page reads.
  */
 import { describe, it, expect } from 'vitest';
-import { ORIGIN_PAGE_IDS } from '../../../functions/src/lib/page-links/origin-ref.js';
+import { ORIGIN_PAGE_IDS } from '../../../functions/src/lib/page-links/origin-pages.js';
 import { navItemById } from '@/config/adminNav';
 import { LINK_PARAMS, isAdminPath } from '@/lib/itemLinks';
 import { ORIGIN_RECORD_PAGE_IDS, ORIGIN_RECORD_PATHS, originLink } from './pageLinks';

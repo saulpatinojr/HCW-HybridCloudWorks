@@ -26,11 +26,12 @@
  * against the record it names, so a caller cannot attach a piece to a program
  * that does not exist, or invent a Page.
  *
- * ADDING A PAGE. One entry in ORIGIN_PAGES below, plus its link builder in
+ * ADDING A PAGE. One entry in ORIGIN_PAGES (origin-pages.js), plus its link builder in
  * frontend/src/lib/pageLinks.js (pageLinks.test.js fails until both agree).
  * The checklist is in .claude/CLAUDE.md, "How the admin Pages connect".
  */
 import { AuthoredError } from "../http/error-response.js";
+import { ORIGIN_PAGES, ORIGIN_PAGE_IDS, trimmedLabel } from "./origin-pages.js";
 import { ADMIN_CONFIG_PARTITION } from "../cosmos-client.js";
 import {
   AGENT_ID,
@@ -41,7 +42,6 @@ import {
 /** Record ids on the Pages below: uuids with a prefix, or fixed seed ids. */
 const REF_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const PART_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const MAX_LABEL_CHARS = 200;
 
 /** Input the caller can correct; the Drafts handlers answer it as 400 INVALID. */
 export class OriginRefError extends AuthoredError {}
@@ -52,49 +52,6 @@ const fail = (message) => {
 
 const isPlainObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
-
-const trimmedLabel = (value) =>
-  String(value || "")
-    .trim()
-    .slice(0, MAX_LABEL_CHARS);
-
-/**
- * The Pages that may send work into the Pipeline, by nav id.
- *
- *   container    the Cosmos container the record lives in (partition key /id)
- *   agentSection the switch on Koda's key that lets it read this Page
- *                (agent-content/keys.js CAPABILITIES). A reference names a record
- *                and returns its name, so Koda may send one only when it could
- *                read the Page anyway (review of #1886).
- *   ideaOrigin   the taxonomy id a draft from this Page gets when the caller names
- *                none (functions/src/lib/cms/taxonomy.js DEFAULT_IDEA_ORIGINS)
- *   check(doc, part)  the record's label, or a sentence saying why the reference
- *                is refused. `doc` is null when no record has the id.
- */
-export const ORIGIN_PAGES = Object.freeze({
-  ambassador: Object.freeze({
-    container: "ambassador",
-    agentSection: "admin.spotlight",
-    ideaOrigin: "ambassador-requirement",
-    check(doc, part) {
-      if (!doc || doc.docType !== "program" || doc.softDeletedAt) {
-        return { refusal: "No Ambassador program has that id." };
-      }
-      if (part) {
-        const ids = (
-          Array.isArray(doc.requirements) ? doc.requirements : []
-        ).map((requirement) => requirement?.id);
-        if (!ids.includes(part)) {
-          return { refusal: `The program has no requirement "${part}".` };
-        }
-      }
-      return { label: trimmedLabel(doc.name) || doc.id };
-    },
-  }),
-});
-
-/** The nav ids of the Pages above, for the frontend mirror test. */
-export const ORIGIN_PAGE_IDS = Object.freeze(Object.keys(ORIGIN_PAGES));
 
 /**
  * A request's `originRef` → the shape checked before any read: `null` when
@@ -176,6 +133,16 @@ export async function resolveOriginRef(store, input, { user = null } = {}) {
   return { ...ref, label: verdict.label };
 }
 
+/**
+ * The status a route answers a refused reference with: 403 when the caller
+ * may not send one for that Page, 400 when the caller can correct it, 0 for
+ * any other error (which the route lets through to its own failure path).
+ */
+export function originRefRefusalStatus(error) {
+  if (error instanceof OriginRefForbiddenError) return 403;
+  return error instanceof OriginRefError ? 400 : 0;
+}
+
 /** The ideaOrigin a draft from this reference gets when the caller names none. */
 export function defaultIdeaOriginFor(ref) {
   return (ref && ORIGIN_PAGES[ref.page]?.ideaOrigin) || null;
@@ -207,27 +174,31 @@ export function originRefOf(doc) {
  * one record on it: `GET cms/content?originPage=&originId=` (cms-content.js).
  * Returns `{ error }` for a Page that is not in ORIGIN_PAGES or a malformed id.
  */
-export function originFilterClause(originPage, originId, parameters) {
-  if (!originPage) {
-    // An id with no Page would otherwise answer the whole unfiltered list,
-    // which a caller could take for "the pieces for this record".
-    if (originId) return { error: "originId needs originPage" };
-    return { clause: null };
-  }
+/** Why a list filter is refused, or null when it is usable. */
+function originFilterRefusal(originPage, originId) {
+  // An id with no Page would otherwise answer the whole unfiltered list,
+  // which a caller could take for "the pieces for this record".
+  if (!originPage) return originId ? "originId needs originPage" : null;
   if (!Object.hasOwn(ORIGIN_PAGES, originPage)) {
-    return {
-      error: `originPage must be one of: ${ORIGIN_PAGE_IDS.join(", ")}`,
-    };
+    return `originPage must be one of: ${ORIGIN_PAGE_IDS.join(", ")}`;
   }
+  if (originId && !REF_ID_PATTERN.test(originId)) {
+    return "originId must be 1-128 letters, digits, hyphens or underscores";
+  }
+  return null;
+}
+
+export function originFilterClause(originPage, originId, parameters) {
+  const error = originFilterRefusal(originPage, originId);
+  if (error) return { error };
+  if (!originPage) return { clause: null };
   parameters.push({ name: "@originPage", value: originPage });
-  if (!originId) return { clause: "c.originRef.page = @originPage" };
-  if (!REF_ID_PATTERN.test(originId)) {
-    return {
-      error: "originId must be 1-128 letters, digits, hyphens or underscores",
-    };
-  }
-  parameters.push({ name: "@originId", value: originId });
+  if (originId) parameters.push({ name: "@originId", value: originId });
   return {
-    clause: "(c.originRef.page = @originPage AND c.originRef.id = @originId)",
+    clause: originId
+      ? "(c.originRef.page = @originPage AND c.originRef.id = @originId)"
+      : "c.originRef.page = @originPage",
   };
 }
+
+export { ORIGIN_PAGES, ORIGIN_PAGE_IDS };

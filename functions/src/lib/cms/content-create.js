@@ -38,8 +38,7 @@ import {
 } from "./content-quality.js";
 import { findDuplicateContent, buildDedupFields } from "./content-dedup.js";
 import {
-  OriginRefError,
-  OriginRefForbiddenError,
+  originRefRefusalStatus,
   resolveOriginRef,
 } from "../page-links/origin-ref.js";
 import {
@@ -105,6 +104,9 @@ export async function createContentDocument({
   runEditorialCritique = true,
   forceQualityBypass = false,
   interviewAllowed = false,
+  // Already checked by the caller (page-links/origin-ref.js, #1886); a
+  // `data.originRef` is never stored as sent.
+  originRef = null,
   critiqueDraft = nullCritique,
   now = () => new Date(),
   uuid = randomUUID,
@@ -115,14 +117,17 @@ export async function createContentDocument({
     : "blog";
   const asksForInterview =
     normalizedType === "interview" ||
-    String(data.publishTarget || "").trim().toLowerCase() === "interview";
+    String(data.publishTarget || "")
+      .trim()
+      .toLowerCase() === "interview";
   if (asksForInterview && !interviewAllowed) {
     return {
       status: 400,
       body: {
         success: false,
         code: "USE_INTERVIEW_ROUTE",
-        error: "An interview is created through POST cms/interviews, which records the guest's consent.",
+        error:
+          "An interview is created through POST cms/interviews, which records the guest's consent.",
       },
     };
   }
@@ -144,32 +149,6 @@ export async function createContentDocument({
         body: {
           success: false,
           error: authoredMessage(error, "The kind or idea origin was refused."),
-        },
-      };
-    }
-    throw error;
-  }
-  // Where the piece came from (#1886): checked against the record it names,
-  // never stored as sent.
-  let originRef;
-  try {
-    originRef = await resolveOriginRef(store, data.originRef, { user });
-  } catch (error) {
-    if (error instanceof OriginRefForbiddenError) {
-      return {
-        status: 403,
-        body: {
-          success: false,
-          error: authoredMessage(error, "The originRef was refused."),
-        },
-      };
-    }
-    if (error instanceof OriginRefError) {
-      return {
-        status: 400,
-        body: {
-          success: false,
-          error: authoredMessage(error, "The originRef was refused."),
         },
       };
     }
@@ -313,10 +292,25 @@ export function createContentCreateHandler({
           ? body.data
           : {};
 
+      // Where the piece came from (#1886): checked against the record it
+      // names before anything else is read or written.
+      let originRef;
+      try {
+        originRef = await resolveOriginRef(store, data.originRef, { user });
+      } catch (error) {
+        const status = originRefRefusalStatus(error);
+        if (!status) throw error;
+        return json(status, {
+          success: false,
+          error: authoredMessage(error, "The originRef was refused."),
+        });
+      }
+
       const result = await createContentDocument({
         store,
         user,
         data,
+        originRef,
         runEditorialCritique: body?.runEditorialCritique !== false,
         forceQualityBypass: body?.forceQualityBypass === true,
         critiqueDraft,
@@ -325,7 +319,13 @@ export function createContentCreateHandler({
       });
       return json(result.status, result.body);
     } catch (error) {
-      return errorResponse(context, "Failed to create content item", error, 500, request);
+      return errorResponse(
+        context,
+        "Failed to create content item",
+        error,
+        500,
+        request,
+      );
     }
   };
 }

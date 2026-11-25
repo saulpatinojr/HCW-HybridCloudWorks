@@ -7,7 +7,7 @@
  * and icon, read from the nav registry (config/adminNav.js) so they are written
  * once, and the address that opens the record on that Page.
  *
- * ADDING A PAGE. The server's ORIGIN_PAGES says which Pages may send work and
+ * ADDING A PAGE. The server's ORIGIN_PAGES (functions/src/lib/page-links/origin-pages.js) says which Pages may send work and
  * how a reference is checked; this file's ORIGIN_RECORD_PATHS says where one
  * opens. pageLinks.test.js imports the server list and fails until both name
  * the same Pages, each with a nav entry. The checklist is in .claude/CLAUDE.md,
