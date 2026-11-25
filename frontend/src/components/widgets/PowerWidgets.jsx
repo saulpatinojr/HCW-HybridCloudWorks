@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { Lightbulb, Award, Info, Code, MessageCircle } from 'lucide-react';
+import { Lightbulb, Award, Info, Code, MessageCircle, CheckCircle } from 'lucide-react';
 
 /**
  * Reusable Power Widgets for adding pizzazz to blog/architecture pages.
@@ -65,7 +65,7 @@ export function NoteBox({ type = 'info', title, children, className }) {
       bg: 'bg-green-500/10',
       icon: CheckCircle,
       color: 'text-green-600 dark:text-green-400',
-    }, // CheckCircle needs import if used
+    },
   };
   const currentStyle = styles[type] || styles.info;
   const Icon = currentStyle.icon;
