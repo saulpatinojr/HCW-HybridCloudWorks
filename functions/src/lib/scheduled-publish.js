@@ -69,12 +69,22 @@ export const PUBLISH_ALERT_ID = 'scheduled_publish_failures';
 export const PUBLISH_ALERT_TYPE = 'scheduled_publish_failures';
 
 /**
+ * Every status `saveContentSchedule` can leave a scheduled item in. It sets
+ * `approved` on everything except a `forge_ready` item, which keeps its
+ * status (#1887): until this list included it, a forge-ready item that was
+ * scheduled was never picked up, and never published. Both are statuses the
+ * publish pipeline accepts (`PUBLISHABLE_NORMALIZED_STATUSES`).
+ */
+export const SCHEDULED_PUBLISH_STATUSES = Object.freeze(['approved', 'forge_ready']);
+
+/**
  * Documents whose schedule has come due.
  *
- * `contentStatus = 'approved'` mirrors what `saveContentSchedule` writes, and
- * the `Live` clause is written as `NOT IS_DEFINED(c.Live) OR c.Live = false`
- * because legacy documents predate the field — `c.Live != true` would also
- * match documents where it is absent, but says less about why.
+ * The statuses come in as the `@statuses` parameter (see
+ * `dueQueryParameters`), not spliced into the text. The `Live` clause is
+ * written as `NOT IS_DEFINED(c.Live) OR c.Live = false` because legacy
+ * documents predate the field — `c.Live != true` would also match documents
+ * where it is absent, but says less about why.
  *
  * @param {number} limit
  * @returns {string}
@@ -82,7 +92,7 @@ export const PUBLISH_ALERT_TYPE = 'scheduled_publish_failures';
 export function buildDueQuery(limit) {
   return (
     `SELECT TOP ${limit} c.id FROM c WHERE ` +
-    `c.contentStatus = 'approved' ` +
+    `ARRAY_CONTAINS(@statuses, c.contentStatus) ` +
     // Excludes both the absent field and the explicit null that
     // `saveContentSchedule` writes for an instant publish. Without it every
     // instant-publish document would match on every tick.
@@ -91,6 +101,19 @@ export function buildDueQuery(limit) {
     `AND (NOT IS_DEFINED(c.Live) OR c.Live = false) ` +
     `ORDER BY c.scheduledPublishDate ASC`
   );
+}
+
+/**
+ * The parameters `buildDueQuery` expects.
+ *
+ * @param {string} nowIso
+ * @returns {{name: string, value: unknown}[]}
+ */
+export function dueQueryParameters(nowIso) {
+  return [
+    { name: '@now', value: nowIso },
+    { name: '@statuses', value: [...SCHEDULED_PUBLISH_STATUSES] },
+  ];
 }
 
 /**
@@ -225,9 +248,7 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
 
     /** Publish what is due now; the summary of what happened. */
     async publishDue(nowIso, context) {
-      const due = await store.queryDocs('content', buildDueQuery(batchSize), [
-        { name: '@now', value: nowIso },
-      ]);
+      const due = await store.queryDocs('content', buildDueQuery(batchSize), dueQueryParameters(nowIso));
 
       const summary = { due: due.length, published: 0, skipped: 0, failed: 0, hasMore: false };
       if (due.length === 0) return summary;
