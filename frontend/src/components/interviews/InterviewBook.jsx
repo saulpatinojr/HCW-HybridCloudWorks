@@ -101,85 +101,100 @@ function Related({ heading, items }) {
   );
 }
 
-/** What is printed on one page. */
+function CoverPage({ page }) {
+  const { interview } = page;
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-gradient-to-br from-blue-700 to-blue-900 p-8 text-center text-white">
+      {interview.image && (
+        <img
+          src={interview.image.src}
+          alt={interview.image.alt}
+          width={96}
+          height={96}
+          className="h-24 w-24 rounded-full border-2 border-white/60 object-cover"
+        />
+      )}
+      <p className="text-2xl font-bold leading-tight">{interview.title}</p>
+      {interview.subtitle && <p className="text-base text-white/90">{interview.subtitle}</p>}
+      <p className="text-sm text-white/80">
+        <time dateTime={interview.date}>{formatInterviewDate(interview.date)}</time>
+      </p>
+    </div>
+  );
+}
+
+function BioPage({ page }) {
+  const { interview } = page;
+  return (
+    <div className="p-6">
+      <h3 className="text-xl font-semibold text-slate-900">About the guest</h3>
+      <p className="mt-2 font-medium text-slate-900">
+        {interview.guest.name}
+        {interview.guest.role ? `, ${interview.guest.role}` : ''}
+      </p>
+      {interview.bio && <p className="mt-2 whitespace-pre-line">{interview.bio}</p>}
+      {interview.tags.length > 0 && (
+        <ul className="mt-4 flex flex-wrap gap-2" aria-label="Topics">
+          {interview.tags.map((tag) => (
+            <li key={tag} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+              {tag}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function QaPage({ page }) {
+  return (
+    <div className="p-6">
+      <p className="text-sm font-bold text-blue-700">
+        Question {page.number} of {page.total}
+      </p>
+      <h3 className="mt-1 text-lg font-semibold text-slate-900">{page.q}</h3>
+      <p className="mt-3 whitespace-pre-line leading-relaxed">{page.a}</p>
+      {page.pullQuote && (
+        <blockquote className="mt-4 border-l-4 border-blue-700 pl-3 text-base italic text-slate-800">
+          {page.pullQuote}
+        </blockquote>
+      )}
+    </div>
+  );
+}
+
+function RelatedPage({ page }) {
+  return (
+    <div className="p-6">
+      <h3 className="text-xl font-semibold text-slate-900">Keep learning</h3>
+      <Related heading="Labs" items={page.labs} />
+      <Related heading="Microsoft Learn" items={page.learn} />
+    </div>
+  );
+}
+
+function EndPage({ page }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-blue-900 to-blue-700 p-8 text-center text-white">
+      <p className="text-xl font-semibold">Thanks for reading</p>
+      <p className="text-sm text-white/80">{page.interview.title}</p>
+    </div>
+  );
+}
+
+const PAGE_RENDERERS = {
+  cover: CoverPage,
+  bio: BioPage,
+  qa: QaPage,
+  related: RelatedPage,
+  end: EndPage,
+};
+
+/** What is printed on one page; nothing for a page kind we do not know. */
 function PageContent({ page }) {
-  switch (page.kind) {
-    case 'cover': {
-      const { interview } = page;
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-3 bg-gradient-to-br from-blue-700 to-blue-900 p-8 text-center text-white">
-          {interview.image && (
-            <img
-              src={interview.image.src}
-              alt={interview.image.alt}
-              width={96}
-              height={96}
-              className="h-24 w-24 rounded-full border-2 border-white/60 object-cover"
-            />
-          )}
-          <p className="text-2xl font-bold leading-tight">{interview.title}</p>
-          {interview.subtitle && <p className="text-base text-white/90">{interview.subtitle}</p>}
-          <p className="text-sm text-white/80">
-            <time dateTime={interview.date}>{formatInterviewDate(interview.date)}</time>
-          </p>
-        </div>
-      );
-    }
-    case 'bio': {
-      const { interview } = page;
-      return (
-        <div className="p-6">
-          <h3 className="text-xl font-semibold text-slate-900">About the guest</h3>
-          <p className="mt-2 font-medium text-slate-900">
-            {interview.guest.name}
-            {interview.guest.role ? `, ${interview.guest.role}` : ''}
-          </p>
-          {interview.bio && <p className="mt-2 whitespace-pre-line">{interview.bio}</p>}
-          {interview.tags.length > 0 && (
-            <ul className="mt-4 flex flex-wrap gap-2" aria-label="Topics">
-              {interview.tags.map((tag) => (
-                <li key={tag} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-                  {tag}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      );
-    }
-    case 'qa':
-      return (
-        <div className="p-6">
-          <p className="text-sm font-bold text-blue-700">
-            Question {page.number} of {page.total}
-          </p>
-          <h3 className="mt-1 text-lg font-semibold text-slate-900">{page.q}</h3>
-          <p className="mt-3 whitespace-pre-line leading-relaxed">{page.a}</p>
-          {page.pullQuote && (
-            <blockquote className="mt-4 border-l-4 border-blue-700 pl-3 text-base italic text-slate-800">
-              {page.pullQuote}
-            </blockquote>
-          )}
-        </div>
-      );
-    case 'related':
-      return (
-        <div className="p-6">
-          <h3 className="text-xl font-semibold text-slate-900">Keep learning</h3>
-          <Related heading="Labs" items={page.labs} />
-          <Related heading="Microsoft Learn" items={page.learn} />
-        </div>
-      );
-    case 'end':
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-blue-900 to-blue-700 p-8 text-center text-white">
-          <p className="text-xl font-semibold">Thanks for reading</p>
-          <p className="text-sm text-white/80">{page.interview.title}</p>
-        </div>
-      );
-    default:
-      return null;
-  }
+  if (!Object.hasOwn(PAGE_RENDERERS, page.kind)) return null;
+  const Page = PAGE_RENDERERS[page.kind];
+  return <Page page={page} />;
 }
 
 /** One side of a leaf. Out of view means unreachable. */

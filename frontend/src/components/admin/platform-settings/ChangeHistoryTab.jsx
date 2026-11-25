@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { History, Loader2, RefreshCw } from 'lucide-react';
 import { getJSON } from '@/lib/api';
 import { HISTORY_FILTERABLE, SELECT_CLASS, SETTING_LABELS } from './settingShared';
+import ColumnHeads from '@/components/admin/shared/ColumnHeads';
 
 export const HISTORY_ROUTE = 'cms/platform-settings/history';
 export const HISTORY_PAGE_SIZE = 25;
@@ -69,14 +70,16 @@ function useHistory(setting, authReady) {
     setMoreError('');
     try {
       const res = await getJSON(historyRoute({ setting }));
-      if (!current()) return;
-      setEntries(Array.isArray(res?.entries) ? res.entries : []);
-      setNextAfter(res?.nextAfter ?? null);
+      if (current()) {
+        setEntries(Array.isArray(res?.entries) ? res.entries : []);
+        setNextAfter(res?.nextAfter ?? null);
+      }
     } catch (err) {
-      if (!current()) return;
-      setEntries([]);
-      setNextAfter(null);
-      setError(errorText(err));
+      if (current()) {
+        setEntries([]);
+        setNextAfter(null);
+        setError(errorText(err));
+      }
     } finally {
       if (current()) setLoading(false);
     }
@@ -99,9 +102,13 @@ function useHistory(setting, authReady) {
     setMoreError('');
     try {
       const res = await getJSON(historyRoute({ setting, after: nextAfter }));
-      if (mine !== generation.current) return;
-      setEntries((previous) => [...previous, ...(Array.isArray(res?.entries) ? res.entries : [])]);
-      setNextAfter(res?.nextAfter ?? null);
+      if (mine === generation.current) {
+        setEntries((previous) => [
+          ...previous,
+          ...(Array.isArray(res?.entries) ? res.entries : []),
+        ]);
+        setNextAfter(res?.nextAfter ?? null);
+      }
     } catch (err) {
       if (mine === generation.current) setMoreError(errorText(err));
     } finally {
@@ -135,20 +142,11 @@ function HistoryTable({ entries }) {
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-border text-xs uppercase text-muted-foreground">
-          <tr>
-            <th scope="col" className="py-2 pr-4 font-medium">
-              When
-            </th>
-            <th scope="col" className="py-2 pr-4 font-medium">
-              Who
-            </th>
-            <th scope="col" className="py-2 pr-4 font-medium">
-              Setting
-            </th>
-            <th scope="col" className="py-2 font-medium">
-              Summary
-            </th>
-          </tr>
+          <ColumnHeads
+            labels={['When', 'Who', 'Setting', 'Summary']}
+            cellClassName="py-2 pr-4 font-medium"
+            lastCellClassName="py-2 font-medium"
+          />
         </thead>
         <tbody>
           {entries.map((entry) => (

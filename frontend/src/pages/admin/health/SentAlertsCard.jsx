@@ -15,9 +15,9 @@
  * away so a long job failure does not push the rest of the list off screen.
  */
 import React, { useCallback, useState } from 'react';
-import { BellRing, Loader2, RefreshCw, Send } from 'lucide-react';
+import { BellRing, Loader2, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import RefreshableCard from './RefreshableCard';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { useAdminRole } from '@/hooks/useAdminRole';
@@ -177,35 +177,16 @@ function SentAlertsList() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <BellRing className="h-4 w-4 text-primary" aria-hidden="true" />
-              Sent to your phone
-            </CardTitle>
-            <CardDescription>
-              The last 50 alerts sent to Telegram, newest first. Missed one? Press Send again.
-            </CardDescription>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => refresh()}
-            disabled={guarded.pending}
-            aria-label="Read the alerts again"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${guarded.pending ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>{body}</CardContent>
-    </Card>
+    <RefreshableCard
+      icon={BellRing}
+      title="Sent to your phone"
+      description="The last 50 alerts sent to Telegram, newest first. Missed one? Press Send again."
+      pending={guarded.pending}
+      onRefresh={refresh}
+      refreshLabel="Read the alerts again"
+    >
+      {body}
+    </RefreshableCard>
   );
 }
 

@@ -57,6 +57,8 @@
  * `todayIso()` — and therefore the "is DATA_AS_OF in the future" assertion —
  * reads. The earlier of the two days is the one that is true for every viewer.
  */
+import { resourceRow, titledModules } from '../educationRows';
+
 export const DATA_AS_OF = '2026-09-10';
 
 export const DATA_SOURCE = {
@@ -213,12 +215,12 @@ export const learningPaths = [
     hours: 15,
     description:
       'Learn the fundamentals of server virtualization, vSphere administration basics, and hosting virtual machines.',
-    modules: [
-      { title: 'Intro to Virtualization' },
-      { title: 'vSphere Architecture Overview' },
-      { title: 'Basic VM Management' },
-      { title: 'Troubleshooting Common Issues' },
-    ],
+    modules: titledModules(
+      'Intro to Virtualization',
+      'vSphere Architecture Overview',
+      'Basic VM Management',
+      'Troubleshooting Common Issues'
+    ),
     // The retired-exams document, not the certification index — the same URL
     // the VCTA-DCV row carries, and for the same reason. This path's target
     // certification is retired, and Broadcom's index does not list VCTA at
@@ -236,12 +238,12 @@ export const learningPaths = [
     hours: 40,
     description:
       'Master enterprise software-defined data center orchestration using VMware Cloud Foundation (VCF) and SDDC Manager.',
-    modules: [
-      { title: 'SDDC & Cloud Architecture' },
-      { title: 'vSphere & vSAN Deployment' },
-      { title: 'NSX-T Networking Foundations' },
-      { title: 'SDDC Manager Lifecycle Operations' },
-    ],
+    modules: titledModules(
+      'SDDC & Cloud Architecture',
+      'vSphere & vSAN Deployment',
+      'NSX-T Networking Foundations',
+      'SDDC Manager Lifecycle Operations'
+    ),
     certUrl:
       'https://www.broadcom.com/support/education/vmware/certification/vcp-vcf-administrator',
   },
@@ -253,70 +255,58 @@ export const learningPaths = [
     hours: 60,
     description:
       'Deep dive into VCF 9 day-2 operations — fleet lifecycle, VCF Automation and Operations, NSX VPCs with stateful services, and the vSphere Supervisor with VKS.',
-    modules: [
-      { title: 'Fleet Lifecycle & Workload Domains' },
-      { title: 'VCF Automation: Providers, Projects, Blueprints' },
-      { title: 'NSX VPCs & Stateful Gateway Services' },
-      { title: 'vSphere Supervisor & VKS at Scale' },
-    ],
+    modules: titledModules(
+      'Fleet Lifecycle & Workload Domains',
+      'VCF Automation: Providers, Projects, Blueprints',
+      'NSX VPCs & Stateful Gateway Services',
+      'vSphere Supervisor & VKS at Scale'
+    ),
     certUrl:
       'https://www.broadcom.com/support/education/vmware/certification/vcap-vcf-administrator9',
   },
 ];
 
 export const resources = [
-  {
-    id: 'broadcom-support',
-    title: 'Broadcom Support Portal',
-    description:
-      'Official portal for VMware license management, support tickets, product downloads, and knowledge base.',
-    type: 'Documentation',
-    icon: 'description',
-    url: 'https://support.broadcom.com/',
-  },
-  {
-    id: 'vmware-customer-connect',
-    title: 'VMware Customer Connect',
-    description:
-      'Official VMware digital learning platform, product documentation, community forums, and training transcripts.',
-    type: 'Learning Platform',
-    icon: 'school',
-    url: 'https://customerconnect.vmware.com/',
-  },
-  {
-    id: 'vmware-hol',
-    title: 'VMware Hands-on Labs',
-    description:
-      'Free, web-based sandbox environments that allow testing and exploring VMware products without installation.',
-    type: 'Labs',
-    icon: 'science',
-    url: 'https://hol.vmware.com/',
-  },
-  {
-    id: 'vmware-press',
-    title: 'VMware Press Books',
-    description:
-      'Official certification guides, best practice blueprints, and technical books from leading VMware architects.',
-    type: 'Guides',
-    icon: 'menu_book',
-    url: 'https://www.vmwarepress.com/',
-  },
-  {
-    id: 'vcf-docs',
-    title: 'VCF Product Docs',
-    description:
-      'Technical product documentation for SDDC Manager, VMware Cloud Foundation, vSphere, and vSAN components.',
-    type: 'Documentation',
-    icon: 'article',
-    url: 'https://docs.vmware.com/en/VMware-Cloud-Foundation/index.html',
-  },
-  {
-    id: 'vmware-explore',
-    title: 'VMware Explore Videos',
-    description:
-      'Sessions, deep dives, announcements, and customer case studies on-demand from the annual VMware Explore conference.',
-    type: 'Video',
-    icon: 'play_circle',
-    url: 'https://www.vmware.com/explore.html',
-  },
+  resourceRow(
+    'broadcom-support',
+    'Broadcom Support Portal',
+    ['Documentation', 'description'],
+    'https://support.broadcom.com/',
+    'Official portal for VMware license management, support tickets, product downloads, and knowledge base.'
+  ),
+  resourceRow(
+    'vmware-customer-connect',
+    'VMware Customer Connect',
+    ['Learning Platform', 'school'],
+    'https://customerconnect.vmware.com/',
+    'Official VMware digital learning platform, product documentation, community forums, and training transcripts.'
+  ),
+  resourceRow(
+    'vmware-hol',
+    'VMware Hands-on Labs',
+    ['Labs', 'science'],
+    'https://hol.vmware.com/',
+    'Free, web-based sandbox environments that allow testing and exploring VMware products without installation.'
+  ),
+  resourceRow(
+    'vmware-press',
+    'VMware Press Books',
+    ['Guides', 'menu_book'],
+    'https://www.vmwarepress.com/',
+    'Official certification guides, best practice blueprints, and technical books from leading VMware architects.'
+  ),
+  resourceRow(
+    'vcf-docs',
+    'VCF Product Docs',
+    ['Documentation', 'article'],
+    'https://docs.vmware.com/en/VMware-Cloud-Foundation/index.html',
+    'Technical product documentation for SDDC Manager, VMware Cloud Foundation, vSphere, and vSAN components.'
+  ),
+  resourceRow(
+    'vmware-explore',
+    'VMware Explore Videos',
+    ['Video', 'play_circle'],
+    'https://www.vmware.com/explore.html',
+    'Sessions, deep dives, announcements, and customer case studies on-demand from the annual VMware Explore conference.'
+  ),
 ];

@@ -123,7 +123,16 @@ const leakyPublishedDoc = (over = {}) => ({
   ...over,
 });
 
-/** The fields a frontend source file reads off the named variables. */
+/** Every field in any of the sets, for a page whose reads span several files. */
+const union = (...sets) => new Set(sets.flatMap((set) => [...set]));
+
+/**
+ * The fields a frontend source file reads off the named variables: `x.field`,
+ * `x['field']`, and the names listed in `firstField(x, [...])` or in a
+ * `const NAME = [...]` passed to it (#1845: the detail templates moved to that
+ * helper and into sibling files). One literal path per call, so the CI filter
+ * guard (scripts/ci-filters.test.mjs) can see which file each test reads.
+ */
 function fieldsReadIn(relativePath, variables) {
   const source = readFileSync(new URL(`../../../frontend/src/${relativePath}`, import.meta.url), 'utf8');
   const names = variables.join('|');
@@ -134,6 +143,14 @@ function fieldsReadIn(relativePath, variables) {
   const bracketed = new RegExp(`${variable}(?:\\?\\.)?\\[\\s*'([^']+)'\\s*\\]`, 'g');
   for (const match of source.matchAll(dotted)) fields.add(match[1]);
   for (const match of source.matchAll(bracketed)) fields.add(match[1]);
+  const lists = new Map(
+    [...source.matchAll(/const\s+([A-Z_][A-Z0-9_]*)\s*=\s*(?:Object\.freeze\()?\[([\s\S]*?)\]/g)].map((m) => [m[1], m[2]])
+  );
+  const viaHelper = new RegExp(`firstField\\(\\s*${variable}\\s*,\\s*(\\[[\\s\\S]*?\\]|[A-Z_][A-Z0-9_]*)`, 'g');
+  for (const match of source.matchAll(viaHelper)) {
+    const list = match[1].startsWith('[') ? match[1].slice(1, -1) : lists.get(match[1]) ?? '';
+    for (const name of list.matchAll(/'([^']+)'/g)) fields.add(name[1]);
+  }
   return fields;
 }
 
@@ -273,17 +290,23 @@ describe('getContent — the public article detail', () => {
     const PREVIEW_ONLY = ['contentStatus', 'forgeGrade'];
 
     it('BlogDetailTemplate', () => {
-      const read = fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']);
+      const read = union(
+        fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+        fieldsReadIn('components/templates/BlogDetailParts.jsx', ['article']),
+        fieldsReadIn('components/templates/blogPostModel.js', ['article'])
+      );
       expect(read.size).toBeGreaterThan(30);
       const publicRead = [...read].filter((f) => !PREVIEW_ONLY.includes(f));
       expect(missingFrom(PUBLIC_CONTENT_DETAIL_FIELDS, publicRead)).toEqual([]);
     });
 
     it('ArchitectureDetailTemplate', () => {
-      const read = fieldsReadIn('components/templates/ArchitectureDetailTemplate.jsx', [
-        'architecture',
-        'item',
-      ]);
+      const read = union(
+        fieldsReadIn('components/templates/ArchitectureDetailTemplate.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/ArchitectureDetailParts.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/ArchitectureDeepDiveTabs.jsx', ['architecture', 'item']),
+        fieldsReadIn('components/templates/architectureModel.js', ['architecture', 'item'])
+      );
       expect(read.size).toBeGreaterThan(30);
       expect(missingFrom(PUBLIC_CONTENT_DETAIL_FIELDS, read)).toEqual([]);
     });
@@ -343,7 +366,11 @@ describe('getPreview — the signed staging preview', () => {
 
   it('covers every field BlogDetailTemplate and PreviewPage read', () => {
     const read = new Set([
-      ...fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+      ...union(
+        fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+        fieldsReadIn('components/templates/BlogDetailParts.jsx', ['article']),
+        fieldsReadIn('components/templates/blogPostModel.js', ['article'])
+      ),
       ...fieldsReadIn('pages/PreviewPage.jsx', ['item']),
     ]);
     expect(missingFrom(PUBLIC_PREVIEW_FIELDS, read)).toEqual([]);

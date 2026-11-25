@@ -1,3 +1,6 @@
+// One pillar: our stable id, the vendor's label, and the vendor's page for it.
+const pillar = (id, label, docUrl) => ({ id, label, docUrl });
+
 /**
  * Official Well-Architected pillar sets, per cloud provider.
  *
@@ -24,39 +27,36 @@ export const WELL_ARCHITECTED = {
     frameworkName: 'AWS Well-Architected Framework',
     frameworkUrl: 'https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html',
     pillars: [
-      {
-        id: 'operationalExcellence',
-        label: 'Operational Excellence',
-        docUrl:
-          'https://docs.aws.amazon.com/wellarchitected/latest/framework/operational-excellence.html',
-      },
-      {
-        id: 'security',
-        label: 'Security',
-        docUrl: 'https://docs.aws.amazon.com/wellarchitected/latest/framework/security.html',
-      },
-      {
-        id: 'reliability',
-        label: 'Reliability',
-        docUrl: 'https://docs.aws.amazon.com/wellarchitected/latest/framework/reliability.html',
-      },
-      {
-        id: 'performanceEfficiency',
-        label: 'Performance Efficiency',
-        docUrl:
-          'https://docs.aws.amazon.com/wellarchitected/latest/framework/performance-efficiency.html',
-      },
-      {
-        id: 'costOptimization',
-        label: 'Cost Optimization',
-        docUrl:
-          'https://docs.aws.amazon.com/wellarchitected/latest/framework/cost-optimization.html',
-      },
-      {
-        id: 'sustainability',
-        label: 'Sustainability',
-        docUrl: 'https://docs.aws.amazon.com/wellarchitected/latest/framework/sustainability.html',
-      },
+      pillar(
+        'operationalExcellence',
+        'Operational Excellence',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/operational-excellence.html'
+      ),
+      pillar(
+        'security',
+        'Security',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/security.html'
+      ),
+      pillar(
+        'reliability',
+        'Reliability',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/reliability.html'
+      ),
+      pillar(
+        'performanceEfficiency',
+        'Performance Efficiency',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/performance-efficiency.html'
+      ),
+      pillar(
+        'costOptimization',
+        'Cost Optimization',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/cost-optimization.html'
+      ),
+      pillar(
+        'sustainability',
+        'Sustainability',
+        'https://docs.aws.amazon.com/wellarchitected/latest/framework/sustainability.html'
+      ),
     ],
   },
 
@@ -67,31 +67,31 @@ export const WELL_ARCHITECTED = {
     // Five, not six. Azure has no Sustainability pillar — it treats
     // sustainability as a workload guide instead.
     pillars: [
-      {
-        id: 'reliability',
-        label: 'Reliability',
-        docUrl: 'https://learn.microsoft.com/en-us/azure/well-architected/reliability/',
-      },
-      {
-        id: 'security',
-        label: 'Security',
-        docUrl: 'https://learn.microsoft.com/en-us/azure/well-architected/security/',
-      },
-      {
-        id: 'costOptimization',
-        label: 'Cost Optimization',
-        docUrl: 'https://learn.microsoft.com/en-us/azure/well-architected/cost-optimization/',
-      },
-      {
-        id: 'operationalExcellence',
-        label: 'Operational Excellence',
-        docUrl: 'https://learn.microsoft.com/en-us/azure/well-architected/operational-excellence/',
-      },
-      {
-        id: 'performanceEfficiency',
-        label: 'Performance Efficiency',
-        docUrl: 'https://learn.microsoft.com/en-us/azure/well-architected/performance-efficiency/',
-      },
+      pillar(
+        'reliability',
+        'Reliability',
+        'https://learn.microsoft.com/en-us/azure/well-architected/reliability/'
+      ),
+      pillar(
+        'security',
+        'Security',
+        'https://learn.microsoft.com/en-us/azure/well-architected/security/'
+      ),
+      pillar(
+        'costOptimization',
+        'Cost Optimization',
+        'https://learn.microsoft.com/en-us/azure/well-architected/cost-optimization/'
+      ),
+      pillar(
+        'operationalExcellence',
+        'Operational Excellence',
+        'https://learn.microsoft.com/en-us/azure/well-architected/operational-excellence/'
+      ),
+      pillar(
+        'performanceEfficiency',
+        'Performance Efficiency',
+        'https://learn.microsoft.com/en-us/azure/well-architected/performance-efficiency/'
+      ),
     ],
   },
 
@@ -100,11 +100,11 @@ export const WELL_ARCHITECTED = {
     frameworkName: 'Google Cloud Well-Architected Framework',
     frameworkUrl: 'https://docs.cloud.google.com/architecture/framework',
     pillars: [
-      {
-        id: 'operationalExcellence',
-        label: 'Operational excellence',
-        docUrl: 'https://docs.cloud.google.com/architecture/framework/operational-excellence',
-      },
+      pillar(
+        'operationalExcellence',
+        'Operational excellence',
+        'https://docs.cloud.google.com/architecture/framework/operational-excellence'
+      ),
       {
         // Google's pillar is broader than the AWS/Azure "Security" pillar and
         // is named accordingly. Kept verbatim rather than normalised.
@@ -112,27 +112,27 @@ export const WELL_ARCHITECTED = {
         label: 'Security, privacy, and compliance',
         docUrl: 'https://docs.cloud.google.com/architecture/framework/security',
       },
-      {
-        id: 'reliability',
-        label: 'Reliability',
-        docUrl: 'https://docs.cloud.google.com/architecture/framework/reliability',
-      },
-      {
-        id: 'costOptimization',
-        label: 'Cost optimization',
-        docUrl: 'https://docs.cloud.google.com/architecture/framework/cost-optimization',
-      },
+      pillar(
+        'reliability',
+        'Reliability',
+        'https://docs.cloud.google.com/architecture/framework/reliability'
+      ),
+      pillar(
+        'costOptimization',
+        'Cost optimization',
+        'https://docs.cloud.google.com/architecture/framework/cost-optimization'
+      ),
       {
         // "Performance optimization", not Azure/AWS's "Performance efficiency".
         id: 'performanceOptimization',
         label: 'Performance optimization',
         docUrl: 'https://docs.cloud.google.com/architecture/framework/performance-optimization',
       },
-      {
-        id: 'sustainability',
-        label: 'Sustainability',
-        docUrl: 'https://docs.cloud.google.com/architecture/framework/sustainability',
-      },
+      pillar(
+        'sustainability',
+        'Sustainability',
+        'https://docs.cloud.google.com/architecture/framework/sustainability'
+      ),
     ],
   },
 

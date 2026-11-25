@@ -4,9 +4,8 @@ import { Link } from 'react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   CheckCircle2,
@@ -21,6 +20,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
+import { BasicInfoCard, ContentTabList, OverviewTab, UrlField } from './SubmissionFields';
 import SubmissionReceived from './SubmissionReceived';
 
 const REFERENCE_FRAMEWORKS = [
@@ -63,6 +63,21 @@ const CATEGORY_OPTIONS = [
   'Containers',
 ];
 
+/** The "Basic Information" card's labels and placeholders on this page. */
+const BASIC_INFO_TEXT = {
+  titleLabel: 'Framework Title *',
+  titlePlaceholder: 'AWS Well-Architected Framework',
+  summaryPlaceholder: 'Comprehensive framework for building secure, reliable infrastructure...',
+  tagsPlaceholder: 'WAF, Security, Best Practices',
+};
+
+/** The three lists the "Basic Information" card offers. */
+const FIELD_OPTIONS = {
+  providers: PROVIDER_OPTIONS,
+  categories: CATEGORY_OPTIONS,
+  complexities: COMPLEXITY_OPTIONS,
+};
+
 const EMPTY_FORM = {
   title: '',
   summary: '',
@@ -86,6 +101,8 @@ export default function FrameworkSubmissionPage() {
   const [error, setError] = useState(null);
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -245,137 +262,21 @@ export default function FrameworkSubmissionPage() {
         ) : (
           <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
             {/* Basic Info */}
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-base">Basic Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="fw-sub-title"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Framework Title *
-                    </label>
-                    <Input
-                      id="fw-sub-title"
-                      value={form.title}
-                      onChange={(e) => handleChange('title', e.target.value)}
-                      placeholder="AWS Well-Architected Framework"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="fw-sub-provider"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Cloud Provider *
-                    </label>
-                    <select
-                      id="fw-sub-provider"
-                      value={form.cloudProvider}
-                      onChange={(e) => handleChange('cloudProvider', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {PROVIDER_OPTIONS.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="fw-sub-summary"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Short Description / Summary *
-                  </label>
-                  <Textarea
-                    id="fw-sub-summary"
-                    value={form.summary}
-                    onChange={(e) => handleChange('summary', e.target.value)}
-                    placeholder="Comprehensive framework for building secure, reliable infrastructure..."
-                    className="min-h-[80px]"
-                    required
-                  />
-                </div>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label
-                      htmlFor="fw-sub-category"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Category
-                    </label>
-                    <select
-                      id="fw-sub-category"
-                      value={form.category}
-                      onChange={(e) => handleChange('category', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {CATEGORY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="fw-sub-complexity"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Complexity
-                    </label>
-                    <select
-                      id="fw-sub-complexity"
-                      value={form.complexity}
-                      onChange={(e) => handleChange('complexity', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {COMPLEXITY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="fw-sub-tags"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Tags (comma-separated)
-                    </label>
-                    <Input
-                      id="fw-sub-tags"
-                      value={form.tags}
-                      onChange={(e) => handleChange('tags', e.target.value)}
-                      placeholder="WAF, Security, Best Practices"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="fw-sub-doc"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Official Documentation Link
-                  </label>
-                  <Input
-                    id="fw-sub-doc"
-                    value={form.docLink}
-                    onChange={(e) => handleChange('docLink', e.target.value)}
-                    placeholder="https://docs.aws.amazon.com/wellarchitected/..."
-                    type="url"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+            <BasicInfoCard
+              idPrefix="fw-sub"
+              form={form}
+              onChange={handleChange}
+              text={BASIC_INFO_TEXT}
+              options={FIELD_OPTIONS}
+            >
+              <UrlField
+                {...field}
+                name="docLink"
+                id="fw-sub-doc"
+                label="Official Documentation Link"
+                placeholder="https://docs.aws.amazon.com/wellarchitected/..."
+              />
+            </BasicInfoCard>
 
             {/* Content Tabs */}
             <Card className="bg-card/40">
@@ -384,31 +285,19 @@ export default function FrameworkSubmissionPage() {
               </CardHeader>
               <CardContent>
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  <TabsList className="grid w-full grid-cols-4 mb-4">
-                    <TabsTrigger value="overview">
-                      <BookOpen className="h-3 w-3 mr-1" /> Overview
-                    </TabsTrigger>
-                    <TabsTrigger value="pillars">
-                      <Layers className="h-3 w-3 mr-1" /> Pillars
-                    </TabsTrigger>
-                    <TabsTrigger value="implementation">
-                      <Code className="h-3 w-3 mr-1" /> IaC
-                    </TabsTrigger>
-                    <TabsTrigger value="resources">
-                      <ExternalLink className="h-3 w-3 mr-1" /> Resources
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview">
-                    <Textarea
-                      value={form.overviewHtml}
-                      onChange={(e) => handleChange('overviewHtml', e.target.value)}
-                      className="min-h-[200px] font-mono text-sm"
-                      placeholder="<p>HTML overview content...</p>"
-                    />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Supports HTML. Renders in the Overview tab on the detail page.
-                    </p>
-                  </TabsContent>
+                  <ContentTabList
+                    tabs={[
+                      { value: 'overview', Icon: BookOpen, label: 'Overview' },
+                      { value: 'pillars', Icon: Layers, label: 'Pillars' },
+                      { value: 'implementation', Icon: Code, label: 'IaC' },
+                      { value: 'resources', Icon: ExternalLink, label: 'Resources' },
+                    ]}
+                  />
+                  <OverviewTab
+                    value={form.overviewHtml}
+                    onChange={(value) => handleChange('overviewHtml', value)}
+                    placeholder="<p>HTML overview content...</p>"
+                  />
                   <TabsContent value="pillars" className="space-y-4">
                     <div>
                       <label

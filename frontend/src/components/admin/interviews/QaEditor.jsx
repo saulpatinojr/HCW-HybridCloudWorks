@@ -15,7 +15,8 @@ import { AlertTriangle, ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { LIMITS, emptyQaItem, moveQa, qaForSave, qaProblems } from './interviewModel';
+import { LIMITS } from './interviewModel';
+import { emptyQaItem, moveQa, qaForSave, qaProblems } from './interviewQa';
 
 function DraftNotes({ doc }) {
   const drafting = doc?.provenance?.drafting || {};

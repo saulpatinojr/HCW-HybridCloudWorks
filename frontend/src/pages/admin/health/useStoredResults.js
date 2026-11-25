@@ -31,6 +31,36 @@ export const POLL_MS = 60 * 1000;
 
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
+/**
+ * Calls `tick` every `pollMs` while the tab is visible: polling stops when
+ * the tab is hidden, and a tick runs at once when it shows again. Returns
+ * the function that stops it all.
+ */
+function pollWhileVisible(tick, pollMs) {
+  let timer = null;
+  const start = () => {
+    if (timer === null) timer = setInterval(tick, pollMs);
+  };
+  const stop = () => {
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+  };
+  const onVisibility = () => {
+    if (isHidden()) {
+      stop();
+      return;
+    }
+    tick();
+    start();
+  };
+  if (!isHidden()) start();
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
+}
+
 export default function useStoredResults(authReady, { pollMs = POLL_MS } = {}) {
   const [stored, setStored] = useState(readCache);
   const [loaded, setLoaded] = useState(false);
@@ -61,29 +91,11 @@ export default function useStoredResults(authReady, { pollMs = POLL_MS } = {}) {
 
   useEffect(() => {
     if (!authReady) return undefined;
-    read(++generation.current);
-
-    let timer = null;
-    const start = () => {
-      if (timer === null) timer = setInterval(() => read(++generation.current), pollMs);
-    };
-    const stop = () => {
-      if (timer !== null) clearInterval(timer);
-      timer = null;
-    };
-    const onVisibility = () => {
-      if (isHidden()) {
-        stop();
-        return;
-      }
-      read(++generation.current);
-      start();
-    };
-    if (!isHidden()) start();
-    document.addEventListener('visibilitychange', onVisibility);
+    const tick = () => read(++generation.current);
+    tick();
+    const stopPolling = pollWhileVisible(tick, pollMs);
     return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
+      stopPolling();
       // Supersede the read in flight: its result is dropped.
       generation.current += 1;
     };
@@ -95,15 +107,16 @@ export default function useStoredResults(authReady, { pollMs = POLL_MS } = {}) {
    */
   const record = useCallback(async (probeId, result, durationMs) => {
     const saved = await recordProbeResult(probeId, result, durationMs);
-    if (!saved) return null;
-    setStored((previous) => ({
-      ...previous,
-      results: {
-        ...previous.results,
-        [probeId]: newestResult(previous.results[probeId], saved),
-      },
-    }));
-    return saved;
+    if (saved) {
+      setStored((previous) => ({
+        ...previous,
+        results: {
+          ...previous.results,
+          [probeId]: newestResult(previous.results[probeId], saved),
+        },
+      }));
+    }
+    return saved || null;
   }, []);
 
   return {

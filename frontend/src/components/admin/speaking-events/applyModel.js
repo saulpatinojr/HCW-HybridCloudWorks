@@ -47,10 +47,10 @@
  * When one of the owner's talks IS the listed event (the same name), that is
  * "you are already speaking here", not a clash.
  */
-import { normalizeName, speakingStatusInfo, toInputDate } from '@/lib/speakingEvents';
+import { speakingStatusInfo, toInputDate } from '@/lib/speakingEvents';
 import { manualRowStatus, safeString, sessionizeRowStatus } from './eventModel';
 
-const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+export const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DAY_MS = 86_400_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const MONTH_NAMES = [
@@ -126,8 +126,8 @@ export function isDay(value) {
   );
 }
 
-const pad = (n) => String(n).padStart(2, '0');
-const dayFromUtc = (date) =>
+export const pad = (n) => String(n).padStart(2, '0');
+export const dayFromUtc = (date) =>
   `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 const utcOf = (day) => {
   const [, year, month, date] = DAY.exec(day).map(Number);
@@ -248,178 +248,6 @@ export function knownEvents(events, saved) {
     });
   }
   return known;
-}
-
-/**
- * What one event's dates meet, by the rule in the header.
- *
- * `clashes` is filled only for an event the owner planned (Interested,
- * Applied or Accepted). For an event with no status the same entries come
- * back as `wouldMeet`: worth knowing before applying, but not a clash. An
- * event marked Not going or Declined, or one that is cancelled or postponed,
- * gets nothing.
- *
- * @param {object} event - one known event (`knownEvents`)
- * @param {{ talks: object[], known: object[] }} against
- * @returns {{ clashes: Array<{ kind: 'talk'|'event', name: string, detail: string }>, wouldMeet: Array<{ kind: 'talk'|'event', name: string, detail: string }>, speakingHere: string|null }}
- */
-export function overlapsFor(event, { talks, known }) {
-  const result = { clashes: [], wouldMeet: [], speakingHere: null };
-  if (!event?.range || event.offCalendar || isDropped(event.status)) return result;
-  const meets = [];
-  const ownName = normalizeName(event.title);
-  for (const talk of committedTalks(talks)) {
-    if (talk.day < event.range.start || talk.day > event.range.end) continue;
-    if (ownName && normalizeName(talk.name) === ownName) {
-      result.speakingHere = talk.statusLabel;
-    } else {
-      meets.push({
-        kind: 'talk',
-        name: talk.name,
-        detail: `${talk.statusLabel} talk on ${formatDay(talk.day)}`,
-      });
-    }
-  }
-  for (const other of known) {
-    if (other.id === event.id || other.offCalendar || !isPlanned(other.status)) continue;
-    if (rangesOverlap(event.range, other.range)) {
-      meets.push({
-        kind: 'event',
-        name: other.title,
-        detail: `${applyStatusInfo(other.status).label}, ${formatRange(other.range)}`,
-      });
-    }
-  }
-  if (isPlanned(event.status)) result.clashes = meets;
-  else result.wouldMeet = meets;
-  return result;
-}
-
-/** `overlapsFor` for every known event, by id. */
-export function allOverlaps({ events, saved, talks }) {
-  const known = knownEvents(events, saved);
-  return new Map(known.map((event) => [event.id, overlapsFor(event, { talks, known })]));
-}
-
-/**
- * The weeks of one month, Sunday first: each week is seven cells, a cell is
- * `{ day, date }` or null for the blanks before the 1st and after the last.
- *
- * @param {number} year
- * @param {number} monthIndex - 0 for January
- */
-export function monthGrid(year, monthIndex) {
-  const first = new Date(Date.UTC(year, monthIndex, 1));
-  const days = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  const cells = Array.from({ length: first.getUTCDay() }, () => null);
-  for (let date = 1; date <= days; date += 1) {
-    cells.push({ day: `${year}-${pad(monthIndex + 1)}-${pad(date)}`, date });
-  }
-  while (cells.length % 7 !== 0) cells.push(null);
-  const weeks = [];
-  for (let index = 0; index < cells.length; index += 7) weeks.push(cells.slice(index, index + 7));
-  return weeks;
-}
-
-/** The month after or before `{ year, monthIndex }`, across a year's end. */
-export function shiftMonth({ year, monthIndex }, by) {
-  const moved = new Date(Date.UTC(year, monthIndex + by, 1));
-  return { year: moved.getUTCFullYear(), monthIndex: moved.getUTCMonth() };
-}
-
-/** The month a day is in. */
-export const monthOf = (day) => {
-  const [, year, month] = DAY.exec(day).map(Number);
-  return { year, monthIndex: month - 1 };
-};
-
-/**
- * Whether an event's call for speakers closes on a day from `first` to `last`
- * and is still worth a mark: not cancelled, and not one the owner marked Not
- * going or Declined.
- */
-const closesWithin = (event, first, last) =>
-  isDay(event.callCloses) &&
-  event.callCloses >= first &&
-  event.callCloses <= last &&
-  !event.cancelled &&
-  !isDropped(event.note?.status);
-
-/**
- * What the calendar marks on each day of one month.
- *
- * Returns a Map from day to `{ events, unmarked, talks, deadlines, overlap }`:
- *
- *   events     the events held that day that the owner planned (Interested,
- *              Applied or Accepted)
- *   unmarked   the events held that day that have no status yet; the calendar
- *              draws these as one faint mark
- *   talks      the owner's committed talks that day
- *   deadlines  the calls for speakers that close that day
- *   overlap    whether that day is a clash day (the header's rule)
- *
- * Cancelled and postponed events are left out, and so are events marked Not
- * going or Declined, with their closing days. A multi-day event marks each of
- * its days that fall in the month, so an event that runs across a month's end
- * shows in both months.
- */
-export function marksForMonth({ year, monthIndex }, { events, saved, talks }) {
-  const first = `${year}-${pad(monthIndex + 1)}-01`;
-  const last = dayFromUtc(new Date(Date.UTC(year, monthIndex + 1, 0)));
-  const marks = new Map();
-  const at = (day) => {
-    if (!marks.has(day))
-      marks.set(day, { events: [], unmarked: [], talks: [], deadlines: [], overlap: false });
-    return marks.get(day);
-  };
-  const known = knownEvents(events, saved);
-  const committed = committedTalks(talks);
-
-  for (const event of known) {
-    if (!event.range || event.offCalendar || isDropped(event.status)) continue;
-    const planned = isPlanned(event.status);
-    const from = event.range.start < first ? first : event.range.start;
-    const to = event.range.end > last ? last : event.range.end;
-    for (let day = from; day <= to; day = addDays(day, 1)) {
-      const entry = {
-        id: event.id,
-        title: event.title,
-        status: event.status,
-        listed: event.listed,
-      };
-      if (planned) at(day).events.push(entry);
-      else at(day).unmarked.push(entry);
-    }
-  }
-  for (const talk of committed) {
-    if (talk.day >= first && talk.day <= last)
-      at(talk.day).talks.push({ name: talk.name, statusLabel: talk.statusLabel });
-  }
-  for (const event of events ?? []) {
-    if (closesWithin(event, first, last))
-      at(event.callCloses).deadlines.push({ title: event.title });
-  }
-
-  // A clash day needs two things the owner cares about: two planned events,
-  // or one of the owner's talks and a planned event that is not that same
-  // event. `mark.events` holds only planned events; an event with no status
-  // (`mark.unmarked`) never makes a clash, however many share the day.
-  for (const mark of marks.values()) {
-    const talkMeetsPlanned = mark.talks.some((talk) =>
-      mark.events.some((event) => normalizeName(event.title) !== normalizeName(talk.name))
-    );
-    mark.overlap = talkMeetsPlanned || mark.events.length > 1;
-  }
-  return marks;
-}
-
-/** The month the calendar opens on: the first listed event still to come, else this month. */
-export function firstMonth(events, today) {
-  const upcoming = (events ?? [])
-    .filter((event) => !isOffCalendar(event) && isDay(event.startDate) && event.startDate >= today)
-    .map((event) => event.startDate)
-    .sort();
-  return monthOf(upcoming[0] ?? today);
 }
 
 /** `Mar 6, 2027`, or a dash for no day. */

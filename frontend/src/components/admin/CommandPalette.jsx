@@ -151,6 +151,87 @@ function useContentSearch(query, debounceMs, enabled, brainEnabled) {
   };
 }
 
+/** A page of the admin as an entry in the palette. */
+function pageOption(page) {
+  return {
+    id: `page-${page.id}`,
+    icon: page.icon,
+    label: page.label,
+    hint: page.description,
+    tag: navGroupFor(page)?.label || 'Page',
+    to: page.to,
+  };
+}
+
+/** A content search result (or a Second Brain note) as an entry in the palette. */
+function contentOption(item) {
+  const isBrain = Boolean(item._brain);
+  return {
+    id: `content-${item.id}`,
+    icon: FileText,
+    label: contentTitle(item),
+    hint: isBrain ? [item.type, item.status].filter(Boolean).join(' · ') : contentHint(item),
+    tag: isBrain && item.type !== 'reference' ? 'Second Brain' : 'Content',
+    to: resultPath(item),
+  };
+}
+
+// Where each navigation key moves the highlight in a list of `count`; the
+// arrows wrap around at either end.
+const HIGHLIGHT_MOVES = {
+  ArrowDown: (index, count) => (index + 1) % count,
+  ArrowUp: (index, count) => (index - 1 + count) % count,
+  Home: () => 0,
+  End: (index, count) => count - 1,
+};
+
+/** The new highlighted index for `key`, or null for a key that does not move it. */
+function movedHighlight(key, index, count) {
+  return Object.hasOwn(HIGHLIGHT_MOVES, key) ? HIGHLIGHT_MOVES[key](index, count) : null;
+}
+
+/** The status line under the list: why there is nothing, or that a search is running. */
+function paletteNote(search, optionCount) {
+  let note = '';
+  if (search.tooLong) {
+    note = `Content search takes up to ${CONTENT_SEARCH_MAX_LENGTH} characters; shorten it to search content.`;
+  } else if (search.error) note = search.error;
+  else if (search.pending) note = 'Searching content…';
+  else if (search.searchable && search.items.length === 0) note = 'No content is titled like that.';
+  if (optionCount === 0 && !note) note = 'No page matches.';
+  return note;
+}
+
+function PaletteOptionRow({ option, id, selected, onHover, onChoose }) {
+  const Icon = option.icon;
+  return (
+    // The keyboard drives the list from the combobox above
+    // (aria-activedescendant); the row's own handlers are for the
+    // pointer, with Enter kept for a row that somehow holds focus.
+    <li
+      id={id}
+      role="option"
+      aria-selected={selected}
+      onMouseEnter={onHover}
+      onClick={() => onChoose(option)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onChoose(option);
+      }}
+      className={cn(
+        'flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm',
+        selected ? 'bg-muted text-foreground' : 'text-muted-foreground'
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium text-foreground">{option.label}</span>
+        {option.hint && <span className="block truncate text-xs">{option.hint}</span>}
+      </span>
+      <span className="shrink-0 text-xs uppercase tracking-wider">{option.tag}</span>
+    </li>
+  );
+}
+
 /** Everything inside the dialog, for the signed-in `role`; mounted fresh each time it opens. */
 function PaletteBody({ debounceMs, role, onChoose }) {
   const { enabled: brainEnabled } = useBrainAccess();
@@ -164,26 +245,7 @@ function PaletteBody({ debounceMs, role, onChoose }) {
   const search = useContentSearch(trimmed, debounceMs, contentAllowed, brainEnabled);
 
   const options = useMemo(
-    () => [
-      ...pages.map((page) => ({
-        id: `page-${page.id}`,
-        icon: page.icon,
-        label: page.label,
-        hint: page.description,
-        tag: navGroupFor(page)?.label || 'Page',
-        to: page.to,
-      })),
-      ...search.items.map((item) => ({
-        id: `content-${item.id}`,
-        icon: FileText,
-        label: contentTitle(item),
-        hint: item._brain
-          ? [item.type, item.status].filter(Boolean).join(' · ')
-          : contentHint(item),
-        tag: item._brain && item.type !== 'reference' ? 'Second Brain' : 'Content',
-        to: resultPath(item),
-      })),
-    ],
+    () => [...pages.map(pageOption), ...search.items.map(contentOption)],
     [pages, search.items]
   );
   const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
@@ -199,31 +261,19 @@ function PaletteBody({ debounceMs, role, onChoose }) {
    */
   const onInputKeyDown = (event) => {
     if (options.length === 0) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActive((activeIndex + 1) % options.length);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActive((activeIndex - 1 + options.length) % options.length);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      setActive(0);
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      setActive(options.length - 1);
-    } else if (event.key === 'Enter') {
+    if (event.key === 'Enter') {
       event.preventDefault();
       onChoose(options[activeIndex]);
+      return;
+    }
+    const next = movedHighlight(event.key, activeIndex, options.length);
+    if (next !== null) {
+      event.preventDefault();
+      setActive(next);
     }
   };
 
-  let note = '';
-  if (search.tooLong) {
-    note = `Content search takes up to ${CONTENT_SEARCH_MAX_LENGTH} characters; shorten it to search content.`;
-  } else if (search.error) note = search.error;
-  else if (search.pending) note = 'Searching content…';
-  else if (search.searchable && search.items.length === 0) note = 'No content is titled like that.';
-  if (options.length === 0 && !note) note = 'No page matches.';
+  const note = paletteNote(search, options.length);
 
   return (
     <>
@@ -262,37 +312,16 @@ function PaletteBody({ debounceMs, role, onChoose }) {
         aria-label="Pages and content"
         className="max-h-[60vh] overflow-y-auto p-2"
       >
-        {options.map((option, index) => {
-          const Icon = option.icon;
-          const selected = index === activeIndex;
-          return (
-            // The keyboard drives the list from the combobox above
-            // (aria-activedescendant); the row's own handlers are for the
-            // pointer, with Enter kept for a row that somehow holds focus.
-            <li
-              key={option.id}
-              id={optionId(option)}
-              role="option"
-              aria-selected={selected}
-              onMouseEnter={() => setActive(index)}
-              onClick={() => onChoose(option)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') onChoose(option);
-              }}
-              className={cn(
-                'flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm',
-                selected ? 'bg-muted text-foreground' : 'text-muted-foreground'
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-foreground">{option.label}</span>
-                {option.hint && <span className="block truncate text-xs">{option.hint}</span>}
-              </span>
-              <span className="shrink-0 text-xs uppercase tracking-wider">{option.tag}</span>
-            </li>
-          );
-        })}
+        {options.map((option, index) => (
+          <PaletteOptionRow
+            key={option.id}
+            option={option}
+            id={optionId(option)}
+            selected={index === activeIndex}
+            onHover={() => setActive(index)}
+            onChoose={onChoose}
+          />
+        ))}
       </ul>
       {note && (
         <p

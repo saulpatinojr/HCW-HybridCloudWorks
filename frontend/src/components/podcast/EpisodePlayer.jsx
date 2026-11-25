@@ -101,6 +101,118 @@ function EpisodeLinks({ episode, mediaUrl, link }) {
   );
 }
 
+/**
+ * Mirror the play/pause state onto the element. jsdom and some embedded
+ * browsers return undefined rather than a promise from play(); a rejection
+ * (autoplay policy, network) drops back to paused.
+ */
+function syncAudioToState(audio, isPlaying, setIsPlaying) {
+  if (!audio) return;
+  if (!isPlaying) {
+    audio.pause();
+    return;
+  }
+  const result = audio.play();
+  if (result && typeof result.catch === 'function') {
+    result.catch(() => setIsPlaying(false));
+  }
+}
+
+/** The hidden <audio> element, and the state it reports back to the player. */
+function EpisodeAudio({
+  audioRef,
+  mediaUrl,
+  episode,
+  known,
+  setCurrentTime,
+  setDuration,
+  setIsPlaying,
+}) {
+  // Where this browser left off in this episode (ADR 0033 §4): restored once
+  // the element knows its length, saved as it plays and when it pauses, and
+  // cleared when it ends so the next visit starts from the top. A storage
+  // that cannot be read or written leaves the player exactly as it was.
+  function restorePosition(audioEl) {
+    const at = readPlaybackPosition(episode.id);
+    if (at > 0 && at < (audioEl.duration || Infinity)) {
+      audioEl.currentTime = at;
+      setCurrentTime(at);
+    }
+  }
+  function rememberPosition(audioEl) {
+    savePlaybackPosition(episode.id, audioEl.currentTime, audioEl.duration || known);
+  }
+
+  return (
+    // eslint-disable-next-line jsx-a11y/media-has-caption
+    <audio
+      ref={audioRef}
+      src={mediaUrl}
+      preload="metadata"
+      onTimeUpdate={(e) => {
+        setCurrentTime(e.currentTarget.currentTime || 0);
+        rememberPosition(e.currentTarget);
+      }}
+      onLoadedMetadata={(e) => {
+        const d = e.currentTarget.duration;
+        if (Number.isFinite(d) && d > 0) setDuration(d);
+        restorePosition(e.currentTarget);
+      }}
+      onEnded={() => {
+        setIsPlaying(false);
+        savePlaybackPosition(episode.id, 0);
+      }}
+      // The element is the source of truth, not the button: OS media keys,
+      // headphone controls and the browser's own audio UI move it without
+      // going through our handler, and the indicator on the list above
+      // would otherwise keep saying "playing" over silence. Both handlers
+      // are idempotent against the effect that mirrors this state onto the
+      // element (play() on a playing element, pause() on a paused one).
+      onPlay={() => setIsPlaying(true)}
+      onPause={(e) => {
+        setIsPlaying(false);
+        rememberPosition(e.currentTarget);
+      }}
+      aria-label={`Audio: ${episode.title}`}
+    />
+  );
+}
+
+/** The progress bar with a transparent range slider over it for seeking. */
+function SeekTrack({ meta, currentTime, sliderMax, mediaUrl, onSeek }) {
+  return (
+    <div
+      // The input inside is transparent so the styled bar shows through;
+      // the ring on the track is what makes keyboard focus visible.
+      className="relative w-full h-2 bg-card/60 rounded-full mb-2 focus-within:ring-2 focus-within:ring-white/80 focus-within:ring-offset-2 focus-within:ring-offset-transparent"
+      data-testid="episode-track"
+    >
+      <div
+        className={`h-full bg-linear-to-r ${meta.progressBar} rounded-full transition-all duration-200`}
+        style={{
+          // Clamped like the slider's value: a document's durationSeconds
+          // can be shorter than the real file, and the bar must not
+          // overflow its track while the last seconds play.
+          width: sliderMax ? `${(Math.min(currentTime, sliderMax) / sliderMax) * 100}%` : '0%',
+        }}
+        data-testid="episode-progress"
+        aria-hidden="true"
+      />
+      <input
+        type="range"
+        aria-label="Seek"
+        min="0"
+        max={sliderMax}
+        step="1"
+        value={Math.min(currentTime, sliderMax)}
+        onChange={onSeek}
+        disabled={!mediaUrl || !sliderMax}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default"
+      />
+    </div>
+  );
+}
+
 export default function EpisodePlayer({ episode, meta, onPlayingChange }) {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -112,18 +224,7 @@ export default function EpisodePlayer({ episode, meta, onPlayingChange }) {
   }, [isPlaying, onPlayingChange]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isPlaying) {
-      // jsdom and some embedded browsers return undefined rather than a
-      // promise; a rejection (autoplay policy, network) drops back to paused.
-      const result = audio.play();
-      if (result && typeof result.catch === 'function') {
-        result.catch(() => setIsPlaying(false));
-      }
-    } else {
-      audio.pause();
-    }
+    syncAudioToState(audioRef.current, isPlaying, setIsPlaying);
   }, [isPlaying]);
 
   // Decide on the sanitised value: an unsafe URL (javascript:, data:, control
@@ -147,60 +248,22 @@ export default function EpisodePlayer({ episode, meta, onPlayingChange }) {
     if (audio) audio.currentTime = next;
   }
 
-  // Where this browser left off in this episode (ADR 0033 §4): restored once
-  // the element knows its length, saved as it plays and when it pauses, and
-  // cleared when it ends so the next visit starts from the top. A storage
-  // that cannot be read or written leaves the player exactly as it was.
-  function restorePosition(audioEl) {
-    const at = readPlaybackPosition(episode.id);
-    if (at > 0 && at < (audioEl.duration || Infinity)) {
-      audioEl.currentTime = at;
-      setCurrentTime(at);
-    }
-  }
-  function rememberPosition(audioEl) {
-    savePlaybackPosition(episode.id, audioEl.currentTime, audioEl.duration || known);
-  }
-
   return (
     <article
       className={`bg-card/40 backdrop-blur-md border ${meta.border} rounded-2xl overflow-hidden`}
       data-testid="episode-player"
     >
-      {/* eslint-disable jsx-a11y/media-has-caption */}
       {mediaUrl && (
-        <audio
-          ref={audioRef}
-          src={mediaUrl}
-          preload="metadata"
-          onTimeUpdate={(e) => {
-            setCurrentTime(e.currentTarget.currentTime || 0);
-            rememberPosition(e.currentTarget);
-          }}
-          onLoadedMetadata={(e) => {
-            const d = e.currentTarget.duration;
-            if (Number.isFinite(d) && d > 0) setDuration(d);
-            restorePosition(e.currentTarget);
-          }}
-          onEnded={() => {
-            setIsPlaying(false);
-            savePlaybackPosition(episode.id, 0);
-          }}
-          // The element is the source of truth, not the button: OS media keys,
-          // headphone controls and the browser's own audio UI move it without
-          // going through our handler, and the indicator on the list above
-          // would otherwise keep saying "playing" over silence. Both handlers
-          // are idempotent against the effect that mirrors this state onto the
-          // element (play() on a playing element, pause() on a paused one).
-          onPlay={() => setIsPlaying(true)}
-          onPause={(e) => {
-            setIsPlaying(false);
-            rememberPosition(e.currentTarget);
-          }}
-          aria-label={`Audio: ${episode.title}`}
+        <EpisodeAudio
+          audioRef={audioRef}
+          mediaUrl={mediaUrl}
+          episode={episode}
+          known={known}
+          setCurrentTime={setCurrentTime}
+          setDuration={setDuration}
+          setIsPlaying={setIsPlaying}
         />
       )}
-      {/* eslint-enable jsx-a11y/media-has-caption */}
 
       <div className="p-6 sm:p-8">
         <div className="flex items-center gap-2 mb-4">
@@ -222,35 +285,13 @@ export default function EpisodePlayer({ episode, meta, onPlayingChange }) {
           </div>
         </div>
 
-        <div
-          // The input inside is transparent so the styled bar shows through;
-          // the ring on the track is what makes keyboard focus visible.
-          className="relative w-full h-2 bg-card/60 rounded-full mb-2 focus-within:ring-2 focus-within:ring-white/80 focus-within:ring-offset-2 focus-within:ring-offset-transparent"
-          data-testid="episode-track"
-        >
-          <div
-            className={`h-full bg-linear-to-r ${meta.progressBar} rounded-full transition-all duration-200`}
-            style={{
-              // Clamped like the slider's value: a document's durationSeconds
-              // can be shorter than the real file, and the bar must not
-              // overflow its track while the last seconds play.
-              width: sliderMax ? `${(Math.min(currentTime, sliderMax) / sliderMax) * 100}%` : '0%',
-            }}
-            data-testid="episode-progress"
-            aria-hidden="true"
-          />
-          <input
-            type="range"
-            aria-label="Seek"
-            min="0"
-            max={sliderMax}
-            step="1"
-            value={Math.min(currentTime, sliderMax)}
-            onChange={handleSeek}
-            disabled={!mediaUrl || !sliderMax}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default"
-          />
-        </div>
+        <SeekTrack
+          meta={meta}
+          currentTime={currentTime}
+          sliderMax={sliderMax}
+          mediaUrl={mediaUrl}
+          onSeek={handleSeek}
+        />
         <div className="flex justify-between text-xs text-foreground mb-5">
           <span>{formatSeconds(currentTime)}</span>
           <span>{formatSeconds(known)}</span>

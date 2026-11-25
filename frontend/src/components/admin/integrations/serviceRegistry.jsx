@@ -1123,12 +1123,13 @@ export const SERVICES = Object.freeze([
     keyGroups: [
       { title: 'MCP connection (tools for the AI Engine’s assistant)', panel: 'hostingerMcp' },
     ],
+    // What it costs first: the connection is free, the host it reaches is not.
+    cost: 'Nothing for the connection. The lab host itself is rented from Hostinger.',
+    costOnLedger: true,
     capabilities: ['Let the AI Engine’s assistant use Hostinger’s tools'],
     usedIn: ['AI Engine (MCP Servers)'],
     dataDirection:
       'Outbound: the assistant’s tool calls go to Hostinger; the answers come back to the AI Engine.',
-    cost: 'Nothing for the connection. The lab host itself is rented from Hostinger.',
-    costOnLedger: true,
     securityNote:
       'A sign-in the AI Engine makes and renews, kept in the site’s database and never sent to a browser. Only a super admin can connect it.',
   },

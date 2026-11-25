@@ -31,18 +31,17 @@ const SHAPE_ERROR = 'The cost answer was not in the expected shape.';
  * @param {{ refresh?: boolean }} [options]
  * @returns {Promise<object>} the snapshot, as the contract describes it
  */
+// The snapshot has every section the page draws: `ok`, the four objects and
+// the two lists.
+const isCostSummary = (body) =>
+  Boolean(body) &&
+  body.ok === true &&
+  ['period', 'azure', 'ai', 'services'].every((key) => body[key]) &&
+  ['signals', 'sources'].every((key) => Array.isArray(body[key]));
+
 export async function fetchCostSummary({ refresh = false } = {}) {
   const body = await getJSON(refresh ? `${COST_SUMMARY_ROUTE}?refresh=1` : COST_SUMMARY_ROUTE);
-  if (
-    !body ||
-    body.ok !== true ||
-    !body.period ||
-    !body.azure ||
-    !body.ai ||
-    !body.services ||
-    !Array.isArray(body.signals) ||
-    !Array.isArray(body.sources)
-  ) {
+  if (!isCostSummary(body)) {
     throw new Error(SHAPE_ERROR);
   }
   return withEmptyFigures(body);
@@ -208,26 +207,16 @@ export const CATEGORIES = Object.freeze([
 ]);
 
 /** Each billing cycle, with what it means in plain words. */
-export const CYCLES = Object.freeze([
-  { id: 'monthly', label: 'Monthly', help: 'Billed every month.' },
-  { id: 'annual', label: 'Yearly', help: 'Billed once a year; shown as a twelfth per month.' },
-  {
-    id: 'quarterly',
-    label: 'Every 3 months',
-    help: 'Billed four times a year; shown as a third per month.',
-  },
-  {
-    id: 'usage',
-    label: 'Pay as you go',
-    help: 'Billed on use; the amount is your monthly estimate.',
-  },
-  {
-    id: 'free',
-    label: 'Free',
-    help: 'Costs nothing; listed so the renewal date is not forgotten.',
-  },
-  { id: 'one-off', label: 'One-off', help: 'Paid once; not counted in the monthly total.' },
-]);
+export const CYCLES = Object.freeze(
+  [
+    ['monthly', 'Monthly', 'Billed every month.'],
+    ['annual', 'Yearly', 'Billed once a year; shown as a twelfth per month.'],
+    ['quarterly', 'Every 3 months', 'Billed four times a year; shown as a third per month.'],
+    ['usage', 'Pay as you go', 'Billed on use; the amount is your monthly estimate.'],
+    ['free', 'Free', 'Costs nothing; listed so the renewal date is not forgotten.'],
+    ['one-off', 'One-off', 'Paid once; not counted in the monthly total.'],
+  ].map(([id, label, help]) => ({ id, label, help }))
+);
 
 /** Each status, with the tone StatusBadge paints it. */
 export const STATUSES = Object.freeze([

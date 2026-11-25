@@ -17,16 +17,12 @@ export function graphModel(nodes, edges, kinds) {
   const authoredPairs = new Set(
     edges.filter((e) => e.kind !== 'suggested').map((e) => pairKey(e.from, e.to))
   );
+  // An edge between two different nodes on the map, of a kind being shown.
+  const drawable = (edge) =>
+    byId.has(edge.from) && byId.has(edge.to) && edge.from !== edge.to && kinds.includes(edge.kind);
   const links = edges.filter((edge) => {
     const key = `${pairKey(edge.from, edge.to)}/${edge.kind}`;
-    if (
-      !byId.has(edge.from) ||
-      !byId.has(edge.to) ||
-      edge.from === edge.to ||
-      !kinds.includes(edge.kind) ||
-      seen.has(key)
-    )
-      return false;
+    if (!drawable(edge) || seen.has(key)) return false;
     if (edge.kind === 'suggested' && authoredPairs.has(pairKey(edge.from, edge.to))) return false;
     seen.add(key);
     return true;

@@ -7,7 +7,6 @@ import { describe, it, expect } from 'vitest';
 import {
   APPLY_STATUSES,
   addDays,
-  allOverlaps,
   applyStatusInfo,
   attendanceCost,
   callCloseInfo,
@@ -16,7 +15,6 @@ import {
   daysBetween,
   eventRange,
   filterEvents,
-  firstMonth,
   formatDay,
   formatRange,
   isDay,
@@ -24,17 +22,21 @@ import {
   isPlanned,
   knownEvents,
   locationLine,
-  marksForMonth,
-  monthGrid,
   noteForm,
   notePayload,
-  overlapsFor,
   ownTalks,
   parseCost,
   rangesOverlap,
-  shiftMonth,
   todayDay,
 } from './applyModel';
+import {
+  allOverlaps,
+  firstMonth,
+  marksForMonth,
+  monthGrid,
+  overlapsFor,
+  shiftMonth,
+} from './applyCalendarModel';
 
 const NOW = new Date(2026, 10, 24, 15); // 24 Nov 2026, local
 const event = (over = {}) => ({

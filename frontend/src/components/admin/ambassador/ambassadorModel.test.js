@@ -4,6 +4,7 @@
  * records, and the export carries the application with its evidence.
  */
 import { describe, it, expect } from 'vitest';
+import { programForm, programPayload } from './programFormModel';
 import {
   AMBASSADOR_STATUS,
   APPLICATION_STATUSES,
@@ -13,8 +14,6 @@ import {
   evidenceCountsToward,
   evidenceRelevant,
   expiringEvidence,
-  programForm,
-  programPayload,
   upkeepProgress,
   readinessPeriodFor,
   upkeepWindow,

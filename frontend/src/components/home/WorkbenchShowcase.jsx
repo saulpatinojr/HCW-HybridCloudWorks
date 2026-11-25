@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { ArrowRight, Terminal, Layers, ShieldCheck, Cpu, DollarSign } from 'lucide-react';
 import { routes } from '@/lib/routeFactory';
+import LabTerminalTranscript from '@/components/labs/LabTerminalTranscript';
 
 /**
  * Flagship Interactive Workbench Showcase (Audit P1-2).
@@ -191,23 +192,11 @@ export default function WorkbenchShowcase() {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-1 text-xs text-slate-300 leading-relaxed">
-                <div>
-                  <span className="text-emerald-400">$ </span>
-                  <span className="text-slate-100">terraform init &amp;&amp; tflint --module</span>
-                </div>
-                <div className="text-slate-300 text-xs pl-3">
-                  ✓ Initialized providers: azurerm, aws, google
-                  <br />✓ Linting complete: 0 issues found (AVM policy passed)
-                </div>
-                <div>
-                  <span className="text-emerald-400">$ </span>
-                  <span className="text-slate-100">ansible-playbook --syntax-check site.yml</span>
-                </div>
-                <div className="text-emerald-400 text-xs pl-3">
-                  playbook: site.yml [PASS - syntax verified]
-                </div>
-              </div>
+              <LabTerminalTranscript
+                className="flex flex-col gap-1 text-xs text-slate-300 leading-relaxed"
+                noteClassName="text-slate-300 text-xs pl-3"
+                passClassName="text-emerald-400 text-xs pl-3"
+              />
             </div>
 
             {/* Feature Pills */}

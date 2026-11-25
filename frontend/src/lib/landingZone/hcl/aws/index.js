@@ -1,4 +1,4 @@
-import { isSelected, normalizeState } from '../../state';
+import { emitCloudPack } from '../cloudPack';
 import { identityTf } from './identity';
 import { loggingTf } from './logging';
 import { networkFirewallTf } from './networkFirewall';
@@ -11,6 +11,16 @@ import { terraformTf } from './terraform';
 import { transitGatewayTf } from './transitGateway';
 import { tfvarsExample, variablesTf } from './variables';
 
+// Each component the builder offers, and the file it adds, in emit order.
+const COMPONENT_FILES = [
+  ['management-groups', organizationsTf],
+  ['policy', scpTf],
+  ['management', loggingTf],
+  ['connectivity-hub', transitGatewayTf],
+  ['firewall', networkFirewallTf],
+  ['identity', identityTf],
+];
+
 /**
  * Emit the AWS landing-zone pack for one builder state: `terraform.tf` and
  * `providers.tf` always, one file per selected component, then variables,
@@ -21,34 +31,13 @@ import { tfvarsExample, variablesTf } from './variables';
  * @returns {Array<{ path: string, content: string }>} the files, in emit order
  */
 export function emitAwsFiles(state) {
-  const normalized = normalizeState(state);
-  if (!normalized.selected.length) return [readmeMd(normalized, [])];
-
-  const files = [terraformTf(), providersTf()];
-
-  if (isSelected(normalized, 'management-groups')) {
-    files.push(organizationsTf());
-  }
-  if (isSelected(normalized, 'policy')) {
-    files.push(scpTf());
-  }
-  if (isSelected(normalized, 'management')) {
-    files.push(loggingTf());
-  }
-  if (isSelected(normalized, 'connectivity-hub')) {
-    files.push(transitGatewayTf());
-  }
-  if (isSelected(normalized, 'firewall')) {
-    files.push(networkFirewallTf());
-  }
-  if (isSelected(normalized, 'identity')) {
-    files.push(identityTf());
-  }
-  if (isSelected(normalized, 'corp') || isSelected(normalized, 'online')) {
-    files.push(spokesTf(normalized));
-  }
-
-  files.push(variablesTf(), tfvarsExample(normalized));
-  files.push(readmeMd(normalized, files));
-  return files;
+  return emitCloudPack(state, {
+    terraform: terraformTf,
+    providers: providersTf,
+    components: COMPONENT_FILES,
+    workloads: spokesTf,
+    variables: variablesTf,
+    tfvars: tfvarsExample,
+    readme: readmeMd,
+  });
 }

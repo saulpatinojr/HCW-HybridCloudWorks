@@ -5,8 +5,18 @@
  * second reading of the numbers the bars in ScenarioResults.jsx draw.
  */
 import React from 'react';
+import ColumnHeads from '@/pages/shared/ColumnHeads';
 import { formatPrice, providerLabel } from '@/lib/cloudPricing';
 import { formatCost, formatQuantity, serviceMeta } from '@/lib/pricingScenarios';
+
+/** The columns of the breakdown table. */
+const BREAKDOWN_COLUMNS = [
+  ['Item', 'p-2'],
+  ['Line', 'p-2'],
+  ['Quantity', 'p-2 text-right'],
+  ['Unit price', 'p-2 text-right'],
+  ['Cost / month', 'p-2 text-right'],
+];
 
 function LineRow({ provider, item, line }) {
   const unit = serviceMeta(line.serviceId).shortUnit;
@@ -76,25 +86,10 @@ export function ScenarioBreakdown({ providers, id }) {
           Every line of the scenario, per provider: the quantity and factor, the unit price it was
           multiplied by, and the product.
         </caption>
-        <thead>
-          <tr className="text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400">
-            <th scope="col" className="p-2">
-              Item
-            </th>
-            <th scope="col" className="p-2">
-              Line
-            </th>
-            <th scope="col" className="p-2 text-right">
-              Quantity
-            </th>
-            <th scope="col" className="p-2 text-right">
-              Unit price
-            </th>
-            <th scope="col" className="p-2 text-right">
-              Cost / month
-            </th>
-          </tr>
-        </thead>
+        <ColumnHeads
+          className="text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400"
+          columns={BREAKDOWN_COLUMNS}
+        />
         {providers.map((p) => (
           <ProviderGroup key={p.provider} p={p} />
         ))}

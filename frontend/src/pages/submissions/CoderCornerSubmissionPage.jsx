@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Loader2, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
+import {
+  SubmitRow,
+  SubmittedCard,
+  TextAreaField,
+  TextField,
+  TitleProviderRow,
+} from './SubmissionFields';
 
 const PROVIDER_OPTIONS = ['Github', 'Terraform', 'Docker'];
 
@@ -27,6 +31,8 @@ export default function CoderCornerSubmissionPage() {
   const [error, setError] = useState('');
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -93,16 +99,9 @@ export default function CoderCornerSubmissionPage() {
       </div>
 
       {submitted ? (
-        <Card className="border-green-500/30 bg-card/40">
-          <CardContent className="pt-8 pb-8 text-center space-y-3">
-            <CheckCircle className="h-12 w-12 text-green-500 mx-auto" />
-            <h2 className="text-xl font-semibold">Coder Corner entry submitted</h2>
-            <p className="text-muted-foreground text-sm">
-              The entry is now in review and can be edited before publication.
-            </p>
-            <Button onClick={() => setSubmitted(false)}>Submit another</Button>
-          </CardContent>
-        </Card>
+        <SubmittedCard title="Coder Corner entry submitted" onAnother={() => setSubmitted(false)}>
+          The entry is now in review and can be edited before publication.
+        </SubmittedCard>
       ) : (
         <Card className="bg-card/40">
           <CardHeader>
@@ -113,93 +112,54 @@ export default function CoderCornerSubmissionPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium">Title</p>
-                  <Input
-                    value={form.title}
-                    onChange={(event) => handleChange('title', event.target.value)}
-                    placeholder="Terraform module validation pipeline"
-                    required
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Provider</p>
-                  <select
-                    className="w-full mt-2 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={form.provider}
-                    onChange={(event) => handleChange('provider', event.target.value)}
-                  >
-                    {PROVIDER_OPTIONS.map((provider) => (
-                      <option key={provider} value={provider}>
-                        {provider}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <TitleProviderRow
+                form={form}
+                onChange={handleChange}
+                titlePlaceholder="Terraform module validation pipeline"
+                providerLabel="Provider"
+                providers={PROVIDER_OPTIONS}
+              />
 
-              <div>
-                <p className="text-sm font-medium">Summary</p>
-                <Textarea
-                  value={form.summary}
-                  onChange={(event) => handleChange('summary', event.target.value)}
-                  placeholder="What problem this snippet solves"
-                  rows={3}
-                />
-              </div>
+              <TextAreaField
+                {...field}
+                name="summary"
+                label="Summary"
+                placeholder="What problem this snippet solves"
+                rows={3}
+              />
 
               <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium">Language / Stack</p>
-                  <Input
-                    value={form.language}
-                    onChange={(event) => handleChange('language', event.target.value)}
-                    placeholder="HCL, YAML, Bash"
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Repository URL (optional)</p>
-                  <Input
-                    value={form.repoUrl}
-                    onChange={(event) => handleChange('repoUrl', event.target.value)}
-                    placeholder="https://github.com/org/repo"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium">Implementation Notes</p>
-                <Textarea
-                  value={form.explanation}
-                  onChange={(event) => handleChange('explanation', event.target.value)}
-                  placeholder="Explain approach, pitfalls, and expected outcomes"
-                  rows={5}
+                <TextField
+                  {...field}
+                  name="language"
+                  label="Language / Stack"
+                  placeholder="HCL, YAML, Bash"
+                />
+                <TextField
+                  {...field}
+                  name="repoUrl"
+                  label="Repository URL (optional)"
+                  placeholder="https://github.com/org/repo"
                 />
               </div>
 
-              <div>
-                <p className="text-sm font-medium">Code Snippet</p>
-                <Textarea
-                  value={form.codeSnippet}
-                  onChange={(event) => handleChange('codeSnippet', event.target.value)}
-                  placeholder="Paste sample code"
-                  rows={10}
-                />
-              </div>
+              <TextAreaField
+                {...field}
+                name="explanation"
+                label="Implementation Notes"
+                placeholder="Explain approach, pitfalls, and expected outcomes"
+                rows={5}
+              />
 
-              {error && <p className="text-sm text-destructive">{error}</p>}
+              <TextAreaField
+                {...field}
+                name="codeSnippet"
+                label="Code Snippet"
+                placeholder="Paste sample code"
+                rows={10}
+              />
 
-              <Button type="submit" disabled={submitting} className="w-full md:w-auto">
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit Coder Corner entry'
-                )}
-              </Button>
+              <SubmitRow error={error} submitting={submitting} label="Submit Coder Corner entry" />
             </form>
           </CardContent>
         </Card>

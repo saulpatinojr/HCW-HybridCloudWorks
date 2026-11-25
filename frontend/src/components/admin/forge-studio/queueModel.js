@@ -4,6 +4,7 @@
  * several at once (a field is shown when every selected entry agrees), the
  * payload a save sends, and the words an entry's status gets.
  */
+import { statusTable } from '@/lib/status';
 import { EMPTY_BRIEF, splitList } from './brief';
 
 /** The brief fields a queue entry carries, in the order the editor shows them. */
@@ -32,31 +33,11 @@ const LIST_FIELDS = new Set([
   'seoKeywords',
 ]);
 
-export const QUEUE_STATUS = Object.freeze({
-  queued: {
-    id: 'queued',
-    label: 'Queued',
-    tone: 'muted',
-    help: 'Waiting for its fields and a Save.',
-  },
-  forging: {
-    id: 'forging',
-    label: 'Forging',
-    tone: 'warn',
-    help: 'The forge job is scraping and writing. A few minutes.',
-  },
-  forged: {
-    id: 'forged',
-    label: 'Forged',
-    tone: 'ok',
-    help: 'The draft is written; open it from here.',
-  },
-  failed: {
-    id: 'failed',
-    label: 'Failed',
-    tone: 'error',
-    help: 'The job reported an error; Save again re-queues it.',
-  },
+export const QUEUE_STATUS = statusTable({
+  queued: ['Queued', 'muted', 'Waiting for its fields and a Save.'],
+  forging: ['Forging', 'warn', 'The forge job is scraping and writing. A few minutes.'],
+  forged: ['Forged', 'ok', 'The draft is written; open it from here.'],
+  failed: ['Failed', 'error', 'The job reported an error; Save again re-queues it.'],
 });
 
 export const statusOf = (entry) => QUEUE_STATUS[entry?.status] || QUEUE_STATUS.queued;

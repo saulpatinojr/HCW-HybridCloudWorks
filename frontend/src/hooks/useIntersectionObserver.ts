@@ -74,6 +74,37 @@ export interface UseIntersectionObserverOptions extends IntersectionObserverInit
   onHidden?: () => void;
 }
 
+interface IntersectionHandlerParts {
+  once: boolean;
+  onVisible?: () => void;
+  onHidden?: () => void;
+  setIsVisible: (value: boolean) => void;
+  setHasBeenVisible: (value: boolean) => void;
+  stopWatching: () => void;
+}
+
+/** What happens when one watched element enters or leaves the viewport. */
+const intersectionHandler =
+  ({
+    once,
+    onVisible,
+    onHidden,
+    setIsVisible,
+    setHasBeenVisible,
+    stopWatching,
+  }: IntersectionHandlerParts) =>
+  (entry: IntersectionObserverEntry) => {
+    if (!entry.isIntersecting) {
+      setIsVisible(false);
+      if (onHidden) onHidden();
+      return;
+    }
+    setIsVisible(true);
+    setHasBeenVisible(true);
+    if (onVisible) onVisible();
+    if (once) stopWatching();
+  };
+
 export function useIntersectionObserver(options: UseIntersectionObserverOptions = {}) {
   const ref = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -101,24 +132,18 @@ export function useIntersectionObserver(options: UseIntersectionObserverOptions 
     const { observer, callbacks, isShared } = getObserver(memoizedOptions);
 
     // Define what happens when THIS specific element intersects
-    const handleIntersection = (entry: IntersectionObserverEntry) => {
-      const { isIntersecting } = entry;
-
-      if (isIntersecting) {
-        setIsVisible(true);
-        setHasBeenVisible(true);
-        if (onVisible) onVisible();
-
-        if (once) {
-          // Stop observing this element, but keep the shared observer alive
-          callbacks.delete(element);
-          observer.unobserve(element);
-        }
-      } else {
-        setIsVisible(false);
-        if (onHidden) onHidden();
-      }
-    };
+    const handleIntersection = intersectionHandler({
+      once,
+      onVisible,
+      onHidden,
+      setIsVisible,
+      setHasBeenVisible,
+      // Stop observing this element, but keep the shared observer alive
+      stopWatching: () => {
+        callbacks.delete(element);
+        observer.unobserve(element);
+      },
+    });
 
     // Register this element with the observer
     callbacks.set(element, handleIntersection);

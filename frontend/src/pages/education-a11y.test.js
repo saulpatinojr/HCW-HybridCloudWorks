@@ -49,7 +49,14 @@ const HUBS = [
  * source that holds the markup, so for these hubs they read this file.
  */
 const SHARED_CAROUSEL = 'components/education/CertificationCarouselSection.jsx';
+/** The Azure hub's sections live beside it, in their own module (Qlty smells cleanup). */
+const AZURE_SECTIONS = 'pages/azure/education/AzureEducationSections.jsx';
+// The AWS, Azure and FinOps hubs lay out their own carousels but render the
+// pagination controls from the shared component (Qlty smells cleanup, round 2).
 const CAROUSEL_SOURCE = {
+  'pages/aws/EducationPage.jsx': SHARED_CAROUSEL,
+  'pages/azure/EducationPage.jsx': SHARED_CAROUSEL,
+  'pages/finops/EducationPage.jsx': SHARED_CAROUSEL,
   'pages/gcp/EducationPage.jsx': SHARED_CAROUSEL,
   'pages/github/EducationPage.jsx': SHARED_CAROUSEL,
   'pages/terraform/EducationPage.jsx': SHARED_CAROUSEL,
@@ -59,9 +66,15 @@ const CAROUSEL_SOURCE = {
 const EDUCATION_FILES = [
   ...HUBS,
   SHARED_CAROUSEL,
+  AZURE_SECTIONS,
+  'pages/azure/education/azureTimeline.jsx',
+  'pages/shared/education/EducationSections.jsx',
   'pages/aws/education/CertDetailPage.jsx',
   'pages/azure/education/CertDetailPage.jsx',
   'pages/aws/education/MicrocredentialDetailPage.jsx',
+  // The parts the detail pages and the AWS and Azure hubs share.
+  'components/education/CertDetailParts.jsx',
+  'components/education/FeaturedTopicList.jsx',
   'components/education/CertStatusBadge.jsx',
   // Rendered inside the Azure and AWS detail pages, and missed by the first
   // sweep: its heading was the one bare `text-white` left on those routes.

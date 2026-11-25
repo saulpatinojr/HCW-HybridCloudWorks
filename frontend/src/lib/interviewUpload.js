@@ -43,233 +43,39 @@
  * because the server checks its extension.
  */
 import { getJSON, postJSON, putBytes } from '@/lib/api';
-import { Sha256 } from '@/lib/sha256';
+import {
+  MAX_AUDIO_SECONDS,
+  UploadError,
+  audioFileProblem,
+  audioTypeOf,
+  durationProblem,
+} from './interviewAudioFile';
+import { BLOCK_SIZE, blockRange, hashFile, readSlice } from './interviewUploadBlocks';
 
-/** Bytes per block; the server's BLOCK_SIZE. */
-export const BLOCK_SIZE = 4 * 1024 * 1024;
-/** The server's MAX_AUDIO_BYTES. */
-export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
-/** The server's MAX_AUDIO_SECONDS: Gemini's 9.5 hours per prompt. */
-export const MAX_AUDIO_SECONDS = 34_200;
+// The file checks and the block hashing live in two sibling files. Their
+// public parts are re-exported here, so callers keep one import path.
+export {
+  MAX_AUDIO_BYTES,
+  MAX_AUDIO_SECONDS,
+  AUDIO_TYPES,
+  AUDIO_TYPE_ALIASES,
+  canonicalAudioType,
+  extensionOf,
+  audioTypeOf,
+  UploadError,
+  audioFileProblem,
+  durationProblem,
+  formatDuration,
+  readAudioDuration,
+} from './interviewAudioFile';
+export { BLOCK_SIZE, blockRange, hashFile } from './interviewUploadBlocks';
+
 /** Blocks in flight at once. */
 export const PARALLEL_BLOCKS = 3;
 /** The upload id the server mints: a v4-shaped UUID (upload.js UPLOAD_ID_PATTERN). */
 const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Attempts per block, the first included. */
 export const BLOCK_ATTEMPTS = 3;
-
-/**
- * The three canonical types and their extensions, and the alias spellings
- * that fold to them. Copied from functions/src/lib/interviews/storage.js;
- * interviewUpload.test.js reads that file and fails if the two drift.
- */
-export const AUDIO_TYPES = Object.freeze({
-  'audio/mpeg': 'mp3',
-  'audio/mp4': 'm4a',
-  'audio/wav': 'wav',
-});
-
-export const AUDIO_TYPE_ALIASES = Object.freeze({
-  'audio/mp3': 'audio/mpeg',
-  'audio/x-mp3': 'audio/mpeg',
-  'audio/mpeg3': 'audio/mpeg',
-  'audio/x-m4a': 'audio/mp4',
-  'audio/m4a': 'audio/mp4',
-  'audio/x-wav': 'audio/wav',
-  'audio/wave': 'audio/wav',
-  'audio/vnd.wave': 'audio/wav',
-});
-
-/** The canonical type for a declared one, or null when it is not one of the three. */
-export function canonicalAudioType(contentType) {
-  const base = String(contentType || '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase();
-  const type = AUDIO_TYPE_ALIASES[base] || base;
-  return Object.hasOwn(AUDIO_TYPES, type) ? type : null;
-}
-
-/** A file name's extension, lower case, or ''. */
-export function extensionOf(fileName) {
-  const segment = String(fileName || '')
-    .split(/[\\/]/)
-    .pop();
-  const dot = segment.lastIndexOf('.');
-  if (dot <= 0 || dot === segment.length - 1) return '';
-  return segment.slice(dot + 1).toLowerCase();
-}
-
-/**
- * The type the upload declares for a file: its own type when the browser
- * gave one, or the type its extension names when the browser gave none (some
- * systems leave `.m4a` untyped).
- *
- * @param {{ name?: string, type?: string }} file
- * @returns {string | null}
- */
-export function audioTypeOf(file) {
-  const declared = canonicalAudioType(file?.type);
-  if (declared) return declared;
-  if (file?.type) return null;
-  const ext = extensionOf(file?.name);
-  const byExtension = Object.entries(AUDIO_TYPES).find(([, value]) => value === ext);
-  return byExtension ? byExtension[0] : null;
-}
-
-/** An error with a code the page can key on, and a sentence it can show. */
-export class UploadError extends Error {
-  constructor(message, code, extra = {}) {
-    super(message);
-    this.name = 'UploadError';
-    this.code = code;
-    Object.assign(this, extra);
-  }
-}
-
-/**
- * Why this file cannot be uploaded, or '' when it can. Size, type and
- * extension; the length is checked separately once it is read.
- *
- * @param {{ name?: string, type?: string, size?: number } | null | undefined} file
- * @returns {string}
- */
-export function audioFileProblem(file) {
-  if (!file) return 'Choose a recording.';
-  const type = audioTypeOf(file);
-  if (!type) return 'Choose an MP3, M4A or WAV recording.';
-  if (extensionOf(file.name) !== AUDIO_TYPES[type]) {
-    return `The file name should end in .${AUDIO_TYPES[type]} for this kind of recording. Rename it and choose it again.`;
-  }
-  const size = Number(file.size);
-  if (!Number.isInteger(size) || size < 1) return 'The recording is empty.';
-  if (size > MAX_AUDIO_BYTES) return 'Recordings must be 500 MB or smaller.';
-  return '';
-}
-
-/**
- * Why a recording of this length cannot be uploaded, or '' when it can.
- *
- * @param {number | null | undefined} seconds
- * @returns {string}
- */
-export function durationProblem(seconds) {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
-    return 'The length of this recording could not be read. Save it again as MP3, M4A or WAV and choose it again.';
-  }
-  if (seconds > MAX_AUDIO_SECONDS) {
-    return `This recording is ${formatDuration(seconds)} long; the most one transcription can take is 9 hours 30 minutes. Split it and add each part as its own interview.`;
-  }
-  return '';
-}
-
-/** `1 h 05 min`, `12 min 30 s` or `45 s`, for the form. */
-export function formatDuration(seconds) {
-  const total = Math.max(0, Math.round(Number(seconds) || 0));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h} h ${String(m).padStart(2, '0')} min`;
-  if (m > 0) return `${m} min ${String(s).padStart(2, '0')} s`;
-  return `${s} s`;
-}
-
-/**
- * The recording's length in seconds, as the browser reads it from the file's
- * headers through an `<audio>` element. Rejects with `DURATION_UNREADABLE`
- * when the browser cannot read it within the timeout or reports a length that
- * is not a positive finite number.
- *
- * @param {Blob} file
- * @param {{ createAudio?: () => HTMLAudioElement, timeoutMs?: number }} [deps]
- * @returns {Promise<number>}
- */
-export function readAudioDuration(
-  file,
-  { createAudio = () => document.createElement('audio'), timeoutMs = 20000 } = {}
-) {
-  return new Promise((resolve, reject) => {
-    let url = '';
-    let timer = null;
-    const audio = createAudio();
-    const finish = (error, seconds) => {
-      clearTimeout(timer);
-      audio.onloadedmetadata = null;
-      audio.onerror = null;
-      try {
-        audio.removeAttribute?.('src');
-        if (url) URL.revokeObjectURL(url);
-      } catch {
-        // releasing the object URL is housekeeping, never a reason to fail
-      }
-      if (error) reject(error);
-      else resolve(seconds);
-    };
-    const unreadable = () => finish(new UploadError(durationProblem(null), 'DURATION_UNREADABLE'));
-    timer = setTimeout(unreadable, timeoutMs);
-    audio.preload = 'metadata';
-    audio.onloadedmetadata = () => {
-      const seconds = Number(audio.duration);
-      if (Number.isFinite(seconds) && seconds > 0) finish(null, seconds);
-      else unreadable();
-    };
-    audio.onerror = unreadable;
-    try {
-      url = URL.createObjectURL(file);
-      audio.src = url;
-    } catch {
-      unreadable();
-    }
-  });
-}
-
-/** The byte range of block `index`. */
-export function blockRange(size, index, blockSize = BLOCK_SIZE) {
-  const start = index * blockSize;
-  return [start, Math.min(size, start + blockSize)];
-}
-
-/** A slice's bytes. `Blob.arrayBuffer` where it exists, a FileReader where it does not. */
-function readSlice(blob) {
-  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('The file could not be read.'));
-    reader.readAsArrayBuffer(blob);
-  });
-}
-
-/**
- * The file's SHA-256 as hex, read one 4 MiB slice at a time. Rejects with
- * `HASH_FAILED` when a slice cannot be read; never resolves to ''.
- *
- * @param {Blob} file
- * @param {{ onProgress?: (done: number, total: number) => void, signal?: AbortSignal, blockSize?: number }} [options]
- * @returns {Promise<string>}
- */
-export async function hashFile(file, { onProgress, signal, blockSize = BLOCK_SIZE } = {}) {
-  const digest = new Sha256();
-  const size = Number(file?.size) || 0;
-  const count = Math.max(1, Math.ceil(size / blockSize));
-  try {
-    for (let index = 0; index < count; index += 1) {
-      if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
-      const [start, end] = blockRange(size, index, blockSize);
-      digest.update(new Uint8Array(await readSlice(file.slice(start, end))));
-      onProgress?.(end, size);
-    }
-    const hex = digest.hex();
-    if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('bad digest');
-    return hex;
-  } catch (error) {
-    if (error instanceof UploadError) throw error;
-    throw new UploadError(
-      'The recording could not be read to check it. Choose the file again and retry.',
-      'HASH_FAILED'
-    );
-  }
-}
 
 /** Whether a failed block is worth sending again: the network, a 5xx, or 429. */
 export function isRetryable(error) {
@@ -321,103 +127,7 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
     stopped: null,
   };
   const report = (phase, done, total) => onProgress?.({ phase, done, total });
-
-  async function sendBlock(index, signal) {
-    const [start, end] = blockRange(file.size, index, state.session.blockSize);
-    for (let attempt = 1; ; attempt += 1) {
-      if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
-      try {
-        const body = await readSlice(file.slice(start, end));
-        // Checked again after the read: Stop pressed while a slice was being
-        // read must not let that block go.
-        if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
-        await put(`cms/interviews/uploads/${state.session.uploadId}/blocks/${index}`, body, {
-          signal,
-        });
-        return;
-      } catch (error) {
-        if (attempt >= BLOCK_ATTEMPTS || !isRetryable(error)) throw error;
-        await wait(1000 * attempt);
-      }
-    }
-  }
-
-  async function sendMissingBlocks(signal) {
-    const { blockCount } = state.session;
-    const queue = [];
-    for (let i = 0; i < blockCount; i += 1) if (!state.acknowledged.has(i)) queue.push(i);
-    let failure = null;
-    const doneBytes = () =>
-      [...state.acknowledged].reduce((sum, i) => {
-        const [s, e] = blockRange(file.size, i, state.session.blockSize);
-        return sum + (e - s);
-      }, 0);
-    report('uploading', doneBytes(), file.size);
-    const worker = async () => {
-      while (queue.length > 0 && !failure) {
-        const index = queue.shift();
-        try {
-          await sendBlock(index, signal);
-          state.acknowledged.add(index);
-          report('uploading', doneBytes(), file.size);
-        } catch (error) {
-          failure = failure || error;
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(PARALLEL_BLOCKS, queue.length) }, worker));
-    if (failure) throw failure;
-  }
-
-  /** Open the session, and check the plan the server answers with. */
-  async function openSession() {
-    const opened = await post('cms/interviews/uploads', {
-      interviewId,
-      fileName: file.name,
-      contentType: audioTypeOf(file),
-      bytes: file.size,
-      sha256: state.sha256,
-      durationSec,
-    });
-    const expected = Math.ceil(file.size / BLOCK_SIZE);
-    if (
-      typeof opened?.uploadId !== 'string' ||
-      !UPLOAD_ID_PATTERN.test(opened.uploadId) ||
-      opened.blockSize !== BLOCK_SIZE ||
-      opened.blockCount !== expected
-    ) {
-      throw new UploadError(
-        'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
-        'BAD_SESSION'
-      );
-    }
-    return {
-      uploadId: opened.uploadId,
-      blockSize: opened.blockSize,
-      blockCount: opened.blockCount,
-    };
-  }
-
-  /** Commit the blocks; the server checks the size and the hash. */
-  async function complete() {
-    try {
-      return await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
-    } catch (error) {
-      // A 422 at completion is a missing block, or a size or hash mismatch
-      // after which the server deleted the session's blob (and its staged
-      // blocks) but kept the session open. Either way the next run sends
-      // every block again on the same session.
-      if (error?.status === 422) state.acknowledged.clear();
-      // A 409 is either "already completed" (an earlier completion landed
-      // but its answer was lost, a timeout say) or "the interview changed,
-      // try again"; the server gives neither a code. The interview itself
-      // says which: if it points at this upload, the recording is stored.
-      if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') {
-        return completedEarlier(error);
-      }
-      throw error;
-    }
-  }
+  const upload = { interviewId, file, post, get, put, wait, state, report };
 
   return {
     state,
@@ -446,10 +156,10 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
             onProgress: (done, total) => report('hashing', done, total),
           });
         }
-        if (!state.session) state.session = await openSession();
-        await sendMissingBlocks(signal);
+        if (!state.session) state.session = await openSession(upload, durationSec);
+        await sendMissingBlocks(upload, signal);
         report('completing', file.size, file.size);
-        const answer = await complete();
+        const answer = await complete(upload);
         state.completed = answer;
         report('done', file.size, file.size);
         return answer;
@@ -460,14 +170,116 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
       }
     },
   };
+}
 
-  /** The completion an earlier attempt made, read back from the interview, or the 409 again. */
-  async function completedEarlier(conflict) {
-    const read = await get(`cms/interviews/${encodeURIComponent(interviewId)}`).catch(() => null);
-    const audio = read?.interview?.provenance?.audio;
-    if (audio && audio.uploadId === state.session.uploadId) {
-      return { ok: true, bytes: audio.bytes, sha256: audio.sha256, contentType: audio.contentType };
+// The steps of one upload. Each takes the upload's parts (`upload`): the file,
+// the interview, the request functions, `state` and `report`.
+
+async function sendBlock({ file, put, wait, state }, index, signal) {
+  const [start, end] = blockRange(file.size, index, state.session.blockSize);
+  for (let attempt = 1; ; attempt += 1) {
+    if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
+    try {
+      const body = await readSlice(file.slice(start, end));
+      // Checked again after the read: Stop pressed while a slice was being
+      // read must not let that block go.
+      if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
+      await put(`cms/interviews/uploads/${state.session.uploadId}/blocks/${index}`, body, {
+        signal,
+      });
+      return;
+    } catch (error) {
+      if (attempt >= BLOCK_ATTEMPTS || !isRetryable(error)) throw error;
+      await wait(1000 * attempt);
     }
-    throw conflict;
   }
+}
+
+async function sendMissingBlocks(upload, signal) {
+  const { file, state, report } = upload;
+  const { blockCount } = state.session;
+  const queue = [];
+  for (let i = 0; i < blockCount; i += 1) if (!state.acknowledged.has(i)) queue.push(i);
+  let failure = null;
+  const doneBytes = () =>
+    [...state.acknowledged].reduce((sum, i) => {
+      const [s, e] = blockRange(file.size, i, state.session.blockSize);
+      return sum + (e - s);
+    }, 0);
+  report('uploading', doneBytes(), file.size);
+  const worker = async () => {
+    while (queue.length > 0 && !failure) {
+      const index = queue.shift();
+      try {
+        await sendBlock(upload, index, signal);
+        state.acknowledged.add(index);
+        report('uploading', doneBytes(), file.size);
+      } catch (error) {
+        failure = failure || error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL_BLOCKS, queue.length) }, worker));
+  if (failure) throw failure;
+}
+
+/** Open the session, and check the plan the server answers with. */
+async function openSession({ interviewId, file, post, state }, durationSec) {
+  const opened = await post('cms/interviews/uploads', {
+    interviewId,
+    fileName: file.name,
+    contentType: audioTypeOf(file),
+    bytes: file.size,
+    sha256: state.sha256,
+    durationSec,
+  });
+  const expected = Math.ceil(file.size / BLOCK_SIZE);
+  if (
+    typeof opened?.uploadId !== 'string' ||
+    !UPLOAD_ID_PATTERN.test(opened.uploadId) ||
+    opened.blockSize !== BLOCK_SIZE ||
+    opened.blockCount !== expected
+  ) {
+    throw new UploadError(
+      'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
+      'BAD_SESSION'
+    );
+  }
+  return {
+    uploadId: opened.uploadId,
+    blockSize: opened.blockSize,
+    blockCount: opened.blockCount,
+  };
+}
+
+/** Commit the blocks; the server checks the size and the hash. */
+async function complete(upload) {
+  const { post, state } = upload;
+  try {
+    return await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
+  } catch (error) {
+    // A 422 at completion is a missing block, or a size or hash mismatch
+    // after which the server deleted the session's blob (and its staged
+    // blocks) but kept the session open. Either way the next run sends
+    // every block again on the same session.
+    if (error?.status === 422) state.acknowledged.clear();
+    // A 409 is either "already completed" (an earlier completion landed
+    // but its answer was lost, a timeout say) or "the interview changed,
+    // try again"; the server gives neither a code. The interview itself
+    // says which: if it points at this upload, the recording is stored.
+    if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') {
+      return completedEarlier(upload, error);
+    }
+    throw error;
+  }
+}
+
+/** The completion an earlier attempt made, read back from the interview, or the 409 again. */
+async function completedEarlier({ interviewId, get, state }, conflict) {
+  const read = await get(`cms/interviews/${encodeURIComponent(interviewId)}`).catch(() => null);
+  const audio = read?.interview?.provenance?.audio;
+  if (audio && audio.uploadId === state.session.uploadId) {
+    return { ok: true, bytes: audio.bytes, sha256: audio.sha256, contentType: audio.contentType };
+  }
+  throw conflict;
 }

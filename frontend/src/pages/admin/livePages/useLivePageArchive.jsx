@@ -148,24 +148,39 @@ export function useLivePageArchive() {
       } finally {
         undoing.current.delete(targetId);
       }
-      if (!result) {
+      if (result) {
+        handle.dismiss();
+        remember(liveUrlKey(item), false);
+        toast({ title: 'Back on the site', description: `${getTitle(item)} is live again.` });
+      } else {
         // Refused: the failure is shown under the list, and Undo is offered
         // again while the toast stays.
         handle.update({ action: undoAction({ pending: false, onClick: onUndo }) });
-        return;
       }
-      handle.dismiss();
-      remember(liveUrlKey(item), false);
-      toast({ title: 'Back on the site', description: `${getTitle(item)} is live again.` });
     },
     [remember, transitions]
   );
 
+  /** Marks the row archived and shows the "Archived" toast with its Undo. */
+  const offerUndo = useCallback(
+    (item, targetId) => {
+      remember(liveUrlKey(item), true);
+      /** This archive's Undo, which passes itself along so a refused Undo can be offered again. */
+      const onUndo = () => undo(item, targetId, handle, onUndo);
+      const handle = toast({
+        title: 'Archived',
+        description: `${getTitle(item)} is off the site and on the Archive board.`,
+        duration: UNDO_WINDOW_MS,
+        action: undoAction({ pending: false, onClick: onUndo }),
+      });
+    },
+    [remember, undo]
+  );
+
   const archiveLivePage = useCallback(
     async (item) => {
-      if (archiveBlockedReason(item)) return null;
       const targetId = archiveTargetId(item);
-      if (archiving.current.has(targetId)) return null;
+      if (archiveBlockedReason(item) || archiving.current.has(targetId)) return null;
       archiving.current.add(targetId);
       setArchivingId(item.id);
       let result;
@@ -180,19 +195,11 @@ export function useLivePageArchive() {
         archiving.current.delete(targetId);
         setArchivingId('');
       }
-      if (!result) return null;
-      remember(liveUrlKey(item), true);
-      /** This archive's Undo, which passes itself along so a refused Undo can be offered again. */
-      const onUndo = () => undo(item, targetId, handle, onUndo);
-      const handle = toast({
-        title: 'Archived',
-        description: `${getTitle(item)} is off the site and on the Archive board.`,
-        duration: UNDO_WINDOW_MS,
-        action: undoAction({ pending: false, onClick: onUndo }),
-      });
+      // A refused archive resolves null, which is what the caller is given.
+      if (result) offerUndo(item, targetId);
       return result;
     },
-    [remember, transitions, undo]
+    [offerUndo, transitions]
   );
 
   return {

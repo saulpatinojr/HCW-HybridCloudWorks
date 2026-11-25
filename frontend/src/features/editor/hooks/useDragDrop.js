@@ -1,5 +1,11 @@
 import { useRef, useReducer } from 'react';
 
+function stopEvent(e) {
+  e.stopPropagation();
+}
+
+function leaveEvent() {}
+
 /**
  * Unified drag-and-drop hook.
  * Uses refs for drag state so there's no re-render on every dragOver event —
@@ -16,13 +22,22 @@ export function useDragDrop(items, onReorder, { stopPropagation = false } = {}) 
   const dragOverIndexRef = useRef(-1);
   // A single counter used only to force a re-render when visible drag state changes.
   const [, forceUpdate] = useReducer((n) => n + 1, 0);
+  // Every handler calls this first; it stops the event only when asked to.
+  const maybeStop = stopPropagation ? stopEvent : leaveEvent;
+
+  // Forget the drag and re-render so no row stays highlighted.
+  function clearDrag() {
+    draggedIndexRef.current = -1;
+    dragOverIndexRef.current = -1;
+    forceUpdate();
+  }
 
   function dragHandlers(index) {
     return {
       draggable: true,
 
       onDragStart(e) {
-        if (stopPropagation) e.stopPropagation();
+        maybeStop(e);
         draggedIndexRef.current = index;
         dragOverIndexRef.current = index;
         e.dataTransfer.effectAllowed = 'move';
@@ -31,42 +46,32 @@ export function useDragDrop(items, onReorder, { stopPropagation = false } = {}) 
       },
 
       onDragOver(e) {
-        if (stopPropagation) e.stopPropagation();
+        maybeStop(e);
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         // No state update here — avoids re-render on every pixel of movement
       },
 
       onDragEnter(e) {
-        if (stopPropagation) e.stopPropagation();
+        maybeStop(e);
         e.preventDefault();
-        if (draggedIndexRef.current < 0) return;
-        if (dragOverIndexRef.current === index) return;
+        if (draggedIndexRef.current < 0 || dragOverIndexRef.current === index) return;
         dragOverIndexRef.current = index;
         forceUpdate(); // Only re-render when the drop target visually changes
       },
 
       onDrop(e) {
-        if (stopPropagation) e.stopPropagation();
+        maybeStop(e);
         e.preventDefault();
         const from = draggedIndexRef.current;
-        if (from < 0 || from === index) {
-          draggedIndexRef.current = -1;
-          dragOverIndexRef.current = -1;
-          forceUpdate();
-          return;
-        }
-        draggedIndexRef.current = -1;
-        dragOverIndexRef.current = -1;
-        forceUpdate();
-        onReorder(from, index);
+        clearDrag();
+        // A drop on the row it started from, or with no drag running, moves nothing.
+        if (from >= 0 && from !== index) onReorder(from, index);
       },
 
       onDragEnd(e) {
-        if (stopPropagation) e.stopPropagation();
-        draggedIndexRef.current = -1;
-        dragOverIndexRef.current = -1;
-        forceUpdate();
+        maybeStop(e);
+        clearDrag();
       },
     };
   }

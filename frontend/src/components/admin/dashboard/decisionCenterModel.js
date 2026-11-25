@@ -118,33 +118,39 @@ export const sourcesForTab = (sources, tab) =>
   tab === DEFAULT_DECISION_TAB ? sources : sources.filter((row) => row.category === tab);
 
 /** What an empty tab says, and where to go instead. */
-export const EMPTY_TEXT = Object.freeze({
-  all: {
-    title: 'Nothing is waiting on you',
-    description:
-      'Review items, staged content, approvals, open alerts, due reminders and deadlines will appear here.',
-  },
-  frameworks: {
-    title: 'No framework is waiting for review',
-    description: 'A framework sent for review appears here until it is approved or rejected.',
-  },
-  queues: {
-    title: 'The queues are clear',
-    description:
-      'New imports, feed items, drafts sent to review and Editor work needing action appear here.',
-  },
-  pipelines: {
-    title: 'No pipeline is waiting on you',
-    description:
-      'Forge-ready drafts, staged content, transcripts, chapters, newsletter issues and failed posts appear here.',
-  },
-  governance: {
-    title: 'No open alert or setting needs attention',
-    description:
-      'Open workflow alerts and app settings whose Key Vault reference does not resolve appear here.',
-  },
-  other: {
-    title: 'No other action is due',
-    description: 'Coder Corner reviews, due reminders and Ambassador deadlines appear here.',
-  },
-});
+export const EMPTY_TEXT = Object.freeze(
+  Object.fromEntries(
+    [
+      [
+        'all',
+        'Nothing is waiting on you',
+        'Review items, staged content, approvals, open alerts, due reminders and deadlines will appear here.',
+      ],
+      [
+        'frameworks',
+        'No framework is waiting for review',
+        'A framework sent for review appears here until it is approved or rejected.',
+      ],
+      [
+        'queues',
+        'The queues are clear',
+        'New imports, feed items, drafts sent to review and Editor work needing action appear here.',
+      ],
+      [
+        'pipelines',
+        'No pipeline is waiting on you',
+        'Forge-ready drafts, staged content, transcripts, chapters, newsletter issues and failed posts appear here.',
+      ],
+      [
+        'governance',
+        'No open alert or setting needs attention',
+        'Open workflow alerts and app settings whose Key Vault reference does not resolve appear here.',
+      ],
+      [
+        'other',
+        'No other action is due',
+        'Coder Corner reviews, due reminders and Ambassador deadlines appear here.',
+      ],
+    ].map(([tab, title, description]) => [tab, { title, description }])
+  )
+);

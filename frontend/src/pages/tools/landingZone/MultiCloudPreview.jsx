@@ -9,6 +9,7 @@ import {
 import { activePresetForState } from '@/lib/landingZone/presets';
 import { LzDiagram } from './LzDiagram';
 import { LzFiles } from './LzFiles';
+import { PresetBanner } from './PresetBanner';
 
 /**
  * Architecture Presets bar with active badge and direct blueprint links.
@@ -122,6 +123,32 @@ function FinopsCard({ finops, selectedCount }) {
 }
 
 /**
+ * One spoke count: a label, a number box from 0 to 5 bound to
+ * `state.options[optionKey]` (1 when unset), and a short description.
+ */
+function SpokeCountField({ id, label, optionKey, state, onSpokeCountChange, description }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="font-medium text-slate-700 dark:text-slate-300">
+        {label}
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          min="0"
+          max="5"
+          value={state.options?.[optionKey] ?? 1}
+          onChange={(e) => onSpokeCountChange(optionKey, e.target.value)}
+          className="w-20 rounded-md border border-slate-300 dark:border-slate-700 bg-background px-2.5 py-1 text-xs font-mono font-bold text-slate-900 dark:text-slate-100"
+        />
+        <span className="text-[11px] text-slate-500 dark:text-slate-400">{description}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Spoke capacity scaling and region knobs.
  */
 function SpokeKnobs({ state, cloudId, onSpokeCountChange }) {
@@ -136,44 +163,23 @@ function SpokeKnobs({ state, cloudId, onSpokeCountChange }) {
         Workload Spoke Capacity & Topology Knobs
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="lz-multi-corp" className="font-medium text-slate-700 dark:text-slate-300">
-            Private Corp Spokes (1..5):
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id="lz-multi-corp"
-              type="number"
-              min="0"
-              max="5"
-              value={state.options?.corpCount ?? 1}
-              onChange={(e) => onSpokeCountChange('corpCount', e.target.value)}
-              className="w-20 rounded-md border border-slate-300 dark:border-slate-700 bg-background px-2.5 py-1 text-xs font-mono font-bold text-slate-900 dark:text-slate-100"
-            />
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">{corpDesc}</span>
-          </div>
-        </div>
+        <SpokeCountField
+          id="lz-multi-corp"
+          label="Private Corp Spokes (1..5):"
+          optionKey="corpCount"
+          state={state}
+          onSpokeCountChange={onSpokeCountChange}
+          description={corpDesc}
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="lz-multi-online"
-            className="font-medium text-slate-700 dark:text-slate-300"
-          >
-            Public Online Spokes (1..5):
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id="lz-multi-online"
-              type="number"
-              min="0"
-              max="5"
-              value={state.options?.onlineCount ?? 1}
-              onChange={(e) => onSpokeCountChange('onlineCount', e.target.value)}
-              className="w-20 rounded-md border border-slate-300 dark:border-slate-700 bg-background px-2.5 py-1 text-xs font-mono font-bold text-slate-900 dark:text-slate-100"
-            />
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">{onlineDesc}</span>
-          </div>
-        </div>
+        <SpokeCountField
+          id="lz-multi-online"
+          label="Public Online Spokes (1..5):"
+          optionKey="onlineCount"
+          state={state}
+          onSpokeCountChange={onSpokeCountChange}
+          description={onlineDesc}
+        />
 
         <div className="flex flex-col gap-1.5">
           <label
@@ -343,26 +349,7 @@ export function MultiCloudPreview({
       </div>
 
       {/* Blueprint Context Banner when build matches a known preset */}
-      {activePreset && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-xs"
-          data-testid="lz-preset-banner"
-        >
-          <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200">
-            <span className="rounded bg-sky-600 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-white">
-              {activePreset.badge}
-            </span>
-            <span className="font-semibold">{activePreset.label}:</span>
-            <span className="text-slate-600 dark:text-slate-300">{activePreset.summary}</span>
-          </div>
-          <Link
-            to={activePreset.blueprintSlug}
-            className="font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-900 dark:text-sky-300 dark:hover:text-white"
-          >
-            {`Read Blueprint: ${activePreset.blueprintTitle} →`}
-          </Link>
-        </div>
-      )}
+      {activePreset && <PresetBanner preset={activePreset} />}
 
       {/* Architecture Presets Bar */}
       <PresetBar

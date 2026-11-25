@@ -1,6 +1,33 @@
 import React from 'react';
 import { Helmet } from 'react-helmet-async';
 
+/**
+ * The top of a tool card: a coloured icon tile, the tool's name and one line
+ * under it, and an optional status pill on the right.
+ */
+function ToolCardHeader({ iconBox, icon, titleHover, title, subtitle, badge }) {
+  return (
+    <div className="flex justify-between items-start mb-4">
+      <div className="flex items-center gap-3">
+        <div className={`p-2 rounded-lg ${iconBox}`}>
+          <span className="material-symbols-outlined">{icon}</span>
+        </div>
+        <div>
+          <h3 className={`text-lg font-bold ${titleHover} transition-colors`}>{title}</h3>
+          <p className="text-xs text-gh-text-gray">{subtitle}</p>
+        </div>
+      </div>
+      {badge && (
+        <span
+          className={`px-2 py-0.5 rounded-full ${badge.className} text-[10px] font-bold uppercase tracking-wider`}
+        >
+          {badge.label}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function GitHubToolsPage() {
   return (
     <>
@@ -44,24 +71,17 @@ export default function GitHubToolsPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             <div className="tool-card group">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
-                    <span className="material-symbols-outlined">rule</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold group-hover:text-blue-400 transition-colors">
-                      Workflow Linter
-                    </h3>
-                    <p className="text-xs text-gh-text-gray">
-                      YAML Validation &amp; Best Practices
-                    </p>
-                  </div>
-                </div>
-                <span className="px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 border border-green-900/50 text-[10px] font-bold uppercase tracking-wider">
-                  Active
-                </span>
-              </div>
+              <ToolCardHeader
+                iconBox="bg-blue-500/10 border border-blue-500/20 text-blue-400"
+                icon="rule"
+                titleHover="group-hover:text-blue-400"
+                title="Workflow Linter"
+                subtitle="YAML Validation & Best Practices"
+                badge={{
+                  label: 'Active',
+                  className: 'bg-green-900/30 text-green-400 border border-green-900/50',
+                }}
+              />
               <div className="mb-6 flex-grow">
                 <div className="code-preview relative">
                   <div className="absolute top-2 right-2 flex gap-1">
@@ -99,22 +119,17 @@ export default function GitHubToolsPage() {
               </div>
             </div>
             <div className="tool-card group">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
-                    <span className="material-symbols-outlined">security</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold group-hover:text-red-400 transition-colors">
-                      Secret Scanner
-                    </h3>
-                    <p className="text-xs text-gh-text-gray">Repo Leak Simulation</p>
-                  </div>
-                </div>
-                <span className="px-2 py-0.5 rounded-full bg-gh-border text-gh-text-gray border border-gh-border text-[10px] font-bold uppercase tracking-wider">
-                  Beta
-                </span>
-              </div>
+              <ToolCardHeader
+                iconBox="bg-red-500/10 border border-red-500/20 text-red-400"
+                icon="security"
+                titleHover="group-hover:text-red-400"
+                title="Secret Scanner"
+                subtitle="Repo Leak Simulation"
+                badge={{
+                  label: 'Beta',
+                  className: 'bg-gh-border text-gh-text-gray border border-gh-border',
+                }}
+              />
               <div className="mb-6 flex-grow relative overflow-hidden rounded-md border border-gh-border bg-black/40 p-4">
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 border border-red-500/20 rounded-full flex items-center justify-center">
                   <div className="w-20 h-20 border border-red-500/40 rounded-full flex items-center justify-center">
@@ -144,19 +159,13 @@ export default function GitHubToolsPage() {
               </div>
             </div>
             <div className="tool-card group">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400">
-                    <span className="material-symbols-outlined">timer</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold group-hover:text-purple-400 transition-colors">
-                      Action Runner Estimator
-                    </h3>
-                    <p className="text-xs text-gh-text-gray">Cost &amp; Time Prediction</p>
-                  </div>
-                </div>
-              </div>
+              <ToolCardHeader
+                iconBox="bg-purple-500/10 border border-purple-500/20 text-purple-400"
+                icon="timer"
+                titleHover="group-hover:text-purple-400"
+                title="Action Runner Estimator"
+                subtitle="Cost & Time Prediction"
+              />
               <div className="mb-6 flex-grow grid grid-cols-2 gap-3">
                 <div className="bg-gh-black/50 p-3 rounded border border-gh-border flex flex-col items-center justify-center text-center">
                   <span className="text-[10px] uppercase text-gh-text-gray tracking-wider mb-1">
@@ -187,19 +196,13 @@ export default function GitHubToolsPage() {
               </div>
             </div>
             <div className="tool-card group">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
-                    <span className="material-symbols-outlined">hub</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold group-hover:text-orange-400 transition-colors">
-                      Dependency Graph
-                    </h3>
-                    <p className="text-xs text-gh-text-gray">Interactive Node Visualizer</p>
-                  </div>
-                </div>
-              </div>
+              <ToolCardHeader
+                iconBox="bg-orange-500/10 border border-orange-500/20 text-orange-400"
+                icon="hub"
+                titleHover="group-hover:text-orange-400"
+                title="Dependency Graph"
+                subtitle="Interactive Node Visualizer"
+              />
               <div className="mb-6 flex-grow relative h-32 bg-gh-black/50 rounded-md border border-gh-border overflow-hidden">
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full p-4">
                   <div className="relative w-full h-full">
