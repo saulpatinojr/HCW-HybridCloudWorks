@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { emitFiles } from '../../index';
+import { cidrsOverlap } from '../../cidr';
 
 const packOf = (state) =>
   Object.fromEntries(emitFiles({ cloud: 'aws', ...state }).map((f) => [f.path, f.content]));
@@ -257,4 +258,100 @@ describe('AWS pack README says how traffic flows (#1876)', () => {
     expect(readme).toMatch(/Nothing inspects this traffic/);
     expect(readme).not.toContain('## Network Firewall: what it allows');
   });
+});
+
+describe('AWS pack upgrades from an earlier build (#1876)', () => {
+  it('keeps the old inspection VPC under its new name, only where it existed', () => {
+    const moved = oneBlock(packOf(FULL), 'moved');
+    expect(moved).toMatch(/from = module\.inspection_vpc/);
+    expect(moved).toMatch(/to\s+= module\.hub_vpc/);
+    expect(blocksOf(packOf(NO_FIREWALL), 'moved')).toHaveLength(0);
+  });
+
+  it('warns in the README that the identity VPC is replaced', () => {
+    const readme = packOf(FULL)['README.md'];
+    expect(readme).toContain('## Upgrading a landing zone an earlier build deployed');
+    expect(readme).toContain('The identity VPC is replaced.');
+    expect(packOf(NO_FIREWALL)['README.md']).not.toContain('The identity VPC is replaced.');
+  });
+});
+
+describe('AWS online spokes reach other VPCs through the Transit Gateway (#1876)', () => {
+  it('sends the public subnets’ traffic for the spoke range to the Transit Gateway', () => {
+    const pack = packOf({ selected: ['online'], options: { onlineCount: 2 } });
+    for (const spoke of ['online_spoke_1', 'online_spoke_2']) {
+      const route = oneBlock(pack, `resource "aws_route" "${spoke}_public_to_spokes"`);
+      expect(route).toContain(`route_table_id         = module.${spoke}.public_route_table_ids[0]`);
+      expect(route).toMatch(/destination_cidr_block\s+=\s+var\.spoke_cidr/);
+      expect(route).toContain(
+        `transit_gateway_id     = module.transit_gateway.ec2_transit_gateway_vpc_attachment["${spoke}"].transit_gateway_id`
+      );
+    }
+  });
+});
+
+// A small IPv4 `cidrsubnet`, to work out the ranges the pack asks for.
+const toInt = (ip) => ip.split('.').reduce((n, o) => n * 256 + Number(o), 0);
+const toIp = (n) => [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join('.');
+function cidrsubnet(cidr, newbits, netnum) {
+  const [ip, prefix] = cidr.split('/');
+  const size = 2 ** (32 - Number(prefix) - newbits);
+  return `${toIp(toInt(ip) + netnum * size)}/${Number(prefix) + newbits}`;
+}
+
+/** Evaluate an expression such as `cidrsubnet(cidrsubnet(var.spoke_cidr, 4, 3), 2, 1)`. */
+function evaluate(expr, vars) {
+  let out = expr.replace(/var\.(\w+)/g, (_, name) => vars[name]);
+  const inner = /cidrsubnet\(([0-9./]+), (\d+), (\d+)\)/;
+  while (inner.test(out)) {
+    out = out.replace(inner, (_, c, b, n) => cidrsubnet(c, Number(b), Number(n)));
+  }
+  return out;
+}
+
+describe('AWS address ranges never overlap (#1876)', () => {
+  const vars = { hub_cidr: '10.0.0.0/16', spoke_cidr: '10.1.0.0/16' };
+  const pack = packOf({ options: { corpCount: 5, onlineCount: 5 } });
+  const all = Object.values(pack).join('\n');
+
+  it('gives every VPC its own range, with the most workload VPCs the builder allows', () => {
+    const ranges = [
+      ...all.matchAll(/^module "(\w+)" \{\n(?:(?!^\}).*\n)*? {2}cidr\s+=\s+(.+)$/gm),
+    ].map(([, name, expr]) => [name, evaluate(expr, vars)]);
+    expect(ranges.map(([name]) => name).sort()).toEqual(
+      [
+        'hub_vpc',
+        'identity_spoke_vpc',
+        ...[1, 2, 3, 4, 5].flatMap((i) => [`corp_spoke_${i}`, `online_spoke_${i}`]),
+      ].sort()
+    );
+    ranges.forEach(([a, ra], i) => {
+      for (const [b, rb] of ranges.slice(i + 1)) {
+        expect(cidrsOverlap(ra, rb), `${a} ${ra} overlaps ${b} ${rb}`).toBe(false);
+      }
+    });
+  });
+
+  it.each(['10.0.0.0/16', '10.0.0.0/8', '192.168.0.0/24'])(
+    'keeps the hub’s /28 Transit Gateway subnets clear of its other subnets (hub %s)',
+    (hub) => {
+      const hubVpc = oneBlock(pack, 'module "hub_vpc"');
+      const fixed = [...hubVpc.matchAll(/cidrsubnet\(var\.hub_cidr, 4, (\d+)\)/g)].map(([, n]) =>
+        cidrsubnet(hub, 4, Number(n))
+      );
+      expect(fixed).toHaveLength(4);
+      // The same sum the locals block writes in HCL.
+      expect(all).toContain(
+        'cidrsubnet(var.hub_cidr, local.tgw_subnet_newbits, 4 * pow(2, local.tgw_subnet_newbits - 4) + i)'
+      );
+      const newbits = 28 - Number(hub.split('/')[1]);
+      const tgw = [0, 1].map((i) => cidrsubnet(hub, newbits, 4 * 2 ** (newbits - 4) + i));
+      expect(tgw.every((c) => c.endsWith('/28'))).toBe(true);
+      const subnets = [...fixed, ...tgw];
+      subnets.forEach((a, i) => {
+        expect(cidrsOverlap(a, hub)).toBe(true);
+        for (const b of subnets.slice(i + 1)) expect(cidrsOverlap(a, b), `${a} ${b}`).toBe(false);
+      });
+    }
+  );
 });

@@ -16,6 +16,18 @@ export function networkFirewallTf() {
   const blocks = [];
   const nfwModule = AWS_MODULES.networkFirewall;
 
+  // Builds before #1876 called the hub VPC `inspection_vpc` and emitted it
+  // only with the firewall. Its firewall subnets are the same ones, so this
+  // tells Terraform to keep that VPC under its new name instead of
+  // destroying it and building a new one.
+  blocks.push(
+    block('moved', [
+      '# An earlier build named the hub VPC "inspection_vpc". Keep it, renamed.',
+      ['from', 'module.inspection_vpc'],
+      ['to', 'module.hub_vpc'],
+    ])
+  );
+
   // The allow-list the owner of the landing zone fills in. Empty means the
   // firewall lets no web traffic out at all, which is the safe starting point.
   blocks.push(

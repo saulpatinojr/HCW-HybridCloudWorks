@@ -3,7 +3,7 @@
  * from the workload VPCs meets the firewall (when selected) and leaves for
  * the internet. Per zone it has:
  *
- * - a Transit Gateway subnet (the module's "intra" subnets, renamed "tgw"),
+ * - a small /28 Transit Gateway subnet (the module's "intra" subnets, renamed "tgw"),
  *   where the Transit Gateway delivers traffic from the workload VPCs;
  * - a firewall subnet (the module's "private" subnets, renamed "firewall"),
  *   only when the firewall is selected, holding that zone's firewall endpoint;
@@ -49,7 +49,7 @@ function hubVpcModule(firewall) {
     ['azs', 'local.azs'],
     '',
     '# Transit Gateway subnets: where traffic from the workload VPCs arrives.',
-    ['intra_subnets', subnets(4, 5)],
+    ['intra_subnets', 'local.tgw_subnets'],
     ['intra_subnet_suffix', q('tgw')],
     ['create_multiple_intra_route_tables', 'true'],
     '',
@@ -88,6 +88,29 @@ function directEgressRoutes() {
   ];
 }
 
+/** The two /28 Transit Gateway subnets, worked out from whatever size the hub range is. */
+function tgwSubnetLocals() {
+  return block('locals', [
+    '# Transit Gateway subnets are /28s, the size AWS recommends: they hold only',
+    '# the Transit Gateway’s network interfaces. These are the bits to add to the',
+    '# hub range (a /8 to a /24) to get a /28.',
+    '# https://docs.aws.amazon.com/vpc/latest/tgw/tgw-best-design-practices.html',
+    ['tgw_subnet_newbits', '28 - tonumber(split("/", var.hub_cidr)[1])'],
+    '',
+    '# The first two /28s of the hub range’s fifth sixteenth, which no other',
+    '# subnet uses (firewall subnets take the first two sixteenths, public the next two).',
+    [
+      'tgw_subnets',
+      [
+        '[',
+        'for i in [0, 1] :',
+        'cidrsubnet(var.hub_cidr, local.tgw_subnet_newbits, 4 * pow(2, local.tgw_subnet_newbits - 4) + i)',
+        ']',
+      ],
+    ],
+  ]);
+}
+
 /**
  * The hub VPC, and, when there is no firewall, its routes. With the
  * firewall, network-firewall.tf writes the hub's routes through it.
@@ -96,5 +119,5 @@ function directEgressRoutes() {
  * @returns {string[][]} the HCL blocks
  */
 export function hubVpcBlocks(firewall) {
-  return [hubVpcModule(firewall), ...(firewall ? [] : directEgressRoutes())];
+  return [tgwSubnetLocals(), hubVpcModule(firewall), ...(firewall ? [] : directEgressRoutes())];
 }
