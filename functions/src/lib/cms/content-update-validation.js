@@ -23,152 +23,30 @@
  * Date instances exactly as the source did; Cosmos JSON-serializes a Date to
  * its ISO string on write, which is the same shape the migration writes.
  */
-import { AuthoredError } from "../http/error-response.js";
+import {
+  ContentValidationError,
+  assertStringLength,
+  assertOptionalDateString,
+  isPlainObject,
+  assertOptionalHttpUrl,
+  assertStringArray,
+  assertJsonSize,
+} from "./content-field-checks.js";
 import { PROVIDER_ALIASES } from "../public-reads.js";
 import { normalizePublishTarget } from "./publish-targets.js";
-import { checkInterviewFields } from "../interviews/sibling-modules.js";
 import { ARTICLE_TOPICS, isArticleTopic } from "./article-topics.js";
 
-/**
- * A refusal written here for the editor: every sentence this module throws.
- * Typed so a handler can show it (`authoredMessage`) while anything else
- * that escapes a validation block — a Cosmos read, a serialisation fault —
- * is answered with the handler's own safe sentence (#945).
- */
-export class ContentValidationError extends AuthoredError {}
-
-/**
- * A string field within its length.
- *
- * @param {unknown} value - the field
- * @param {string} fieldName - its name, for the refusal
- * @param {number} maxLength - the ceiling
- * @param {{ allowEmpty?: boolean }} [options]
- * @returns {string}
- * @throws {ContentValidationError}
- */
-export function assertStringLength(
-  value,
-  fieldName,
-  maxLength,
-  { allowEmpty = true } = {},
-) {
-  const normalized = String(value || "");
-  if (!allowEmpty && !normalized.trim()) {
-    throw new ContentValidationError(`${fieldName} is required`);
-  }
-  if (normalized.length > maxLength) {
-    throw new ContentValidationError(`${fieldName} exceeds ${maxLength} characters`);
-  }
-  return normalized;
-}
-
-/**
- * An optional date field as a Date, or null when empty.
- *
- * @param {unknown} value - the field
- * @param {string} fieldName - its name, for the refusal
- * @returns {Date|null}
- * @throws {ContentValidationError}
- */
-export function assertOptionalDateString(value, fieldName) {
-  const normalized = String(value || "").trim();
-  if (!normalized) return null;
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new ContentValidationError(`${fieldName} must be a valid date`);
-  }
-  return parsed;
-}
-
-export function isPlainObject(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-/**
- * An optional http(s) URL field, trimmed.
- *
- * @param {unknown} value - the field
- * @param {string} fieldName - its name, for the refusal
- * @param {{ allowEmpty?: boolean }} [options]
- * @returns {string}
- * @throws {ContentValidationError}
- */
-export function assertOptionalHttpUrl(
-  value,
-  fieldName,
-  { allowEmpty = true } = {},
-) {
-  const normalized = String(value || "").trim();
-  if (!normalized) {
-    if (!allowEmpty) throw new ContentValidationError(`${fieldName} is required`);
-    return "";
-  }
-  if (normalized.length > 2048) {
-    throw new ContentValidationError(`${fieldName} exceeds 2048 characters`);
-  }
-  let url;
-  try {
-    url = new URL(normalized);
-  } catch {
-    throw new ContentValidationError(`${fieldName} must be a valid URL`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new ContentValidationError(`${fieldName} must be an http(s) URL`);
-  }
-  return normalized;
-}
-
-/**
- * An optional list of strings within its item count and item length.
- *
- * @param {unknown} value - the field
- * @param {string} fieldName - its name, for the refusal
- * @param {{ maxItems?: number, maxItemLength?: number }} [options]
- * @returns {string[]|null}
- * @throws {ContentValidationError}
- */
-export function assertStringArray(
-  value,
-  fieldName,
-  { maxItems = 50, maxItemLength = 120 } = {},
-) {
-  if (value === null || value === undefined) return null;
-  if (!Array.isArray(value)) {
-    throw new ContentValidationError(`${fieldName} must be an array`);
-  }
-  if (value.length > maxItems) {
-    throw new ContentValidationError(`${fieldName} exceeds ${maxItems} items`);
-  }
-  return value.map((entry) => {
-    const normalized = String(entry || "").trim();
-    if (normalized.length > maxItemLength) {
-      throw new ContentValidationError(
-        `${fieldName} contains an entry that exceeds ${maxItemLength} characters`,
-      );
-    }
-    return normalized;
-  });
-}
-
-/**
- * A JSON value within its serialised size.
- *
- * @param {unknown} value - the field
- * @param {string} fieldName - its name, for the refusal
- * @param {number} [maxChars] - the ceiling
- * @returns {unknown}
- * @throws {ContentValidationError}
- */
-export function assertJsonSize(value, fieldName, maxChars = 120_000) {
-  if (value === null || value === undefined) return value;
-  // Defensive: only JSON-friendly values should be stored.
-  const serialized = JSON.stringify(value);
-  if (serialized.length > maxChars) {
-    throw new ContentValidationError(`${fieldName} payload exceeds ${maxChars} characters`);
-  }
-  return value;
-}
+// The field checks every validator here uses are in content-field-checks.js,
+// re-exported so callers keep importing them from this file.
+export {
+  ContentValidationError,
+  assertStringLength,
+  assertOptionalDateString,
+  isPlainObject,
+  assertOptionalHttpUrl,
+  assertStringArray,
+  assertJsonSize,
+} from "./content-field-checks.js";
 
 /**
  * The value the CMS stores in `Cloud Provider` for each provider the site
@@ -540,69 +418,8 @@ function normalizeEntry(normalized, field, value) {
   normalizeGenericField(normalized, field, value);
 }
 
-/** The interview fields an editor may change through updateContentItem. */
-export const INTERVIEW_UPDATE_FIELDS = Object.freeze([
-  "title",
-  "subtitle",
-  "date",
-  "guest",
-  "bio",
-  "image",
-  "tags",
-  "qa",
-  "related",
-]);
-
-/**
- * The type-aware check (ADR 0040, D5): on a document of type `interview`,
- * every interview field the update names is run through the interview
- * schema (lib/interviews/schema.js, the jobs slice's) and replaced by its
- * checked form. Any other type, or an update naming none of those fields,
- * passes through untouched. The generic rules above have already run.
- *
- * @param {string} type - the stored document's `type`
- * @param {object} updates - the validated updates
- * @returns {Promise<object>} the updates, with the checked interview fields
- * @throws {ContentValidationError} with the schema's own sentence
- */
-export async function validateTypedUpdates(type, updates = {}) {
-  const current = String(type || "").toLowerCase();
-  // A document becomes an interview through POST cms/interviews only, which
-  // writes the consent record from the token; and an interview never stops
-  // being one through this route, because the publish gate decides from the
-  // document's type whether to demand consent (ADR 0040, D9).
-  for (const key of ["type", "publishTarget", "contentType"]) {
-    if (!Object.hasOwn(updates, key) || updates[key] === null) continue;
-    const next = String(updates[key] || "").trim().toLowerCase();
-    if (next === "interview" && current !== "interview") {
-      throw new ContentValidationError(
-        `${key} cannot be set to interview here; an interview is created through POST cms/interviews`,
-      );
-    }
-    if (current === "interview" && next !== "interview") {
-      throw new ContentValidationError(
-        `${key} cannot be changed on an interview; it stays an interview`,
-      );
-    }
-  }
-  if (current !== "interview") return updates;
-  const fields = {};
-  for (const key of INTERVIEW_UPDATE_FIELDS) {
-    if (Object.hasOwn(updates, key) && updates[key] !== null) fields[key] = updates[key];
-  }
-  if (Object.keys(fields).length === 0) return updates;
-  const checked = await checkInterviewFields(fields);
-  if (!checked.ok) throw new ContentValidationError(checked.error);
-  const out = { ...updates };
-  if (checked.value && typeof checked.value === "object") {
-    for (const key of Object.keys(fields)) {
-      if (checked.value[key] !== undefined) out[key] = checked.value[key];
-    }
-    // The dual-cased title the legacy readers look at.
-    if (out.title !== undefined) out.Title = out.title;
-  }
-  return out;
-}
+// The interview fields' own check is in content-typed-updates.js.
+export { INTERVIEW_UPDATE_FIELDS, validateTypedUpdates } from "./content-typed-updates.js";
 
 /**
  * Blog-only-era shaping applied after validation (source :262): re-resolve the
