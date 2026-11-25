@@ -5,7 +5,7 @@
  * WHY THIS SUITE EXISTS. The pre-render decides whether to advertise
  * `/<provider>/architecture-designs` by importing
  * `src/pages/<provider>/architecture-blueprints.js` and counting it
- * (`staticSectionItems` in scripts/prerender.mjs). That count is only worth
+ * (`staticSectionItems` in scripts/prerender-routes.mjs). That count is only worth
  * acting on while the page renders the same array — a page that stopped
  * importing its module would keep its sitemap entry and show nothing, which is
  * the bug this whole mechanism exists to fix, restored by a refactor.

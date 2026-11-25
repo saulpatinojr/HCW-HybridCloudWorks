@@ -10,7 +10,7 @@
  * provider with hardcoded blueprints from one without.
  *
  * So the answer moves somewhere a build script can read it. `sitemapRoutes` in
- * frontend/scripts/prerender.mjs imports every `architecture-blueprints.js`
+ * frontend/scripts/prerender-routes.mjs imports every `architecture-blueprints.js`
  * under src/pages and counts what it exports; a provider whose module is empty
  * AND whose API count is zero has an empty page and loses its sitemap entry.
  * Nothing restates the count, so adding or removing a blueprint here is
