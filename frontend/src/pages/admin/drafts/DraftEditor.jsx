@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import RichTextBody from '@/components/shared/RichTextBody';
 import TaxonomyPicker from '@/components/admin/shared/TaxonomyPicker';
+import OriginChip from '@/components/admin/shared/OriginChip';
 import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
 import { ARTICLE_PROSE_CLASS } from '@/lib/articleStyles';
 import { StageBadge } from './DraftList';
@@ -253,6 +254,11 @@ export default function DraftEditor({
               <Input {...input('tags')} />
             </Field>
           </div>
+          {draft.originRef && (
+            <p className="text-sm text-muted-foreground sm:col-span-2">
+              Started for <OriginChip originRef={draft.originRef} />
+            </p>
+          )}
           <div className="sm:col-span-2">
             <TaxonomyPicker
               kind={form.kind}

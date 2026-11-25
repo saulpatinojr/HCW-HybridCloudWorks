@@ -5,7 +5,8 @@
  * program's readiness) and Start application. Editing the catalogue is the
  * Settings tab's job; this tab reads it.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Play } from 'lucide-react';
@@ -23,6 +24,9 @@ import {
 } from './ambassadorModel';
 import { ReadsStatus, allLanded } from './Parts';
 import { AdditionalPrograms, ProgramDetails, UpkeepLine, WINDOW_BADGE } from './ProgramParts';
+import { DraftForProgramButton } from './ProgramPipeline';
+import { LINK_PARAMS } from '@/lib/itemLinks';
+import { useToast } from '@/components/ui/use-toast';
 
 const byIdOf = (programs) => programById(programs);
 
@@ -112,10 +116,75 @@ function ProgramCard({
             )}
             Start application
           </Button>
+          {/* A held membership starts its next piece from here, whether or not
+              its program states an activity rule, and without waiting for the
+              evidence list (#1886, review of #1891). */}
+          {program.membershipStatus === 'active' && !disabled && (
+            <DraftForProgramButton program={program} />
+          )}
         </div>
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * The open program, kept in step with `?program=<id>` both ways (#1886,
+ * review of #1891): a link, Back or Forward opens or closes it, and opening
+ * or closing it here writes the address, as the Applications tab does with
+ * `?application=`. A Pipeline chip that says "Ambassador · <program>" leads
+ * here (lib/pageLinks.js).
+ */
+function useProgramSelection() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedProgram = searchParams.get(LINK_PARAMS.program);
+  const [selected, setSelected] = useState(linkedProgram);
+  // When the address changes under the page, follow it (React's "adjust
+  // state while rendering" pattern, not an effect).
+  const [seenProgram, setSeenProgram] = useState(linkedProgram);
+  if (linkedProgram !== seenProgram) {
+    setSeenProgram(linkedProgram);
+    setSelected(linkedProgram);
+  }
+  const select = useCallback(
+    (id) => {
+      setSelected(id);
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('tab', 'programs');
+        if (id) next.set(LINK_PARAMS.program, id);
+        else next.delete(LINK_PARAMS.program);
+        return next;
+      });
+    },
+    [setSearchParams]
+  );
+  return [selected, select];
+}
+
+const listOf = (value) => (Array.isArray(value) ? value : []);
+
+/**
+ * The message after filing one piece. The import answers 200 whether it
+ * filed the piece or not (review of #1890), so the message follows what it
+ * actually did with this id: filed, not filed (no longer live), or filed
+ * before.
+ */
+export function filingMessage(result, contentId, programName) {
+  if (listOf(result.created).some((row) => row?.sourceId === contentId)) {
+    return { title: `Filed as evidence for ${programName}` };
+  }
+  if (listOf(result.missing).includes(contentId)) {
+    return {
+      title: 'Not filed',
+      description: 'That piece is no longer live, so it cannot be filed as evidence.',
+      variant: 'destructive',
+    };
+  }
+  return {
+    title: 'Already filed',
+    description: 'It was filed before; attach it to this program on the Evidence tab.',
+  };
 }
 
 /** The Programs tab: the catalogue as cards, each with its details and Start application. */
@@ -125,8 +194,10 @@ export default function ProgramsTab({ hub, nav }) {
   // would read as nothing filed.
   const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
   const reads = [programs, applications];
-  const [detailsId, setDetailsId] = useState(null);
+  const [detailsId, setDetailsId] = useProgramSelection();
   const [starting, setStarting] = useState(null);
+  const [filing, setFiling] = useState(null);
+  const { toast } = useToast();
   const today = todayIso();
 
   const pursuedPrograms = useMemo(
@@ -158,7 +229,22 @@ export default function ProgramsTab({ hub, nav }) {
     }
   };
 
-  const details = ordered.find((p) => p.id === detailsId) || null;
+  // From the whole list, not just the cards shown: a link may name a program
+  // whose card is hidden (an additional program whose parent is not Active).
+  const details = programs.data.find((p) => p.id === detailsId && !p.softDeletedAt) || null;
+  const linkedMissing = Boolean(detailsId) && allLanded(reads) && !details;
+
+  // A live piece from the Pipeline becomes evidence for this program through
+  // the existing import from Published content (one row per piece, so a
+  // second click finds the first row).
+  const fileEvidence = async (contentId) => {
+    if (!details || filing) return;
+    setFiling(contentId);
+    const result = await hub.writes.importEvidence('content', [contentId], [details.id]);
+    setFiling(null);
+    // Null means refused: the write guard's toast already said why.
+    if (result) toast(filingMessage(result, contentId, details.name));
+  };
 
   return (
     <div className="space-y-4 pt-4">
@@ -168,6 +254,11 @@ export default function ProgramsTab({ hub, nav }) {
         point until you match it to the program&apos;s current published rules.
       </p>
       <ReadsStatus reads={reads} label="programs" />
+      {linkedMissing && (
+        <p className="text-sm text-muted-foreground" role="status">
+          The program that link names is no longer in the catalogue.
+        </p>
+      )}
       {allLanded(reads) &&
         (ordered.length === 0 ? (
           <EmptyState
@@ -205,6 +296,8 @@ export default function ProgramsTab({ hub, nav }) {
         onStart={start}
         starting={Boolean(starting)}
         pursuing={details ? pursuedPrograms.has(details.id) : false}
+        onFileEvidence={fileEvidence}
+        filing={filing}
       />
     </div>
   );

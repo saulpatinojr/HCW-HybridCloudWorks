@@ -9,6 +9,7 @@
  * with it and refuses anything live; the markdown upload is idempotent and
  * recognises an article already in Drafts or In Review.
  */
+import { AGENT_USER, KEY_RECORD_ID } from "../agent-content/keys.js";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { LIST_QUERY, createDraftsHandlers, draftLinks } from "./drafts-handlers.js";
@@ -1253,5 +1254,154 @@ describe("every draft answer carries its links (owner request 2026-11-01)", () =
     }
     // The edit link is there either way: the Drafts page lists the article.
     expect(draftLinks({ id: "d-live", contentStatus: "published" }, deps).editUrl).toContain("?draft=d-live");
+  });
+});
+
+describe("POST cms/drafts with an originRef (#1886)", () => {
+  const PROGRAM = Object.freeze({
+    id: "program-example",
+    docType: "program",
+    name: "Example Program",
+    requirements: [{ id: "quarterly-content", label: "Two pieces a quarter" }],
+  });
+  const REF = { page: "ambassador", id: PROGRAM.id, part: "quarterly-content" };
+  const DRAFT_FROM_PROGRAM = Object.freeze({
+    id: "draft-from-program",
+    Title: "Reading a commit graph",
+    contentStatus: DRAFTS_STAGE_STATUS,
+    draftOrigin: "drafts",
+    Live: false,
+    originRef: { ...REF, label: "Example Program" },
+  });
+
+  it("stores the checked reference and the Page's idea origin, and returns both", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+    );
+    expect(res.status).toBe(201);
+    const stored = store.docs.get(res.body.draft.id);
+    expect(stored.originRef).toEqual({ ...REF, label: "Example Program" });
+    expect(stored.ideaOrigin).toBe("ambassador-requirement");
+    expect(stored.contentStatus).toBe(DRAFTS_STAGE_STATUS);
+    expect(res.body.draft.originRef).toEqual({ ...REF, label: "Example Program" });
+  });
+
+  it("keeps an idea origin the caller chose", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.create(
+        request({ body: { fields: { ...FIELDS, ideaOrigin: "audience-question" }, originRef: REF } }),
+        context,
+      ),
+    );
+    expect(store.docs.get(res.body.draft.id).ideaOrigin).toBe("audience-question");
+  });
+
+  it("is listed with the reference, so the Drafts page can show where it came from", async () => {
+    const { handlers } = setup({ seed: [PROGRAM] });
+    await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context);
+    const list = parse(await handlers.list(request(), context));
+    expect(list.body.drafts[0].originRef.label).toBe("Example Program");
+    expect(LIST_QUERY).toContain("c.originRef");
+  });
+
+  it("refuses a program that does not exist, and writes nothing", async () => {
+    const { handlers, store } = setup();
+    const res = parse(
+      await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("No Ambassador program has that id.");
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  describe("from the agent key, which may send one only when it could read the Page", () => {
+    const AGENT = AGENT_USER;
+    const agentGuard = () => ({
+      requireRole: vi.fn(async () => ({ user: AGENT, role: "editor", error: null })),
+    });
+    const keyRecord = (spotlight) => ({
+      id: KEY_RECORD_ID,
+      capabilities: { "admin.spotlight": spotlight },
+    });
+
+    it("refuses with 403, before reading the program, when the Spotlight switch is off", async () => {
+      const { handlers, store } = setup({ seed: [PROGRAM, keyRecord(false)], guard: agentGuard() });
+      const res = parse(
+        await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+      );
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/switch for that section is off/);
+      expect(store.readDoc).not.toHaveBeenCalledWith("ambassador", PROGRAM.id, PROGRAM.id);
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
+
+    it("accepts it when the switch is on", async () => {
+      const { handlers } = setup({ seed: [PROGRAM, keyRecord(true)], guard: agentGuard() });
+      const res = parse(
+        await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+      );
+      expect(res.status).toBe(201);
+      expect(res.body.draft.originRef.label).toBe("Example Program");
+    });
+
+    it("does not show the agent key where a draft came from while the switch is off", async () => {
+      const tagged = { ...DRAFT_FROM_PROGRAM };
+      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: agentGuard() });
+      const list = parse(await handlers.list(request(), context));
+      expect(list.body.drafts[0]).not.toHaveProperty("originRef");
+      const one = parse(await handlers.get(request({ id: tagged.id }), context));
+      expect(one.body.draft).not.toHaveProperty("originRef");
+    });
+
+    it("leaves the reference out of a conflict too, so a stale save cannot reveal it (review of #1891)", async () => {
+      const tagged = { ...DRAFT_FROM_PROGRAM };
+      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: agentGuard() });
+      const res = parse(
+        await handlers.update(
+          request({ id: tagged.id, body: { fields: { ...FIELDS }, etag: '"stale"' } }),
+          context,
+        ),
+      );
+      expect(res.status).toBe(412);
+      // The conflict answer carries the draft as it now stands...
+      expect(res.body.current?.id).toBe(tagged.id);
+      // ...without where it came from.
+      expect(JSON.stringify(res.body)).not.toContain("originRef");
+      expect(JSON.stringify(res.body)).not.toContain("Example Program");
+    });
+
+    it("asks nothing of a draft that names no Page", async () => {
+      const { handlers } = setup({ seed: [keyRecord(false)], guard: agentGuard() });
+      const res = parse(await handlers.create(request({ body: { fields: FIELDS } }), context));
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it("the markdown route refuses an originRef rather than dropping it", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.createFromMarkdown(
+        request({ body: { markdown: "# A title\n\nBody.", origin: "paste", originRef: REF } }),
+        context,
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/POST cms\/drafts only/);
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("a save cannot add or change the reference", async () => {
+    const { handlers } = setup({ seed: [PROGRAM] });
+    const draft = await created(handlers);
+    const res = parse(
+      await handlers.update(
+        request({ id: draft.id, body: { fields: { ...FIELDS, originRef: REF }, etag: draft.etag } }),
+        context,
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Not a draft field: originRef/);
   });
 });

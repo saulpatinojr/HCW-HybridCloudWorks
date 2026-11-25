@@ -30,6 +30,17 @@ const LIVE_CONTENT_QUERY =
   'WHERE (c.Live = true OR c.Status = "Live" OR c.contentStatus = "published") ' +
   'AND (NOT IS_DEFINED(c.softDeletedAt) OR IS_NULL(c.softDeletedAt) OR c.softDeletedAt = "" OR c.softDeletedAt = false)';
 
+/**
+ * LIVE_CONTENT_QUERY's test, for one document read by id: the import may
+ * file only what the picker could have offered (review of #1890: a request
+ * naming an unpublished id was filed as evidence).
+ */
+export function isLiveContent(doc) {
+  const live = doc?.Live === true || doc?.Status === 'Live' || doc?.contentStatus === 'published';
+  const deleted = ![undefined, null, '', false].includes(doc?.softDeletedAt);
+  return live && !deleted;
+}
+
 function speakingToEvidence(doc) {
   const title =
     firstString(doc, ['eventName', 'name', 'title', 'Title']) || `Speaking event ${doc.id}`;
@@ -235,6 +246,9 @@ export const IMPORT_READERS = Object.freeze({
   content: {
     container: 'content',
     listQuery: LIVE_CONTENT_QUERY,
+    // A reader whose list is filtered says so here too, so an id sent to the
+    // import is held to the same rule as the list (evidence.js importFromSource).
+    accepts: isLiveContent,
     toEvidence: contentToEvidence,
   },
 });

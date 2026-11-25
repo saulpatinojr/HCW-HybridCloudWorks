@@ -136,7 +136,8 @@ async function importFromSource(ctx, { reader, sourceModule, ids, programIds }, 
       continue;
     }
     const source = await ctx.store.readDoc(reader.container, sourceId, sourceId);
-    if (!source) {
+    // Not on the reader's list (for content: not live) counts as not found.
+    if (!source || (reader.accepts && !reader.accepts(source))) {
       missing.push(sourceId);
       continue;
     }

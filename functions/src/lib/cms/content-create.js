@@ -38,6 +38,15 @@ import {
 } from "./content-quality.js";
 import { findDuplicateContent, buildDedupFields } from "./content-dedup.js";
 import {
+  CREATE_STATUSES_REFUSED,
+  LEGACY_LIVE_STATUSES,
+} from "../agent-content/admin-access.js";
+import { PUBLISHING_ROLES } from "./content-status-transition.js";
+import {
+  originRefRefusalStatus,
+  resolveOriginRef,
+} from "../page-links/origin-ref.js";
+import {
   normalizePublishTarget,
   SUPPORTED_PUBLISH_TARGETS,
 } from "./publish-targets.js";
@@ -61,6 +70,25 @@ export const QUALITY_ENFORCED_STATUSES = [
 ];
 
 const nullCritique = async () => null;
+
+/**
+ * Whether a create would make the item public or take it off the pipeline:
+ * a published or archived status (old spellings included), a live legacy
+ * `Status`, or `Live: true`. Those are a publisher's act everywhere else
+ * (transitionContentStatus, publishContent), so a create asks for the same
+ * role (#1888). The lists are the ones the agent key is already held to.
+ */
+export function createsPublicContent(data = {}) {
+  return (
+    CREATE_STATUSES_REFUSED.includes(
+      String(data.contentStatus ?? "")
+        .trim()
+        .toLowerCase(),
+    ) ||
+    LEGACY_LIVE_STATUSES.includes(String(data.Status ?? "").trim()) ||
+    data.Live === true
+  );
+}
 
 /** The blocks only the interview routes write (ADR 0040); see `interviewAllowed`. */
 const INTERVIEW_PRIVATE_BLOCKS = Object.freeze([
@@ -100,6 +128,9 @@ export async function createContentDocument({
   runEditorialCritique = true,
   forceQualityBypass = false,
   interviewAllowed = false,
+  // Already checked by the caller (page-links/origin-ref.js, #1886); a
+  // `data.originRef` is never stored as sent.
+  originRef = null,
   critiqueDraft = nullCritique,
   now = () => new Date(),
   uuid = randomUUID,
@@ -110,14 +141,17 @@ export async function createContentDocument({
     : "blog";
   const asksForInterview =
     normalizedType === "interview" ||
-    String(data.publishTarget || "").trim().toLowerCase() === "interview";
+    String(data.publishTarget || "")
+      .trim()
+      .toLowerCase() === "interview";
   if (asksForInterview && !interviewAllowed) {
     return {
       status: 400,
       body: {
         success: false,
         code: "USE_INTERVIEW_ROUTE",
-        error: "An interview is created through POST cms/interviews, which records the guest's consent.",
+        error:
+          "An interview is created through POST cms/interviews, which records the guest's consent.",
       },
     };
   }
@@ -144,7 +178,12 @@ export async function createContentDocument({
     }
     throw error;
   }
-  const { kind: _kind, ideaOrigin: _ideaOrigin, ...rest } = data;
+  const {
+    kind: _kind,
+    ideaOrigin: _ideaOrigin,
+    originRef: _originRef,
+    ...rest
+  } = data;
 
   const normalizedData = normalizeContentBodyFields({
     ...rest,
@@ -226,6 +265,7 @@ export async function createContentDocument({
     // Only when the caller classified it; a null clears nothing on a create.
     ...(taxonomyFields.kind && { kind: taxonomyFields.kind }),
     ...(taxonomyFields.ideaOrigin && { ideaOrigin: taxonomyFields.ideaOrigin }),
+    ...(originRef && { originRef }),
     id: uuid(),
     contentStatus: requestedStatus,
     storageCollection: "content",
@@ -276,10 +316,38 @@ export function createContentCreateHandler({
           ? body.data
           : {};
 
+      // Creating content that is already public is a publisher's act, as
+      // it is on every other route (#1888).
+      if (
+        createsPublicContent(data) &&
+        !PUBLISHING_ROLES.includes(String(auth.role || "").toLowerCase())
+      ) {
+        return json(403, {
+          success: false,
+          error:
+            "publisher access required to create published, live or archived content",
+        });
+      }
+
+      // Where the piece came from (#1886): checked against the record it
+      // names before anything else is read or written.
+      let originRef;
+      try {
+        originRef = await resolveOriginRef(store, data.originRef, { user });
+      } catch (error) {
+        const status = originRefRefusalStatus(error);
+        if (!status) throw error;
+        return json(status, {
+          success: false,
+          error: authoredMessage(error, "The originRef was refused."),
+        });
+      }
+
       const result = await createContentDocument({
         store,
         user,
         data,
+        originRef,
         runEditorialCritique: body?.runEditorialCritique !== false,
         forceQualityBypass: body?.forceQualityBypass === true,
         critiqueDraft,
@@ -288,7 +356,13 @@ export function createContentCreateHandler({
       });
       return json(result.status, result.body);
     } catch (error) {
-      return errorResponse(context, "Failed to create content item", error, 500, request);
+      return errorResponse(
+        context,
+        "Failed to create content item",
+        error,
+        500,
+        request,
+      );
     }
   };
 }

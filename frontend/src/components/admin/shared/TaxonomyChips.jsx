@@ -4,11 +4,16 @@
  * else what the record's `type` and `source` imply, so a record that predates
  * the taxonomy is still classified. The label comes from the saved lists;
  * an id the lists no longer carry shows as itself.
+ *
+ * A third chip, when another admin Page sent the record into the Pipeline:
+ * which Page and which record (OriginChip, #1886). It lives here so every
+ * page that already shows the taxonomy shows it too.
  */
 import React from 'react';
 import { Lightbulb, Shapes } from 'lucide-react';
 import { labelFor, resolveIdeaOrigin, resolveKind } from '@/lib/taxonomy';
 import { useTaxonomy } from './useTaxonomy';
+import OriginChip from './OriginChip';
 
 const CHIP =
   'inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-muted-foreground whitespace-nowrap';
@@ -17,6 +22,8 @@ export default function TaxonomyChips({
   item,
   showKind = true,
   showOrigin = true,
+  showSource = true,
+  sourceAsLink = true,
   className = '',
 }) {
   const { taxonomy } = useTaxonomy();
@@ -41,6 +48,7 @@ export default function TaxonomyChips({
           {labelFor(taxonomy.ideaOrigins, origin)}
         </span>
       )}
+      {showSource && <OriginChip originRef={item.originRef} asLink={sourceAsLink} />}
     </span>
   );
 }

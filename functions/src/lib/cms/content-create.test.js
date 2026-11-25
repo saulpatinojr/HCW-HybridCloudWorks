@@ -249,8 +249,13 @@ describe("createContentItem quality gate", () => {
 
   it("422s an elevated status that fails the gate, echoing the report", async () => {
     const store = makeStore();
+    // A publisher: "published" is among the statuses, and only a publisher
+    // may create in it (#1888), so the gate is what answers here.
+    const publisherGuard = {
+      requireRole: vi.fn(async () => ({ user: { oid: "oid-1" }, role: "publisher", error: null })),
+    };
     const handler = createContentCreateHandler({
-      guard: allowGuard,
+      guard: publisherGuard,
       store,
       ...fixed,
     });
@@ -395,5 +400,100 @@ describe("createContentItem document shape", () => {
     expect(doc.imageQuality).toBe(doc.imageReadiness);
     expect(doc.imageLineage).toBeTruthy();
     expect(doc.contentQuality.score).toBeTypeOf("number");
+  });
+});
+
+describe("createContentItem originRef (#1886)", () => {
+  const PROGRAM = {
+    id: "program-example",
+    docType: "program",
+    name: "Example Program",
+    requirements: [],
+  };
+  const readDoc = vi.fn(async (container, id) =>
+    container === "ambassador" && id === PROGRAM.id ? PROGRAM : null,
+  );
+
+  it("stores the checked reference, never the caller's own label", async () => {
+    const store = makeStore({ readDoc });
+    const handler = createContentCreateHandler({
+      guard: allowGuard,
+      store,
+      ...fixed,
+    });
+    const res = await handler(
+      makeRequest({
+        data: { Title: "T", originRef: { page: "ambassador", id: PROGRAM.id } },
+      }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1].originRef).toEqual({
+      page: "ambassador",
+      id: PROGRAM.id,
+      part: null,
+      label: "Example Program",
+    });
+  });
+
+  it("refuses a reference to a record that does not exist, and writes nothing", async () => {
+    const store = makeStore({ readDoc });
+    const handler = createContentCreateHandler({
+      guard: allowGuard,
+      store,
+      ...fixed,
+    });
+    const res = await handler(
+      makeRequest({
+        data: {
+          Title: "T",
+          originRef: { page: "ambassador", id: "program-none" },
+        },
+      }),
+      context,
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toBe(
+      "No Ambassador program has that id.",
+    );
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe("createContentItem: public content is a publisher's to create (#1888)", () => {
+  const guardAs = (role) => ({
+    requireRole: vi.fn(async () => ({ user: { oid: "u1" }, role, error: null })),
+  });
+  const cases = [
+    { contentStatus: "published" },
+    { contentStatus: "Published_Blog" },
+    { contentStatus: "archived" },
+    { Status: "Live" },
+    { Live: true },
+  ];
+
+  it.each(cases)("refuses an editor's create with %o, and writes nothing", async (fields) => {
+    const store = makeStore();
+    const handler = createContentCreateHandler({ guard: guardAs("editor"), store, ...fixed });
+    const res = await handler(makeRequest({ data: { Title: "T", ...fields } }), context);
+    expect(res.status).toBe(403);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it("lets a publisher create published content (the quality gate still applies)", async () => {
+    const store = makeStore();
+    const handler = createContentCreateHandler({ guard: guardAs("publisher"), store, ...fixed });
+    const res = await handler(
+      makeRequest({ data: { ...readyFramework, contentStatus: "published" } }),
+      context,
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("still lets an editor create a draft or an inspected item", async () => {
+    const store = makeStore();
+    const handler = createContentCreateHandler({ guard: guardAs("editor"), store, ...fixed });
+    const res = await handler(makeRequest({ data: { Title: "T", contentStatus: "draft" } }), context);
+    expect(res.status).toBe(200);
   });
 });

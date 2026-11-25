@@ -55,6 +55,7 @@ import {
 } from "./drafts-stage.js";
 import { resolveIdeaOrigin, resolveKind } from "./taxonomy.js";
 import { ARTICLE_TOPICS, isArticleTopic } from "./article-topics.js";
+import { originRefOf } from "../page-links/origin-ref.js";
 
 // The stage half lives in ./drafts-stage.js; re-exported so callers import
 // the Drafts stage from one place.
@@ -294,6 +295,7 @@ export function buildNewDraftDocument({
   fields,
   editor,
   origin = DRAFT_ORIGINS.site,
+  originRef = null,
   now = () => new Date(),
 }) {
   const stamp = now().toISOString();
@@ -312,6 +314,8 @@ export function buildNewDraftDocument({
     kind: fields.kind || DRAFT_TAXONOMY_DEFAULTS.kind,
     ideaOrigin: fields.ideaOrigin || DRAFT_TAXONOMY_DEFAULTS.ideaOrigin,
     draftOrigin: origin,
+    // The admin Page that sent it, already checked (page-links/origin-ref.js).
+    ...(originRef && { originRef }),
     storageCollection: "content",
     createdBy: editor,
     "Created At": stamp,
@@ -387,6 +391,7 @@ export function toDraftSummary(doc = {}) {
     stage: stageOf(doc),
     live: doc.Live === true,
     origin: doc.draftOrigin || (doc.repoPath ? DRAFT_ORIGINS.repo : null),
+    originRef: originRefOf(doc),
     kind: resolveKind(doc),
     ideaOrigin: resolveIdeaOrigin(doc),
     repoPath: doc.repoPath || null,
