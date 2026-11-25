@@ -14,7 +14,6 @@ import React from 'react';
 import { Link } from 'react-router';
 import { CheckCircle2, FileCheck2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { contentStatusInfo } from '@/lib/status';
 import PipelinePieces, {
   usePipelinePieces,
 } from '@/components/admin/shared/pipeline/PipelinePieces';
@@ -47,14 +46,15 @@ export function evidenceStateByContent(evidenceRows, programId) {
 }
 
 /**
- * Whether a piece can be filed: the same test the server's import applies
- * (functions/src/lib/ambassador/import-readers.js isLiveContent), so the
- * button shows exactly when the import would accept the piece. That covers
- * an older document marked live by its `Status` (review of #1891).
+ * Whether a piece can be filed: exactly the test the server's import applies
+ * (functions/src/lib/ambassador/import-readers.js isLiveContent): `Live` is
+ * true, or the older `Status` is "Live", or the status is "published", and
+ * the piece is not deleted. The same rule on both sides means the button
+ * shows exactly when the import would accept the piece (reviews of #1891).
  */
 export function isLivePiece(piece) {
   if (!piece || ![undefined, null, '', false].includes(piece.softDeletedAt)) return false;
-  return contentStatusInfo(piece).stage === 'live' || piece.Status === 'Live';
+  return piece.Live === true || piece.Status === 'Live' || piece.contentStatus === 'published';
 }
 
 /** The program's reference, as the hand-off sends it. */
