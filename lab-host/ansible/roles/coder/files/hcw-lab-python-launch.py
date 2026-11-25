@@ -1,6 +1,6 @@
 """Check a root helper's modules, then run the helper from them (#1845).
 
-Installed as /usr/local/libexec/hcw-lab-python-launch, root:root 0644, by the
+Installed as /usr/local/libexec/hcw-lab-python-launch, root:root 0640, by the
 coder role and by the portainer role from this same file
 (roles/portainer/vars/main.yml, portainer_launcher_source), so the two copies
 cannot drift. It is not run on its own. Two root helpers load it by that
@@ -20,6 +20,9 @@ refuses to run with one line naming the path otherwise, that:
 - that directory holds the helper's package and nothing else, so nothing
   beside it can stand in for a module of the standard library once the
   directory is first on the module path;
+- the package has its __init__.py, so it is an ordinary package and not a
+  namespace package, whose modules Python would also look for in
+  directories this check never reads;
 - every directory and file in the package is a real directory or regular
   file, owned by root and writable by root only.
 
@@ -95,6 +98,11 @@ def trust_problem(lib_dir, package, owner=0, top="/"):
         return problem
     if sorted(os.listdir(lib_dir)) != [package]:
         return f"{lib_dir} must hold {package} and nothing else"
+    # Without __init__.py the package would be a namespace package, which
+    # Python also gathers from every other directory on the path, dist-packages
+    # included, none of which this check reads.
+    if not os.path.isfile(os.path.join(lib_dir, package, "__init__.py")):
+        return f"{os.path.join(lib_dir, package)} has no __init__.py"
     return first_problem(package_entries(os.path.join(lib_dir, package)), owner)
 
 

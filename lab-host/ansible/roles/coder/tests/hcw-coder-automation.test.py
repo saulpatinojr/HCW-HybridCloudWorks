@@ -127,15 +127,15 @@ def constants_of(text):
 
 
 def stage_tree(top, lib_dir, package_dir):
-    """Install a copy of a package under top, at lib_dir, as the role does: directories 0755, files 0644."""
+    """Install a copy of a package under top, at lib_dir, as the role does: directories 0750, files 0640."""
     target = pathlib.Path(str(top) + lib_dir) / package_dir.name
     target.mkdir(parents=True)
     for source in package_dir.glob("*.py"):
         shutil.copyfile(source, target / source.name)
-        (target / source.name).chmod(0o644)
+        (target / source.name).chmod(0o640)
     directory = target
     while directory != pathlib.Path(top):
-        directory.chmod(0o755)
+        directory.chmod(0o750)
         directory = directory.parent
     return target
 
@@ -254,27 +254,39 @@ check("the helper hands the installed launcher the module directory and package 
       json.dumps(entry_constants))
 dirs_task, body = task_using("ansible.builtin.file", path="{{ item }}", state="directory")
 package_path = f"{LIB_DIR}/{PACKAGE_DIR.name}"
-check("the role makes every directory down to the package root:root 0755",
-      body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0755")
+check("the role makes every directory down to the package root:root 0750",
+      body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0750")
       and dirs_task.get("loop") == ["/usr/local/lib/hcw-lab", LIB_DIR, package_path], str(dirs_task))
 modules_task, body = task_using("ansible.builtin.copy", src=f"{PACKAGE_DIR.name}/{{{{ item }}}}")
 role_vars = yaml.safe_load((ROLE / "vars" / MAIN_YML).read_text(encoding="utf-8"))
-check("the role installs every module, and only those, root:root 0644 in the package's directory",
+check("the role installs every module, and only those, root:root 0640 in the package's directory",
       body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
-      == (f"{package_path}/{{{{ item }}}}", "root", "root", "0644")
+      == (f"{package_path}/{{{{ item }}}}", "root", "root", "0640")
       and modules_task.get("loop") == "{{ coder_automation_modules }}"
       and role_vars["coder_automation_modules"] == [module.name for module in modules],
       json.dumps(role_vars.get("coder_automation_modules")))
 launcher_task, body = task_using("ansible.builtin.copy", src=LAUNCHER_FILE)
-check("the role installs the launcher where the helper loads it, root:root 0644",
+check("the role installs the launcher where the helper loads it, root:root 0640",
       body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
-      == (INSTALLED_LAUNCHER, "root", "root", "0644"), str(body))
+      == (INSTALLED_LAUNCHER, "root", "root", "0640"), str(body))
+find_task, body = task_using("ansible.builtin.find", paths=package_path)
+check("the role finds every *.py that is not a listed module, and any __pycache__, in the installed package",
+      body is not None and body.get("patterns") == ["*.py", "__pycache__"]
+      and body.get("excludes") == "{{ coder_automation_modules }}" and body.get("file_type") == "any"
+      and body.get("hidden") is True and find_task.get("register") == "coder_automation_stale_modules", str(find_task))
+# The role has another find-and-remove pair (the lab launcher's files), so
+# this one is found by what it loops over.
+remove_task = next((task for task in tasks
+                    if task.get("loop") == "{{ coder_automation_stale_modules.files | default([]) }}"), None)
+body = (remove_task or {}).get("ansible.builtin.file")
+check("and removes what it found",
+      isinstance(body, dict) and body == {"path": "{{ item.path }}", "state": "absent"}, str(remove_task))
 helper_task, _ = task_using("ansible.builtin.copy", src=HELPER_FILE)
 order = [task.get("name") for task in tasks]
-check("the modules and the launcher go in before the helper that loads them",
-      None not in (dirs_task, modules_task, launcher_task, helper_task)
-      and order.index(dirs_task["name"]) < order.index(modules_task["name"]) < order.index(launcher_task["name"])
-      < order.index(helper_task["name"]), str(order))
+steps = (dirs_task, modules_task, find_task, remove_task, launcher_task, helper_task)
+check("the modules go in, unlisted files go out, then the launcher, all before the helper that loads them",
+      None not in steps and [order.index(task["name"]) for task in steps] == sorted(order.index(task["name"]) for task in steps),
+      str(order))
 check("the rendered configuration names Coder on the port the Compose file publishes on the loopback",
       config["coder_url"] == f"http://127.0.0.1:{defaults['coder_http_port']}"
       and f'"127.0.0.1:{defaults["coder_http_port"]}:7080"' in compose, config["coder_url"])
@@ -1407,6 +1419,19 @@ verdict = trust(top, lib)
 check("a module its group can write is refused, by name",
       verdict == f"{package / 'cli.py'} is writable by its group or by others", str(verdict))
 
+top, lib, package = fresh_tree("group-writable-subfolder")
+(package / "__pycache__").mkdir()
+(package / "__pycache__").chmod(0o770)
+verdict = trust(top, lib)
+check("a folder inside the package its group can write, such as __pycache__, is refused, by name",
+      verdict == f"{package / '__pycache__'} is writable by its group or by others", str(verdict))
+
+top, lib, package = fresh_tree("no-init")
+(package / "__init__.py").unlink()
+verdict = trust(top, lib)
+check("a package without __init__.py, which Python would treat as a namespace package, is refused",
+      verdict == f"{package} has no __init__.py", str(verdict))
+
 top, lib, package = fresh_tree("world-writable-parent")
 pathlib.Path(top + "/usr/local/lib").chmod(0o777)
 verdict = trust(top, lib)
@@ -1430,7 +1455,7 @@ check("a module directory that is a symbolic link is refused, even to a good tre
 
 top, lib, package = fresh_tree("shadow")
 (pathlib.Path(lib) / "json.py").write_text("raise SystemExit('shadowed')\n", encoding="utf-8")
-pathlib.Path(lib, "json.py").chmod(0o644)
+pathlib.Path(lib, "json.py").chmod(0o640)
 verdict = trust(top, lib)
 check("anything beside the package, which would come before the standard library on the path, is refused",
       verdict == f"{lib} must hold hcw_launch_probe and nothing else", str(verdict))

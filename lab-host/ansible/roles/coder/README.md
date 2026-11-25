@@ -121,7 +121,7 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
     `/usr/local/lib/hcw-lab/coder-automation/hcw_coder_automation/` and the
     launcher that checks them, `files/hcw-lab-python-launch.py`, as
     `/usr/local/libexec/hcw-lab-python-launch` (directories `root:root`
-    `0755`, files `root:root` `0644`; "The modules", below),
+    `0750`, files `root:root` `0640`; "The modules", below),
     its configuration `/etc/hcw/coder/automation.json` (paths and names, no
     secret), the rotation credential's directory `/etc/hcw/coder/automation`
     and the state directory `/var/lib/hcw-coder-automation` (both `root`
@@ -305,6 +305,14 @@ prints one line naming the path, `hcw-coder-automation: refusing to run:
 which fails the unit (and its alert) like any other failure. No path comes
 from the environment, an argument or the working directory, and no bytecode
 is written, so the installed files stay exactly what the role copied.
+The directories are `0750` and the files `0640`, root's alone to read as the
+single script was, and the launcher also refuses a package without its
+`__init__.py` (Python would otherwise treat it as a namespace package and
+look for its modules in directories nobody checked). After copying, the role
+removes any `*.py` in the package that is no longer in
+`coder_automation_modules` (`vars/main.yml`), and any `__pycache__` folder.
+A timer run that starts while `bootstrap.sh` is copying the modules can fail
+once with an import error; the next run, after the copy, works.
 
 ### The rotation credential
 
@@ -848,7 +856,9 @@ defaults. No root, no Docker, no network. It checks:
   launcher exactly the paths the tasks install to; the launcher refuses,
   naming the path and importing nothing, a module or directory its group or
   anyone else can write, a symbolic link (to a file or to the module
-  directory), anything beside the package, a missing package, and a tree
+  directory), a folder inside the package its group can write, a package
+  without `__init__.py`, anything beside the package, a missing package, and
+  a tree
   not owned by root (when the test is not run as root), and runs a sound
   one.
 

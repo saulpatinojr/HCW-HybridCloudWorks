@@ -191,7 +191,7 @@
     state: directory
     owner: root
     group: root
-    mode: "0755"
+    mode: "0750"
   loop:
     - /usr/local/lib/hcw-lab
     - /usr/local/lib/hcw-lab/portainer-check
@@ -206,8 +206,33 @@
     dest: "/usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check/{{ item }}"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
   loop: "{{ portainer_helper_modules }}"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+# A module a later change renamed or dropped would otherwise stay installed,
+# and a __pycache__ folder is nothing the role copied, so both are removed.
+- name: Find files in the check's package that are not its modules
+  ansible.builtin.find:
+    paths: /usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check
+    patterns: ["*.py", "__pycache__"]
+    excludes: "{{ portainer_helper_modules }}"
+    file_type: any
+    hidden: true
+  register: portainer_stale_modules
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Remove the check's files that are not its modules
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ portainer_stale_modules.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
   when:
     - portainer_enabled | bool
     - portainer_check_enabled | bool
@@ -218,7 +243,7 @@
     dest: /usr/local/libexec/hcw-lab-python-launch
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
   when:
     - portainer_enabled | bool
     - portainer_check_enabled | bool

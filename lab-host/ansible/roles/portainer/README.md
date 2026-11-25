@@ -140,7 +140,7 @@ scrub, messages, the configuration and the credential), `api.py`
 in the order a run makes them), `delivery.py` (the site's CLI) and `cli.py`
 (the run). The functions moved unchanged (#1845). The role installs it in
 `/usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check/` (directories
-`root:root` `0755`, files `root:root` `0644`, listed in `vars/main.yml`'s
+`root:root` `0750`, files `root:root` `0640`, listed in `vars/main.yml`'s
 `portainer_helper_modules`) and the coder role's launcher,
 `../coder/files/hcw-lab-python-launch.py`, as
 `/usr/local/libexec/hcw-lab-python-launch`. The script in
@@ -149,7 +149,10 @@ directory and the package name, and the launcher refuses to import anything,
 printing one line naming the path and exiting 1, unless every directory from
 `/` down to the package and every file in it is root's alone to write, with
 no symbolic link and nothing else beside the package (`../coder/README.md`,
-"The modules", has the reasons).
+"The modules", has the reasons). The role also removes any `*.py` in the
+package that is no longer listed, and any `__pycache__` folder. A timer run
+that starts while `bootstrap.sh` is copying the modules can fail once with
+an import error; the next run, after the copy, works.
 
 **How it reaches the site.** Through the lab agent's own CLI,
 `vps-agent/bin/report-host-check.js`, run as the agent's user with the

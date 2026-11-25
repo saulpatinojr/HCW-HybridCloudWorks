@@ -60,7 +60,7 @@ Portainer's API, the report's fields, the reads, the delivery, the run) on
 2026-11-25 so that no file is too complex to review (#1845). The portainer
 role installs it as
 /usr/local/lib/hcw-lab/portainer-check/hcw_portainer_check/, every directory
-root:root 0755 and every file root:root 0644, and installs
+root:root 0750 and every file root:root 0640, and installs
 /usr/local/libexec/hcw-lab-python-launch from the coder role's
 files/hcw-lab-python-launch.py. That file checks, before anything is
 imported, that every directory from / down to the package and every file in

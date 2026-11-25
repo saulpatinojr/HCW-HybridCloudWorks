@@ -114,7 +114,7 @@ Coder's API, the files, the delivery to the site, the rotation credential,
 the status token, and one module per command) on 2026-11-25 so that no file
 is too complex to review (#1845). The coder role installs it as
 /usr/local/lib/hcw-lab/coder-automation/hcw_coder_automation/, every
-directory root:root 0755 and every file root:root 0644, and installs
+directory root:root 0750 and every file root:root 0640, and installs
 /usr/local/libexec/hcw-lab-python-launch from this role's
 files/hcw-lab-python-launch.py. That file checks, before anything is
 imported, that every directory from / down to the package and every file in

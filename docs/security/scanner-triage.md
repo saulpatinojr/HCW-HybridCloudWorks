@@ -745,8 +745,8 @@ the single file was:
 
 - They are installed in a fixed directory per script,
   `/usr/local/lib/hcw-lab/coder-automation/` and
-  `/usr/local/lib/hcw-lab/portainer-check/`, directories `root:root` `0755`
-  and files `root:root` `0644`, by the roles' own tasks.
+  `/usr/local/lib/hcw-lab/portainer-check/`, directories `root:root` `0750`
+  and files `root:root` `0640`, by the roles' own tasks.
 - Both scripts load one launcher,
   `lab-host/ansible/roles/coder/files/hcw-lab-python-launch.py` (installed
   as `/usr/local/libexec/hcw-lab-python-launch` beside the scripts), with the
@@ -755,7 +755,9 @@ the single file was:
   in it is a real directory or file, owned by root and writable by root
   alone, and that the directory holds the package and nothing else (so no
   file there can stand in for a standard-library module once it is first on
-  the module path). Otherwise it prints one line naming the path and exits
+  the module path), and that the package has its `__init__.py` (without
+  it Python would treat it as a namespace package and also look for its
+  modules in `dist-packages`, which the check never reads). Otherwise it prints one line naming the path and exits
   1, which fails the unit and raises the lab alert like any other failure.
 - The scripts still run under `python3 -I`, so no path comes from the
   environment, the working directory or the user's site-packages, and no

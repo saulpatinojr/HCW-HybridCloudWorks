@@ -147,15 +147,15 @@ def constants_of(text):
 
 
 def stage_package(top):
-    """Install a copy of the modules under top, at the role's path, as the role does: directories 0755, files 0644."""
+    """Install a copy of the modules under top, at the role's path, as the role does: directories 0750, files 0640."""
     target = pathlib.Path(str(top) + LIB_DIR) / PACKAGE_DIR.name
     target.mkdir(parents=True)
     for source in PACKAGE_DIR.glob("*.py"):
         shutil.copyfile(source, target / source.name)
-        (target / source.name).chmod(0o644)
+        (target / source.name).chmod(0o640)
     directory = target
     while directory != pathlib.Path(top):
-        directory.chmod(0o755)
+        directory.chmod(0o750)
         directory = directory.parent
 
 
@@ -422,28 +422,39 @@ def check_module_tasks(role):
     package = f"{LIB_DIR}/{PACKAGE_DIR.name}"
     names = [task.get("name", "") for task in tasks]
     dirs_task, body = task_using(tasks, "ansible.builtin.file", path="{{ item }}", state="directory")
-    check("the role makes every directory down to the package root:root 0755, while the check is installed",
-          body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0755")
+    check("the role makes every directory down to the package root:root 0750, while the check is installed",
+          body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0750")
           and dirs_task.get("loop") == ["/usr/local/lib/hcw-lab", LIB_DIR, package] and dirs_task.get("when") == when,
           str(dirs_task))
     files_task, body = task_using(tasks, "ansible.builtin.copy", src=f"{PACKAGE_DIR.name}/{{{{ item }}}}")
-    check("the role installs every module, and only those, root:root 0644 in the package's directory",
+    check("the role installs every module, and only those, root:root 0640 in the package's directory",
           body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
-          == (f"{package}/{{{{ item }}}}", "root", "root", "0644")
+          == (f"{package}/{{{{ item }}}}", "root", "root", "0640")
           and files_task.get("loop") == "{{ portainer_helper_modules }}" and files_task.get("when") == when
           and defaults["portainer_helper_modules"] == sorted(module.name for module in PACKAGE_DIR.glob("*.py")),
           json.dumps(defaults.get("portainer_helper_modules")))
     launcher_task, body = task_using(tasks, "ansible.builtin.copy", src="{{ portainer_launcher_source }}")
-    check("the role installs the coder role's launcher where the script loads it, root:root 0644",
+    check("the role installs the coder role's launcher where the script loads it, root:root 0640",
           body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
-          == (INSTALLED_LAUNCHER, "root", "root", "0644") and launcher_task.get("when") == when
+          == (INSTALLED_LAUNCHER, "root", "root", "0640") and launcher_task.get("when") == when
           and defaults["portainer_launcher_source"].endswith("/../coder/files/hcw-lab-python-launch.py"),
           str(launcher_task))
-    _, script = task_using(tasks, "ansible.builtin.copy", src="hcw-portainer-check")
-    check("the modules and the launcher go in before the script that loads them",
-          None not in (dirs_task, files_task, launcher_task, script)
-          and names.index(dirs_task["name"]) < names.index(files_task["name"]) < names.index(launcher_task["name"])
-          < names.index(next(task["name"] for task in tasks if task.get("ansible.builtin.copy") is script)),
+    find_task, body = task_using(tasks, "ansible.builtin.find", paths=package)
+    check("the role finds every *.py that is not a listed module, and any __pycache__, in the installed package",
+          body is not None and body.get("patterns") == ["*.py", "__pycache__"]
+          and body.get("excludes") == "{{ portainer_helper_modules }}" and body.get("file_type") == "any"
+          and body.get("hidden") is True and find_task.get("register") == "portainer_stale_modules"
+          and find_task.get("when") == when, str(find_task))
+    remove_task, body = task_using(tasks, "ansible.builtin.file", path="{{ item.path }}", state="absent")
+    check("and removes what it found, under the same conditions",
+          body is not None and remove_task.get("loop") == "{{ portainer_stale_modules.files | default([]) }}"
+          and remove_task.get("when") == when, str(remove_task))
+    script_task = next((task for task in tasks if isinstance(task.get("ansible.builtin.copy"), dict)
+                        and task["ansible.builtin.copy"].get("src") == "hcw-portainer-check"), None)
+    steps = (dirs_task, files_task, find_task, remove_task, launcher_task, script_task)
+    check("the modules go in, unlisted files go out, then the launcher, all before the script that loads them",
+          None not in steps
+          and [names.index(task["name"]) for task in steps] == sorted(names.index(task["name"]) for task in steps),
           str(names))
 
 

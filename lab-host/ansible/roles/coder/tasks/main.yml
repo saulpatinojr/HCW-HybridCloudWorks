@@ -382,7 +382,7 @@
     state: directory
     owner: root
     group: root
-    mode: "0755"
+    mode: "0750"
   loop:
     - /usr/local/lib/hcw-lab
     - /usr/local/lib/hcw-lab/coder-automation
@@ -394,8 +394,27 @@
     dest: "/usr/local/lib/hcw-lab/coder-automation/hcw_coder_automation/{{ item }}"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
   loop: "{{ coder_automation_modules }}"
+
+# A module a later change renamed or dropped would otherwise stay installed,
+# and a __pycache__ folder is nothing the role copied, so both are removed.
+- name: Find files in hcw-coder-automation's package that are not its modules
+  ansible.builtin.find:
+    paths: /usr/local/lib/hcw-lab/coder-automation/hcw_coder_automation
+    patterns: ["*.py", "__pycache__"]
+    excludes: "{{ coder_automation_modules }}"
+    file_type: any
+    hidden: true
+  register: coder_automation_stale_modules
+
+- name: Remove the files in hcw-coder-automation's package that are not its modules
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ coder_automation_stale_modules.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
 
 - name: Install the launcher that checks the modules before hcw-coder-automation imports them
   ansible.builtin.copy:
@@ -403,7 +422,7 @@
     dest: /usr/local/libexec/hcw-lab-python-launch
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
 
 - name: Install hcw-coder-automation, which renews the status token, publishes the template and reports
   ansible.builtin.copy:
