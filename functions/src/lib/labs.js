@@ -468,15 +468,29 @@ async function cancelLabJob({ guard, store, now }, request, context) {
     const refused = cancelRefusal(job);
     if (refused) return refused;
 
-    await store.patchDoc('lab_jobs', jobId, {
-      status: 'cancelled',
-      finishedAt: now().toISOString(),
-      cancelledBy: user.oid ?? user.sub,
-    });
+    // The write carries the ETag (the version stamp the read came back
+    // with), so it only lands if the job is still as it was read. Without
+    // it, an agent claiming the job between the read and this write would
+    // be overwritten with `cancelled` while it runs the job.
+    await store.patchDoc(
+      'lab_jobs',
+      jobId,
+      {
+        status: 'cancelled',
+        finishedAt: now().toISOString(),
+        cancelledBy: user.oid ?? user.sub,
+      },
+      { ifMatch: job._etag }
+    );
 
     context.log('cancelLabJob');
     return json(200, { jobId, status: 'cancelled' });
   } catch (error) {
+    // 412: the job changed between the read and the write, so nothing was
+    // written. Answered 409 like the agent's side (completeLabJob).
+    if (error?.code === 412) {
+      return json(409, { error: 'Job changed while it was being cancelled; nothing was cancelled' });
+    }
     return errorResponse(context, 'Cancel failed', error, 500, request);
   }
 }
