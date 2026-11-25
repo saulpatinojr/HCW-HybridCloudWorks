@@ -199,6 +199,10 @@ describe('latestFromRegistry', () => {
     expect(latestFromRegistry({ version: '0.22.0' }, 'x').tag).toBeNull();
   });
 
+  it('treats a tag of null the same as no tag', () => {
+    expect(latestFromRegistry({ version: '0.22.0', tag: null }, 'x').tag).toBeNull();
+  });
+
   it('refuses a pre-release, a missing version, or a tag that is not v<version>', () => {
     expect(() => latestFromRegistry({ version: '0.22.0-beta.1' }, 'avm-ptn-alz')).toThrow(
       RegistryError

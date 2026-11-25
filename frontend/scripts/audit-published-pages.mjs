@@ -41,20 +41,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from '@playwright/test';
-import { listenForFailures, loadPage } from './page-audit-browser.mjs';
-import {
-  FETCH_TIMEOUT_MS,
-  PROVIDER_NAMES,
-  consoleFindings,
-  decideEmptiness,
-  providerFindings,
-  toMarkdown,
-} from './page-audit-rules.mjs';
-
-// The judging rules and report live in page-audit-rules.mjs and the
-// in-browser steps in page-audit-browser.mjs. What this file exported before
-// is re-exported here, so the test keeps one import path.
-export { CANCELLED_REQUEST, decideEmptiness } from './page-audit-rules.mjs';
 
 /**
  * Command line and environment → options. A pure function that throws on a
@@ -91,6 +77,118 @@ export function parseOptions(argv, env) {
 /** Set by main() from parseOptions(); null while the module is merely imported. */
 let options = null;
 
+const API_HOST = 'api-azure.hybridcloudworks.com';
+
+/** Every fetch outside the browser is bounded, so a hung host stalls one
+ * request, not a lane and not the 40-minute workflow. */
+const FETCH_TIMEOUT_MS = 15000;
+
+/** First path segment → what the title/og:title must mention. */
+const PROVIDER_NAMES = {
+  azure: ['Azure'],
+  aws: ['AWS', 'Amazon Web Services'],
+  gcp: ['Google Cloud', 'GCP'],
+  github: ['GitHub'],
+  terraform: ['Terraform'],
+  finops: ['FinOps'],
+  vmware: ['VMware'],
+  ansible: ['Ansible'],
+  docker: ['Docker'],
+};
+
+/** The site's own empty-state copy (grep of frontend/src, 2026-09-06). */
+const EMPTY_COPY = [
+  'No episodes available yet.',
+  'Coming Soon',
+  'coming soon',
+  'Nothing here.',
+  'No articles in this category yet.',
+  'No content available.',
+  'Check back soon for updates.',
+  'No published frameworks found for',
+  's published yet.',
+];
+
+/**
+ * Failures the repository has already decided to live with. They are recorded
+ * on the page (notes) but do not make it a defect, because re-raising a
+ * decided item on every crawl is noise that hides the next real one. Each
+ * entry names the decision.
+ */
+const KNOWN_ACCEPTED = [
+  {
+    match: (u) => /\/data\/(certifications|speakerevents)\.json$/.test(u),
+    note: 'static data snapshot absent (issue #175: Cloudflare challenges the CI generator; the page falls back to the API at runtime)',
+  },
+];
+
+/**
+ * A request the browser cancelled rather than one the network failed to
+ * serve. See the `requestfailed` handler for why this is not a defect.
+ */
+export const CANCELLED_REQUEST = /net::ERR_ABORTED/i;
+
+/** Below this many characters of main-region text a page is "thin". */
+const THIN_MAIN_CHARS = 400;
+
+/** Empty-state copy makes a page "empty" only below this much main text. */
+const EMPTY_COPY_MAX_CHARS = 800;
+
+/**
+ * The emptiness verdict for a page with no defect, as a pure function so the
+ * thresholds are testable (audit-published-pages.test.js):
+ *
+ *   - under THIN_MAIN_CHARS: `empty`, with the copy (when present) recorded
+ *     beside the count — "Coming Soon" is a decision, a bare heading is
+ *     missing content, and the row should say which;
+ *   - from THIN_MAIN_CHARS up to EMPTY_COPY_MAX_CHARS with empty-state copy:
+ *     `empty` — an empty listing with a header and a footer widget;
+ *   - at or above EMPTY_COPY_MAX_CHARS with empty-state copy: `works`, and a
+ *     note — one widget on a full page (the podcast panel on `/azure`, 2,000+
+ *     chars around it). The post-deploy run of 2026-09-06 marked three
+ *     landings "empty" on that alone, which is why the cutoff exists;
+ *   - otherwise `works`.
+ */
+export function decideEmptiness({ mainChars, emptyCopy = [] }) {
+  const copy = emptyCopy.length ? `empty-state copy: ${emptyCopy.join(' | ')}` : null;
+  if (mainChars < THIN_MAIN_CHARS) {
+    return {
+      verdict: 'empty',
+      findings: [`thin main region: ${mainChars} chars`, ...(copy ? [copy] : [])],
+      notes: [],
+    };
+  }
+  if (copy && mainChars < EMPTY_COPY_MAX_CHARS) {
+    return { verdict: 'empty', findings: [copy], notes: [] };
+  }
+  if (copy) {
+    return { verdict: 'works', findings: [], notes: [`a widget shows ${copy}`] };
+  }
+  return { verdict: 'works', findings: [], notes: [] };
+}
+
+/** Console noise that is not a page defect. Keep this list short and named. */
+const CONSOLE_IGNORE = [/Third-party cookie will be blocked/i, /favicon\.ico/i];
+
+/**
+ * Named classes for console errors, so a site-wide error reads as one class
+ * across 120 rows instead of 120 unrelated findings. Order matters: first
+ * match wins; anything else is `console-other` and keeps its text in the JSON.
+ */
+const CONSOLE_CLASSES = [
+  ['csp-inline-script', /violates the following Content Security Policy directive 'script-src/i],
+  ['csp-other', /Content Security Policy/i],
+  ['react-hydration-419', /Minified React error #419/],
+  ['react-hydration-418', /Minified React error #418/],
+  ['react-error', /Minified React error #\d+/],
+  ['network-failed', /Failed to load resource/i],
+];
+
+function classifyConsole(text) {
+  for (const [name, re] of CONSOLE_CLASSES) if (re.test(text)) return name;
+  return 'console-other';
+}
+
 async function readSitemap() {
   const res = await fetch(options.sitemap, {
     headers: { 'User-Agent': 'HCW-page-audit/1.0' },
@@ -115,6 +213,123 @@ const sitemapStats = { total: 0, duplicates: 0 };
 function providerOf(url) {
   const seg = new URL(url).pathname.split('/').filter(Boolean)[0] || '';
   return PROVIDER_NAMES[seg] ? seg : null;
+}
+
+/**
+ * Is the media reachable? HEAD first; hosts that refuse HEAD (405/501) or
+ * Range-on-HEAD get one ranged GET, which costs a single byte, so a host
+ * that serves audio fine is never reported as "not served".
+ */
+async function mediaStatus(url) {
+  try {
+    const head = await fetch(url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if ([200, 206].includes(head.status)) return head.status;
+    if (![405, 501, 403, 416].includes(head.status)) return head.status;
+  } catch {
+    // fall through to the ranged GET
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    await res.body?.cancel?.();
+    return res.status;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The console errors as findings, one line per kind of error. Chromium's
+ * "Failed to load resource" line does not always carry the resource URL, so
+ * the page listener cannot always match it to an accepted failure. Each
+ * accepted failed response accounts for at most one such line; the remainder
+ * is a real finding. Also records the kinds seen on `record.consoleClasses`.
+ */
+function consoleFindings(record) {
+  const byClass = new Map();
+  for (const text of record.consoleErrors) {
+    const c = classifyConsole(text);
+    byClass.set(c, (byClass.get(c) || 0) + 1);
+  }
+  if (byClass.has('network-failed') && record.acceptedFailures > 0) {
+    const left = byClass.get('network-failed') - record.acceptedFailures;
+    if (left > 0) byClass.set('network-failed', left);
+    else byClass.delete('network-failed');
+  }
+  record.consoleClasses = [...byClass.keys()];
+  return [...byClass].map(([c, n]) => `console ${c}: ${n}`);
+}
+
+/**
+ * Whether the title, og:title and theme class agree with the provider the
+ * URL names (the #183 bug). A blog post's title is the article's, not the
+ * section's; the section pages and landings are where the provider name is
+ * expected. The theme class is checked everywhere — that is the #183 symptom.
+ */
+function providerFindings(record) {
+  const names = PROVIDER_NAMES[record.provider].map((n) => n.toLowerCase());
+  const has = (s) =>
+    names.some((n) =>
+      String(s || '')
+        .toLowerCase()
+        .includes(n)
+    );
+  const isDetail = /\/blog\/[^/]+$/.test(record.path);
+  const findings = [];
+  if (!isDetail && !has(record.title)) {
+    findings.push(`title lacks provider name: "${record.title}"`);
+  }
+  if (!isDetail && record.ogTitle && !has(record.ogTitle)) {
+    findings.push(`og:title lacks provider name: "${record.ogTitle}"`);
+  }
+  if (record.themeClass && record.themeClass !== `theme-${record.provider}`) {
+    findings.push(`theme class ${record.themeClass} on a ${record.provider} URL`);
+  }
+  return findings;
+}
+
+/**
+ * Turn what was seen on a page into findings and a verdict, in place: any
+ * finding makes the page a `defect`; with none, decideEmptiness says whether
+ * it is `empty` or `works`. Exported so a test can hand in a record without
+ * starting a browser.
+ */
+export function judgeRecord(record) {
+  const f = record.findings;
+  // No document response (navigation threw, timed out, or the host was
+  // unreachable) is its own class, not "http null": the page error recorded
+  // during navigation carries the reason, and the row must not read as the
+  // site answering.
+  if (record.status === null) f.push('no response');
+  else if (record.status !== 200) f.push(`http ${record.status}`);
+  if (record.pageErrors.length) f.push(`page errors: ${record.pageErrors.length}`);
+  if (record.consoleErrors.length) f.push(...consoleFindings(record));
+  if (record.apiFailures.length) {
+    f.push(
+      `API failures: ${record.apiFailures.map((a) => `${new URL(a.url).pathname}→${a.status}`).join(', ')}`
+    );
+  }
+  if (record.failedRequests.length) f.push(`failed requests: ${record.failedRequests.length}`);
+  if (record.provider) f.push(...providerFindings(record));
+  if (record.brokenImages.length) f.push(`broken images: ${record.brokenImages.length}`);
+  const badMedia = record.media.filter((m) => ![200, 206].includes(m.status));
+  if (badMedia.length) f.push(`media not served: ${badMedia.map((m) => m.status).join(',')}`);
+
+  if (f.length) {
+    record.verdict = 'defect';
+  } else {
+    const decision = decideEmptiness(record);
+    record.verdict = decision.verdict;
+    f.push(...decision.findings);
+    record.notes.push(...decision.notes);
+  }
+  return record;
 }
 
 async function auditPage(context, url) {
@@ -143,44 +358,103 @@ async function auditPage(context, url) {
     verdict: 'works',
   };
 
-  listenForFailures(page, record);
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (CONSOLE_IGNORE.some((re) => re.test(text))) return;
+    // A "Failed to load resource" for a request the repository has already
+    // accepted (KNOWN_ACCEPTED) is the same fact twice; the note covers it.
+    const at = msg.location()?.url || '';
+    if (at && KNOWN_ACCEPTED.some((k) => k.match(at))) return;
+    record.consoleErrors.push(text.slice(0, 300));
+  });
+  page.on('pageerror', (err) => record.pageErrors.push(String(err?.message || err).slice(0, 300)));
+  // One shape for every entry in failedRequests / apiFailures:
+  // { url, kind: 'network' | 'http', status: number | null, error: string | null }.
+  page.on('requestfailed', (req) => {
+    const error = req.failure()?.errorText || 'failed';
+    // A cancelled request is not a failed one. Chromium reports
+    // `net::ERR_ABORTED` when the browser drops a request in flight — the
+    // crawler navigating away, the page closing, or the app's own
+    // AbortController firing on unmount. On 2026-09-07 this made the home page
+    // a defect for `public/platform-health`, which answered 200 with a valid
+    // body when asked directly a minute later. Recording it as a defect hides
+    // the next real one, which is the whole reason KNOWN_ACCEPTED exists.
+    if (CANCELLED_REQUEST.test(error)) return;
+    record.failedRequests.push({ url: req.url(), kind: 'network', status: null, error });
+  });
+  page.on('response', (res) => {
+    const st = res.status();
+    if (st < 400) return;
+    const u = res.url();
+    const entry = { url: u, kind: 'http', status: st, error: null };
+    const accepted = KNOWN_ACCEPTED.find((k) => k.match(u));
+    if (accepted) {
+      if (!record.notes.includes(accepted.note)) record.notes.push(accepted.note);
+      record.acceptedFailures += 1;
+      return;
+    }
+    if (new URL(u).host === API_HOST) record.apiFailures.push(entry);
+    else record.failedRequests.push(entry);
+  });
 
   try {
-    await loadPage(page, url, record);
+    let response;
+    try {
+      response = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+    } catch {
+      response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      await page.waitForTimeout(3000);
+    }
+    record.status = response ? response.status() : null;
+    await page.waitForTimeout(1500);
+
+    const dom = await page.evaluate(
+      ({ emptyCopy }) => {
+        const q = (s) => document.querySelector(s);
+        const main = q('main') || document.body;
+        const text = (main?.innerText || '').replace(/\s+/g, ' ').trim();
+        const themed = document.querySelector('[class*="theme-"]');
+        const themeClass = themed ? (themed.className.match(/\btheme-[a-z]+\b/) || [''])[0] : '';
+        return {
+          title: document.title || '',
+          ogTitle: q('meta[property="og:title"]')?.getAttribute('content') || '',
+          canonical: q('link[rel="canonical"]')?.getAttribute('href') || '',
+          themeClass,
+          h1: (q('h1')?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+          mainChars: text.length,
+          emptyCopy: emptyCopy.filter((c) => text.includes(c)),
+          brokenImages: [...document.images]
+            .filter((img) => img.complete && img.naturalWidth === 0 && img.getAttribute('src'))
+            .map((img) => img.getAttribute('src'))
+            .slice(0, 10),
+          media: [
+            ...document.querySelectorAll(
+              'audio[src], audio source[src], video[src], video source[src]'
+            ),
+          ]
+            .map((el) => el.getAttribute('src'))
+            .filter(Boolean)
+            .slice(0, 10),
+        };
+      },
+      { emptyCopy: EMPTY_COPY }
+    );
+    Object.assign(record, dom);
+
+    record.media = await Promise.all(
+      dom.media.map(async (src) => {
+        const abs = new URL(src, url).href;
+        return { url: abs, status: await mediaStatus(abs) };
+      })
+    );
   } catch (error) {
     record.pageErrors.push(`navigation: ${String(error?.message || error).slice(0, 300)}`);
   } finally {
     await page.close().catch(() => {});
   }
 
-  // ── Findings ──────────────────────────────────────────────────────────
-  const f = record.findings;
-  // No document response (navigation threw, timed out, or the host was
-  // unreachable) is its own class, not "http null": the page error above
-  // carries the reason, and the row must not read as the site answering.
-  if (record.status === null) f.push('no response');
-  else if (record.status !== 200) f.push(`http ${record.status}`);
-  if (record.pageErrors.length) f.push(`page errors: ${record.pageErrors.length}`);
-  consoleFindings(record);
-  if (record.apiFailures.length) {
-    f.push(
-      `API failures: ${record.apiFailures.map((a) => `${new URL(a.url).pathname}→${a.status}`).join(', ')}`
-    );
-  }
-  if (record.failedRequests.length) f.push(`failed requests: ${record.failedRequests.length}`);
-  if (record.provider) providerFindings(record);
-  if (record.brokenImages.length) f.push(`broken images: ${record.brokenImages.length}`);
-  const badMedia = record.media.filter((m) => ![200, 206].includes(m.status));
-  if (badMedia.length) f.push(`media not served: ${badMedia.map((m) => m.status).join(',')}`);
-
-  if (f.length) {
-    record.verdict = 'defect';
-  } else {
-    const decision = decideEmptiness(record);
-    record.verdict = decision.verdict;
-    f.push(...decision.findings);
-    record.notes.push(...decision.notes);
-  }
+  judgeRecord(record);
   return record;
 }
 
@@ -198,6 +472,53 @@ async function runPool(items, worker, size) {
   }
   await Promise.all(Array.from({ length: Math.min(size, items.length) }, lane));
   return results;
+}
+
+/** A table cell: backslashes first, then pipes, so neither breaks the row. */
+function escapeCell(text) {
+  return String(text).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+}
+
+function toMarkdown(records, meta) {
+  const counts = { works: 0, empty: 0, defect: 0 };
+  for (const r of records) counts[r.verdict] += 1;
+  const lines = [
+    `# Published pages audit — ${meta.startedAt.slice(0, 10)}`,
+    '',
+    `Base: ${meta.baseUrl} · sitemap entries: ${meta.sitemapTotal} (${meta.sitemapDuplicates} duplicate) · URLs crawled: ${records.length} · works ${counts.works} · empty ${counts.empty} · defect ${counts.defect}`,
+    '',
+    '| Path | HTTP | Verdict | Findings |',
+    '| --- | ---: | --- | --- |',
+  ];
+  for (const r of records) {
+    const cells = [...r.findings, ...r.notes.map((n) => `note: ${n}`)];
+    lines.push(
+      `| \`${r.path}\` | ${r.status ?? '—'} | **${r.verdict}** | ${escapeCell(cells.join('; ')) || '—'} |`
+    );
+  }
+  lines.push('', '## Defect classes', '');
+  const classes = new Map();
+  for (const r of records) {
+    if (r.verdict !== 'defect') continue;
+    for (const finding of r.findings) {
+      const key = finding
+        .split(': ')[0]
+        .replace(/\s+\d+$/, '')
+        .replace(/ lacks .*$/, ' lacks provider name');
+      if (!classes.has(key)) classes.set(key, []);
+      classes.get(key).push(r.path);
+    }
+  }
+  if (classes.size === 0) lines.push('None.');
+  for (const [key, paths] of classes) {
+    lines.push(
+      `- **${key}** — ${paths.length} page(s): ${paths
+        .slice(0, 12)
+        .map((p) => `\`${p}\``)
+        .join(', ')}${paths.length > 12 ? ', …' : ''}`
+    );
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 async function main() {

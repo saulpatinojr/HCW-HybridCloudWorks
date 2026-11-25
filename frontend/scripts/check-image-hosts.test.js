@@ -18,6 +18,7 @@ import {
   allowedBy,
   collectReferences,
   evaluate,
+  rowNote,
   imageOrigin,
   imageSourcesInCss,
   imageSourcesInHtml,
@@ -385,5 +386,19 @@ describe('the verdict', () => {
     });
     expect(failures).toHaveLength(1);
     expect(failures[0]).toContain('both retired');
+  });
+});
+
+// The build log's last column. A nested choice in main() until #1859 moved it
+// into its own function; this holds the three answers.
+describe('rowNote', () => {
+  it('gives the reason for a retired host, the failure for a missing one, else where it was seen', () => {
+    expect(rowNote({ status: 'retired', reason: 'moved', where: ['img.src'] })).toBe(
+      'RETIRED, tolerated: moved'
+    );
+    expect(rowNote({ status: 'missing', where: ['img.src'] })).toBe('NOT IN img-src');
+    expect(rowNote({ status: 'allowed', where: ['img.src', 'css url()'] })).toBe(
+      'img.src, css url()'
+    );
   });
 });

@@ -454,7 +454,7 @@ export async function main(argv = process.argv.slice(2)) {
       childrenPath,
       dryRun,
     });
-    children = regenerated.children;
+    ({ children } = regenerated);
     for (const file of regenerated.written) if (!written.includes(file)) written.push(file);
   }
 

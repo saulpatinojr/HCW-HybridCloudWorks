@@ -76,7 +76,7 @@ describe('collecting inline styles from pages', () => {
 
     expect(styles.elementCount).toBe(2);
     expect(styles.elements.size).toBe(1);
-    const [elementHash, element] = [...styles.elements.entries()][0];
+    const [[elementHash, element]] = [...styles.elements.entries()];
     expect(elementHash).toBe(digest('\n  body { margin: 0; }\n'));
     expect(element.files).toEqual(['privacy-policy.html', 'terms-of-service.html']);
 

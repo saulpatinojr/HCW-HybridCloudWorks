@@ -3,12 +3,8 @@
  * pattern's prerequisites, the module pins, and the line that says these
  * files were generated for learning and never applied here.
  */
-import {
-  AVM_MODULES,
-  AVM_UPGRADE_NOTES,
-  AVM_VERIFIED_ON,
-  TERRAFORM_REQUIRED_VERSION,
-} from '../avmVersions';
+import { AVM_MODULES, AVM_UPGRADE_NOTES, AVM_VERIFIED_ON } from '../avmVersions';
+import { TERRAFORM_REQUIRED_VERSION } from '../terraformVersion';
 import { componentById, countOptionFor } from '../components';
 import { file } from './format';
 

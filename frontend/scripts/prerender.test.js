@@ -17,6 +17,7 @@ import {
   sitemapRoutes,
   staticSectionItems,
   findStreamedBoundary,
+  judgeRender,
   splitHead,
   injectIntoTemplate,
   canonicalFor,
@@ -307,8 +308,8 @@ describe('metadata contract', () => {
     // Two contradictory signals are worse than one, and they are written by
     // different lines, so nothing else would catch them diverging.
     const tags = socialTags('', '/azure/blog', 'T');
-    const canonical = /rel="canonical" href="([^"]+)"/.exec(tags)[1];
-    const ogUrl = /property="og:url" content="([^"]+)"/.exec(tags)[1];
+    const [, canonical] = /rel="canonical" href="([^"]+)"/.exec(tags);
+    const [, ogUrl] = /property="og:url" content="([^"]+)"/.exec(tags);
     expect(ogUrl).toBe(canonical);
   });
 
@@ -519,6 +520,43 @@ describe('the deploy workflow live probe', () => {
     expect(workflow).toMatch(/probe_url "\$\{MISSING_URL\}" "[^"]*" 404 /);
     // The address must not be one the site builds, or the probe would read 200.
     expect(prerenderRoutes().some((route) => route.startsWith('/__deploy-probe-'))).toBe(false);
+  });
+});
+
+// The four checks a rendered route goes through before it is written. They
+// lived inside main() until #1859 moved them out to meet the linter's
+// complexity limit; this holds each answer and the order they are asked in.
+describe('judgeRender', () => {
+  const page = `<main>${'Real words on a real page. '.repeat(20)}</main>`;
+  const ok = (html) => ({ html, errors: [] });
+
+  it('writes a full page', () => {
+    expect(judgeRender('/about', ok(page))).toEqual({ ok: true });
+  });
+
+  it('fails a route that rendered an error, naming the first one', () => {
+    expect(
+      judgeRender('/about', { html: page, errors: [{ message: 'boom' }, { message: 'two' }] })
+    ).toEqual({ failure: '/about: rendered an error — boom' });
+  });
+
+  it('fails a streamed page before it looks at anything else', () => {
+    expect(judgeRender('/x', ok(`${page}<!--$?-->data-page="not-found"`))).toEqual({
+      failure:
+        '/x: pending Suspense boundary (<!--$?-->) in the output (see prerender-entry.jsx progressiveChunkSize)',
+    });
+  });
+
+  it('skips the 404 page, however short it is', () => {
+    expect(judgeRender('/azure/code', ok('<div data-page="not-found">No</div>'))).toEqual({
+      skip: true,
+    });
+  });
+
+  it('fails a shell, counting the text without its tags', () => {
+    expect(judgeRender('/thin', ok('<main><p>Only   a   little</p></main>'))).toEqual({
+      failure: '/thin: only 13 characters of text — a shell, not a page',
+    });
   });
 });
 

@@ -1,5 +1,6 @@
 /** `terraform.tf` (#667): the required version and the four pinned providers. */
-import { PROVIDER_PINS, TERRAFORM_REQUIRED_VERSION } from '../avmVersions';
+import { PROVIDER_PINS } from '../avmVersions';
+import { TERRAFORM_REQUIRED_VERSION } from '../terraformVersion';
 import { block, file, obj, q } from './format';
 
 export function terraformTf() {

@@ -57,8 +57,8 @@ export function compareVersions(a, b) {
   const left = releaseParts(a);
   const right = releaseParts(b);
   const index = left.findIndex((part, at) => part !== right[at]);
-  // The first part that differs decides; its sign is -1 or 1.
-  return index === -1 ? 0 : Math.sign(left[index] - right[index]);
+  if (index === -1) return 0;
+  return left[index] < right[index] ? -1 : 1;
 }
 
 export function isNewer(candidate, pinned) {
@@ -88,8 +88,8 @@ export function latestFromRegistry(document, name) {
       `The registry lists ${name} at ${JSON.stringify(document?.version ?? null)}, which is not a MAJOR.MINOR.PATCH release, so nothing was written.`
     );
   }
-  const tag = document.tag == null ? null : String(document.tag);
-  if (![null, `v${version}`].includes(tag)) {
+  const tag = document.tag === undefined || document.tag === null ? null : String(document.tag);
+  if (tag !== null && tag !== `v${version}`) {
     throw new RegistryError(
       `The registry lists ${name} ${version} under tag ${JSON.stringify(tag)} rather than v${version}, so nothing was written.`
     );
@@ -254,25 +254,21 @@ export function nextSmokeConstraint(constraint, toVersion) {
   if (/^\d+\.\d+\.\d+$/.test(text)) return text === toVersion ? null : toVersion;
 
   const window = /^>=\s*(\d+)\.(\d+)\.0\s*,\s*<\s*(\d+)\.(\d+)\.0$/.exec(text);
-  if (window) return nextMinorWindow(window.map(Number), major, minor);
+  if (window) {
+    const [, loMajor, loMinor, hiMajor, hiMinor] = window.map(Number);
+    if (hiMajor !== loMajor || hiMinor !== loMinor + 1) return null;
+    const inside = major === loMajor && minor === loMinor;
+    return inside ? null : `>= ${major}.${minor}.0, < ${major}.${minor + 1}.0`;
+  }
 
   const pessimistic = /^~>\s*(\d+)\.(\d+)$/.exec(text);
-  if (pessimistic) return nextPessimistic(pessimistic.map(Number), major, minor);
+  if (pessimistic) {
+    const [, pinMajor, pinMinor] = pessimistic.map(Number);
+    const inside = major === pinMajor && minor >= pinMinor;
+    return inside ? null : `~> ${major}.${minor}`;
+  }
 
   return null;
-}
-
-/** A `>= a.b.0, < a.(b+1).0` window moved to the release's minor line, or null. */
-function nextMinorWindow([, loMajor, loMinor, hiMajor, hiMinor], major, minor) {
-  if (hiMajor !== loMajor || hiMinor !== loMinor + 1) return null;
-  const inside = major === loMajor && minor === loMinor;
-  return inside ? null : `>= ${major}.${minor}.0, < ${major}.${minor + 1}.0`;
-}
-
-/** A two-part `~> a.b` moved to the release's minor, or null while it still admits it. */
-function nextPessimistic([, pinMajor, pinMinor], major, minor) {
-  const inside = major === pinMajor && minor >= pinMinor;
-  return inside ? null : `~> ${major}.${minor}`;
 }
 
 /**
@@ -300,7 +296,7 @@ export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
       `the smoke payload holds ${matches.length} blocks for ${name}, not one, so it was not written.`
     );
   }
-  const [, , current] = matches[0];
+  const [[, , current]] = matches;
   if (/^\d+\.\d+\.\d+$/.test(current) && current !== fromVersion) {
     throw new EditRefused(
       `the smoke payload pins ${name} at ${current}, not the ${fromVersion} avmVersions.js pins, so it was not written.`
@@ -360,17 +356,16 @@ export function envBuilders(envSource) {
     .sort();
 }
 
-/** Why a print-out or versions.env with `count` blocks named `name` (not one) was refused. */
-function blockCountMessage(count, name, describe) {
-  return count === 0
-    ? `${describe} has no ${name} block; a cached vendor stage prints nothing, and a failed one says why above, so nothing was written.`
-    : `${describe} has ${count} ${name} blocks, not one, so nothing was written.`;
-}
-
 /** The non-blank lines of one quoted block, from a print-out or from versions.env. */
 function blockOf(lines, name, describe) {
   const starts = lines.flatMap((line, at) => (line === `${name}='` ? [at] : []));
-  if (starts.length !== 1) throw new VendorError(blockCountMessage(starts.length, name, describe));
+  if (starts.length !== 1) {
+    throw new VendorError(
+      starts.length === 0
+        ? `${describe} has no ${name} block; a cached vendor stage prints nothing, and a failed one says why above, so nothing was written.`
+        : `${describe} has ${starts.length} ${name} blocks, not one, so nothing was written.`
+    );
+  }
   const end = lines.indexOf("'", starts[0] + 1);
   if (end === -1) {
     throw new VendorError(
@@ -381,11 +376,12 @@ function blockOf(lines, name, describe) {
     .slice(starts[0] + 1, end)
     .filter((line) => line !== '' && !line.startsWith('#'));
   const { pattern, shape } = LINE_SHAPE[name];
-  const stray = body.find((line) => !pattern.test(line));
-  if (stray !== undefined) {
-    throw new VendorError(
-      `${describe}'s ${name} block has the line ${JSON.stringify(stray)}, which is not ${shape}, so nothing was written.`
-    );
+  for (const line of body) {
+    if (!pattern.test(line)) {
+      throw new VendorError(
+        `${describe}'s ${name} block has the line ${JSON.stringify(line)}, which is not ${shape}, so nothing was written.`
+      );
+    }
   }
   if (body.length === 0) {
     throw new VendorError(`${describe}'s ${name} block is empty, so nothing was written.`);
@@ -432,12 +428,14 @@ export function rewriteChildBlocks(envSource, blocks) {
       `the vendor stage's AVM_CHILD_CALLS is keyed by ${recorded.join(', ')}, and versions.env now pins ${pinned.join(', ')}, so the capture is not of this file and it was not written.`
     );
   }
-  return CHILD_BLOCKS.reduce((next, name) => {
+  let next = source;
+  for (const name of CHILD_BLOCKS) {
     const pattern = new RegExp(`^${name}='[^']*'$`, 'gm');
     onlyMatch(next, pattern, 'versions.env', `${name} blocks`);
     const block = `${name}='\n${blocks[name].join('\n')}\n'`;
-    return next.replace(pattern, () => block);
-  }, source);
+    next = next.replace(pattern, () => block);
+  }
+  return next;
 }
 
 /**
@@ -566,10 +564,13 @@ const PRINT_COMMAND = code(
 /** What happened to the child list, after the blocks line. */
 function childListLine(children) {
   const list = code('LAB_IMAGE_CHILD_AVM');
-  const parts = driftParts(children);
-  if (parts.length === 0) {
+  if (children.added.length === 0 && children.removed.length === 0) {
     return `- The child list is unchanged, so ${list} in ${code(LAB_IMAGE_PATH)} stands.`;
   }
+  const parts = [
+    children.added.length ? `adds ${children.added.join(', ')}` : null,
+    children.removed.length ? `drops ${children.removed.join(', ')}` : null,
+  ].filter(Boolean);
   return `- The child list ${parts.join(' and ')}, so ${list} in ${code(LAB_IMAGE_PATH)} was rewritten to match; the pull request carries that diff too.`;
 }
 
