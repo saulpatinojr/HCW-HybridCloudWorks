@@ -9,6 +9,7 @@
 import { COMPONENT_IDS } from './components';
 import { normalizeState, isSelected } from './state';
 import { encodeLz } from './share';
+import { AVM_MODULES } from './avmVersions';
 import { AWS_MODULES, AWS_PROVIDER_PIN } from './hcl/aws/moduleVersions';
 import { GCP_MODULES, GCP_PROVIDER_PIN } from './hcl/gcp/moduleVersions';
 
@@ -31,9 +32,10 @@ const presetOptions = (location, privateDnsZones, firewallSku, corpCount, online
 const pinnedModule = (name, version, role) => ({ name, version, role });
 
 /**
- * The same row read from the AWS or Google Cloud pin itself, so this card
+ * The same row read from the Azure, AWS or Google Cloud pin itself, so this card
  * cannot show a version the pack does not write (it showed network-firewall
- * v1.1.0 and log-export v9.0.0 after both were found broken, #1862, #1863).
+ * v1.1.0 and log-export v9.0.0 after both were found broken, #1862, #1863,
+ * and Azure rows two or more releases behind the pins).
  */
 const packModule = (module, role) => pinnedModule(module.source, `v${module.version}`, role);
 
@@ -460,20 +462,14 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
     blueprintSlug: '/azure/architecture-designs/enterprise-hub-spoke-landing-zone',
     description: 'Production Azure Landing Zone powered by Azure Verified Modules (AVM).',
     pinnedModules: Object.freeze([
-      pinnedModule('Azure/avm-ptn-alz/azurerm', '0.11.0', 'Management Groups & Policy Baseline'),
-      pinnedModule(
-        'Azure/avm-ptn-alz-management/azurerm',
-        '0.6.0',
-        'Log Analytics Workspace & Diagnostics'
-      ),
-      pinnedModule(
-        'Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm',
-        '0.4.0',
+      packModule(AVM_MODULES['avm-ptn-alz'], 'Management Groups & Policy Baseline'),
+      packModule(AVM_MODULES['avm-ptn-alz-management'], 'Log Analytics Workspace & Diagnostics'),
+      packModule(
+        AVM_MODULES['avm-ptn-alz-connectivity-hub-and-spoke-vnet'],
         'Hub VNet, Bastion, DNS & Azure Firewall'
       ),
-      pinnedModule(
-        'Azure/avm-res-network-virtualnetwork/azurerm',
-        '0.5.2',
+      packModule(
+        AVM_MODULES['avm-res-network-virtualnetwork'],
         'Segmented Corp, Online & Identity Spokes'
       ),
     ]),
@@ -548,7 +544,7 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
       'Enterprise Foundations / Cloud Foundation Fabric with Shared VPC and organization policies.',
     pinnedModules: Object.freeze([
       packModule(GCP_MODULES.network, 'Shared VPC Host, Subnets, PSC & Cloud NAT'),
-      packModule(GCP_MODULES.logExport, 'Aggregated Audit Log Sink & BigQuery Dataset'),
+      packModule(GCP_MODULES.logExport, 'Aggregated Audit Log Sink to a Cloud Storage Bucket'),
       packModule(GCP_MODULES.projectFactory, 'Service Projects attached to Shared VPC'),
       pinnedModule(
         'hashicorp/google',
@@ -570,7 +566,7 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
       {
         name: 'Central Logging Project',
         id: 'management',
-        desc: 'Organization log sink, locked Cloud Storage & BigQuery dataset',
+        desc: 'Organization log sink into a locked Cloud Storage bucket',
       },
       componentRow(
         'connectivity-hub',
