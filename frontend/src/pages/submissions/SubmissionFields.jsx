@@ -1,14 +1,16 @@
 /**
  * Form pieces the submission pages share. The architecture and framework
- * pages share the "Basic Information" card; the blog and Coder Corner pages
- * share the title-and-provider row, the "submitted" card and the submit
- * button. Each page used to write these out in full.
+ * pages share the "Basic Information" card, its link field, the content tab
+ * buttons and the overview tab; the blog and Coder Corner pages share the
+ * title-and-provider row, the plain text fields, the "submitted" card and the
+ * submit button. Each page used to write these out in full.
  */
 import React from 'react';
 import { CheckCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 
 const LABEL = 'text-xs font-medium text-muted-foreground mb-1 block';
@@ -113,6 +115,57 @@ export function BasicInfoCard({ idPrefix, form, onChange, text, options, childre
   );
 }
 
+/**
+ * The page's own link field, under the "Basic Information" card
+ * (architecture and framework). Like the fields below, it reads
+ * `form[name]` and reports a change as `onChange(name, value)`.
+ */
+export function UrlField({ form, onChange, name, id, label, placeholder }) {
+  return (
+    <div>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        value={form[name]}
+        onChange={(e) => onChange(name, e.target.value)}
+        placeholder={placeholder}
+        type="url"
+      />
+    </div>
+  );
+}
+
+/** The four tab buttons above the content editor. Each tab is `{ value, Icon, label }`. */
+export function ContentTabList({ tabs }) {
+  return (
+    <TabsList className="grid w-full grid-cols-4 mb-4">
+      {tabs.map(({ value, Icon, label }) => (
+        <TabsTrigger key={value} value={value}>
+          <Icon className="h-3 w-3 mr-1" />
+          {` ${label}`}
+        </TabsTrigger>
+      ))}
+    </TabsList>
+  );
+}
+
+/** The "Overview" tab: one HTML text area and a line on where it shows. */
+export function OverviewTab({ value, onChange, placeholder }) {
+  return (
+    <TabsContent value="overview">
+      <Textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-h-[200px] font-mono text-sm"
+        placeholder={placeholder}
+      />
+      <p className="text-xs text-muted-foreground mt-2">
+        Supports HTML. Renders in the Overview tab on the detail page.
+      </p>
+    </TabsContent>
+  );
+}
+
 /** The title field and the provider list, side by side (blog and Coder Corner). */
 export function TitleProviderRow({ form, onChange, titlePlaceholder, providerLabel, providers }) {
   return (
@@ -144,14 +197,28 @@ export function TitleProviderRow({ form, onChange, titlePlaceholder, providerLab
   );
 }
 
-/** A labelled text area (blog and Coder Corner). */
-export function TextAreaField({ label, value, onChange, placeholder, rows }) {
+/** A labelled one-line text field for `form[name]` (blog and Coder Corner). */
+export function TextField({ form, onChange, name, label, placeholder }) {
+  return (
+    <div>
+      <p className="text-sm font-medium">{label}</p>
+      <Input
+        value={form[name]}
+        onChange={(event) => onChange(name, event.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
+
+/** A labelled text area for `form[name]` (blog and Coder Corner). */
+export function TextAreaField({ form, onChange, name, label, placeholder, rows }) {
   return (
     <div>
       <p className="text-sm font-medium">{label}</p>
       <Textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+        value={form[name]}
+        onChange={(event) => onChange(name, event.target.value)}
         placeholder={placeholder}
         rows={rows}
       />

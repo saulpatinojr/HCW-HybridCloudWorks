@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   CheckCircle2,
@@ -22,7 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
-import { BasicInfoCard, FieldLabel } from './SubmissionFields';
+import { BasicInfoCard, ContentTabList, OverviewTab, UrlField } from './SubmissionFields';
 import SubmissionReceived from './SubmissionReceived';
 
 const REFERENCE_BLUEPRINTS = [
@@ -91,6 +91,21 @@ const CATEGORY_OPTIONS = [
   'AI/ML',
 ];
 
+/** The "Basic Information" card's labels and placeholders on this page. */
+const BASIC_INFO_TEXT = {
+  titleLabel: 'Blueprint Title *',
+  titlePlaceholder: 'AWS Multi-Region Web Application',
+  summaryPlaceholder: 'A highly available, multi-region web application architecture using...',
+  tagsPlaceholder: 'HA, Multi-Region, Auto-Scaling',
+};
+
+/** The three lists the "Basic Information" card offers. */
+const FIELD_OPTIONS = {
+  providers: PROVIDER_OPTIONS,
+  categories: CATEGORY_OPTIONS,
+  complexities: COMPLEXITY_OPTIONS,
+};
+
 const EMPTY_FORM = {
   title: '',
   summary: '',
@@ -113,6 +128,8 @@ export default function ArchitectureSubmissionPage() {
   const [error, setError] = useState(null);
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -298,29 +315,16 @@ export default function ArchitectureSubmissionPage() {
               idPrefix="arch"
               form={form}
               onChange={handleChange}
-              text={{
-                titleLabel: 'Blueprint Title *',
-                titlePlaceholder: 'AWS Multi-Region Web Application',
-                summaryPlaceholder:
-                  'A highly available, multi-region web application architecture using...',
-                tagsPlaceholder: 'HA, Multi-Region, Auto-Scaling',
-              }}
-              options={{
-                providers: PROVIDER_OPTIONS,
-                categories: CATEGORY_OPTIONS,
-                complexities: COMPLEXITY_OPTIONS,
-              }}
+              text={BASIC_INFO_TEXT}
+              options={FIELD_OPTIONS}
             >
-              <div>
-                <FieldLabel htmlFor="arch-diagram">Architecture Diagram URL</FieldLabel>
-                <Input
-                  id="arch-diagram"
-                  value={form.diagramUrl}
-                  onChange={(e) => handleChange('diagramUrl', e.target.value)}
-                  placeholder="https://..."
-                  type="url"
-                />
-              </div>
+              <UrlField
+                {...field}
+                name="diagramUrl"
+                id="arch-diagram"
+                label="Architecture Diagram URL"
+                placeholder="https://..."
+              />
             </BasicInfoCard>
 
             {/* Content Tabs */}
@@ -330,31 +334,19 @@ export default function ArchitectureSubmissionPage() {
               </CardHeader>
               <CardContent>
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  <TabsList className="grid w-full grid-cols-4 mb-4">
-                    <TabsTrigger value="overview">
-                      <Eye className="h-3 w-3 mr-1" /> Overview
-                    </TabsTrigger>
-                    <TabsTrigger value="technical">
-                      <Layers className="h-3 w-3 mr-1" /> Technical
-                    </TabsTrigger>
-                    <TabsTrigger value="iac">
-                      <Code className="h-3 w-3 mr-1" /> IaC
-                    </TabsTrigger>
-                    <TabsTrigger value="finops">
-                      <ExternalLink className="h-3 w-3 mr-1" /> FinOps
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview">
-                    <Textarea
-                      value={form.overviewHtml}
-                      onChange={(e) => handleChange('overviewHtml', e.target.value)}
-                      className="min-h-[200px] font-mono text-sm"
-                      placeholder="<p>HTML overview content describing the architecture...</p>"
-                    />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Supports HTML. Renders in the Overview tab on the detail page.
-                    </p>
-                  </TabsContent>
+                  <ContentTabList
+                    tabs={[
+                      { value: 'overview', Icon: Eye, label: 'Overview' },
+                      { value: 'technical', Icon: Layers, label: 'Technical' },
+                      { value: 'iac', Icon: Code, label: 'IaC' },
+                      { value: 'finops', Icon: ExternalLink, label: 'FinOps' },
+                    ]}
+                  />
+                  <OverviewTab
+                    value={form.overviewHtml}
+                    onChange={(value) => handleChange('overviewHtml', value)}
+                    placeholder="<p>HTML overview content describing the architecture...</p>"
+                  />
                   <TabsContent value="technical" className="space-y-4">
                     <div>
                       <label

@@ -4,9 +4,8 @@ import { Link } from 'react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   CheckCircle2,
@@ -21,7 +20,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
-import { BasicInfoCard, FieldLabel } from './SubmissionFields';
+import { BasicInfoCard, ContentTabList, OverviewTab, UrlField } from './SubmissionFields';
 import SubmissionReceived from './SubmissionReceived';
 
 const REFERENCE_FRAMEWORKS = [
@@ -64,6 +63,21 @@ const CATEGORY_OPTIONS = [
   'Containers',
 ];
 
+/** The "Basic Information" card's labels and placeholders on this page. */
+const BASIC_INFO_TEXT = {
+  titleLabel: 'Framework Title *',
+  titlePlaceholder: 'AWS Well-Architected Framework',
+  summaryPlaceholder: 'Comprehensive framework for building secure, reliable infrastructure...',
+  tagsPlaceholder: 'WAF, Security, Best Practices',
+};
+
+/** The three lists the "Basic Information" card offers. */
+const FIELD_OPTIONS = {
+  providers: PROVIDER_OPTIONS,
+  categories: CATEGORY_OPTIONS,
+  complexities: COMPLEXITY_OPTIONS,
+};
+
 const EMPTY_FORM = {
   title: '',
   summary: '',
@@ -87,6 +101,8 @@ export default function FrameworkSubmissionPage() {
   const [error, setError] = useState(null);
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -250,29 +266,16 @@ export default function FrameworkSubmissionPage() {
               idPrefix="fw-sub"
               form={form}
               onChange={handleChange}
-              text={{
-                titleLabel: 'Framework Title *',
-                titlePlaceholder: 'AWS Well-Architected Framework',
-                summaryPlaceholder:
-                  'Comprehensive framework for building secure, reliable infrastructure...',
-                tagsPlaceholder: 'WAF, Security, Best Practices',
-              }}
-              options={{
-                providers: PROVIDER_OPTIONS,
-                categories: CATEGORY_OPTIONS,
-                complexities: COMPLEXITY_OPTIONS,
-              }}
+              text={BASIC_INFO_TEXT}
+              options={FIELD_OPTIONS}
             >
-              <div>
-                <FieldLabel htmlFor="fw-sub-doc">Official Documentation Link</FieldLabel>
-                <Input
-                  id="fw-sub-doc"
-                  value={form.docLink}
-                  onChange={(e) => handleChange('docLink', e.target.value)}
-                  placeholder="https://docs.aws.amazon.com/wellarchitected/..."
-                  type="url"
-                />
-              </div>
+              <UrlField
+                {...field}
+                name="docLink"
+                id="fw-sub-doc"
+                label="Official Documentation Link"
+                placeholder="https://docs.aws.amazon.com/wellarchitected/..."
+              />
             </BasicInfoCard>
 
             {/* Content Tabs */}
@@ -282,31 +285,19 @@ export default function FrameworkSubmissionPage() {
               </CardHeader>
               <CardContent>
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  <TabsList className="grid w-full grid-cols-4 mb-4">
-                    <TabsTrigger value="overview">
-                      <BookOpen className="h-3 w-3 mr-1" /> Overview
-                    </TabsTrigger>
-                    <TabsTrigger value="pillars">
-                      <Layers className="h-3 w-3 mr-1" /> Pillars
-                    </TabsTrigger>
-                    <TabsTrigger value="implementation">
-                      <Code className="h-3 w-3 mr-1" /> IaC
-                    </TabsTrigger>
-                    <TabsTrigger value="resources">
-                      <ExternalLink className="h-3 w-3 mr-1" /> Resources
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview">
-                    <Textarea
-                      value={form.overviewHtml}
-                      onChange={(e) => handleChange('overviewHtml', e.target.value)}
-                      className="min-h-[200px] font-mono text-sm"
-                      placeholder="<p>HTML overview content...</p>"
-                    />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Supports HTML. Renders in the Overview tab on the detail page.
-                    </p>
-                  </TabsContent>
+                  <ContentTabList
+                    tabs={[
+                      { value: 'overview', Icon: BookOpen, label: 'Overview' },
+                      { value: 'pillars', Icon: Layers, label: 'Pillars' },
+                      { value: 'implementation', Icon: Code, label: 'IaC' },
+                      { value: 'resources', Icon: ExternalLink, label: 'Resources' },
+                    ]}
+                  />
+                  <OverviewTab
+                    value={form.overviewHtml}
+                    onChange={(value) => handleChange('overviewHtml', value)}
+                    placeholder="<p>HTML overview content...</p>"
+                  />
                   <TabsContent value="pillars" className="space-y-4">
                     <div>
                       <label

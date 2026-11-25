@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Send } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
-import { SubmitRow, SubmittedCard, TextAreaField, TitleProviderRow } from './SubmissionFields';
+import {
+  SubmitRow,
+  SubmittedCard,
+  TextAreaField,
+  TextField,
+  TitleProviderRow,
+} from './SubmissionFields';
 
 const MAX_CONTENT_LENGTH = 50000;
 const VALID_URL_RE = /^https?:\/\/.+\..+/;
@@ -39,6 +44,8 @@ export default function BlogSubmissionPage() {
   const [error, setError] = useState('');
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   useEffect(() => {
     if (!submitted) return;
@@ -123,36 +130,32 @@ export default function BlogSubmissionPage() {
               />
 
               <TextAreaField
+                {...field}
+                name="summary"
                 label="Summary"
-                value={form.summary}
-                onChange={(value) => handleChange('summary', value)}
                 placeholder="Short summary for preview cards"
                 rows={3}
               />
 
               <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium">Tags (comma-separated)</p>
-                  <Input
-                    value={form.tags}
-                    onChange={(event) => handleChange('tags', event.target.value)}
-                    placeholder="kubernetes, finops, optimization"
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Source URL (optional)</p>
-                  <Input
-                    value={form.sourceUrl}
-                    onChange={(event) => handleChange('sourceUrl', event.target.value)}
-                    placeholder="https://example.com"
-                  />
-                </div>
+                <TextField
+                  {...field}
+                  name="tags"
+                  label="Tags (comma-separated)"
+                  placeholder="kubernetes, finops, optimization"
+                />
+                <TextField
+                  {...field}
+                  name="sourceUrl"
+                  label="Source URL (optional)"
+                  placeholder="https://example.com"
+                />
               </div>
 
               <TextAreaField
+                {...field}
+                name="content"
                 label="Blog Content"
-                value={form.content}
-                onChange={(value) => handleChange('content', value)}
                 placeholder="Write markdown or plain text content"
                 rows={12}
               />

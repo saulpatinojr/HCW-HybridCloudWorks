@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Send } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
-import { SubmitRow, SubmittedCard, TextAreaField, TitleProviderRow } from './SubmissionFields';
+import {
+  SubmitRow,
+  SubmittedCard,
+  TextAreaField,
+  TextField,
+  TitleProviderRow,
+} from './SubmissionFields';
 
 const PROVIDER_OPTIONS = ['Github', 'Terraform', 'Docker'];
 
@@ -26,6 +31,8 @@ export default function CoderCornerSubmissionPage() {
   const [error, setError] = useState('');
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -114,44 +121,40 @@ export default function CoderCornerSubmissionPage() {
               />
 
               <TextAreaField
+                {...field}
+                name="summary"
                 label="Summary"
-                value={form.summary}
-                onChange={(value) => handleChange('summary', value)}
                 placeholder="What problem this snippet solves"
                 rows={3}
               />
 
               <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium">Language / Stack</p>
-                  <Input
-                    value={form.language}
-                    onChange={(event) => handleChange('language', event.target.value)}
-                    placeholder="HCL, YAML, Bash"
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Repository URL (optional)</p>
-                  <Input
-                    value={form.repoUrl}
-                    onChange={(event) => handleChange('repoUrl', event.target.value)}
-                    placeholder="https://github.com/org/repo"
-                  />
-                </div>
+                <TextField
+                  {...field}
+                  name="language"
+                  label="Language / Stack"
+                  placeholder="HCL, YAML, Bash"
+                />
+                <TextField
+                  {...field}
+                  name="repoUrl"
+                  label="Repository URL (optional)"
+                  placeholder="https://github.com/org/repo"
+                />
               </div>
 
               <TextAreaField
+                {...field}
+                name="explanation"
                 label="Implementation Notes"
-                value={form.explanation}
-                onChange={(value) => handleChange('explanation', value)}
                 placeholder="Explain approach, pitfalls, and expected outcomes"
                 rows={5}
               />
 
               <TextAreaField
+                {...field}
+                name="codeSnippet"
                 label="Code Snippet"
-                value={form.codeSnippet}
-                onChange={(value) => handleChange('codeSnippet', value)}
                 placeholder="Paste sample code"
                 rows={10}
               />
