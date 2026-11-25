@@ -128,31 +128,27 @@ function ProgramCard({
   );
 }
 
-/** The Programs tab: the catalogue as cards, each with its details and Start application. */
-export default function ProgramsTab({ hub, nav }) {
-  const { programs, applications, evidence } = hub;
-  // Upkeep counts wait for the evidence read: a count taken before it lands
-  // would read as nothing filed.
-  const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
-  const reads = [programs, applications];
-  // `?program=<id>` opens that program's details: where a Pipeline chip that
-  // says "Ambassador · <program>" leads (lib/pageLinks.js, #1886).
-  // The open program follows `?program=<id>` both ways (review of #1891): a
-  // link, Back or Forward opens or closes it, and opening or closing it here
-  // writes the address, as the Applications tab does with `?application=`.
+/**
+ * The open program, kept in step with `?program=<id>` both ways (#1886,
+ * review of #1891): a link, Back or Forward opens or closes it, and opening
+ * or closing it here writes the address, as the Applications tab does with
+ * `?application=`. A Pipeline chip that says "Ambassador · <program>" leads
+ * here (lib/pageLinks.js).
+ */
+function useProgramSelection() {
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedProgram = searchParams.get(LINK_PARAMS.program);
-  const [detailsId, setDetailsIdState] = useState(linkedProgram);
+  const [selected, setSelected] = useState(linkedProgram);
   // When the address changes under the page, follow it (React's "adjust
   // state while rendering" pattern, not an effect).
   const [seenProgram, setSeenProgram] = useState(linkedProgram);
   if (linkedProgram !== seenProgram) {
     setSeenProgram(linkedProgram);
-    setDetailsIdState(linkedProgram);
+    setSelected(linkedProgram);
   }
-  const setDetailsId = useCallback(
+  const select = useCallback(
     (id) => {
-      setDetailsIdState(id);
+      setSelected(id);
       setSearchParams((previous) => {
         const next = new URLSearchParams(previous);
         next.set('tab', 'programs');
@@ -163,6 +159,42 @@ export default function ProgramsTab({ hub, nav }) {
     },
     [setSearchParams]
   );
+  return [selected, select];
+}
+
+const listOf = (value) => (Array.isArray(value) ? value : []);
+
+/**
+ * The message after filing one piece. The import answers 200 whether it
+ * filed the piece or not (review of #1890), so the message follows what it
+ * actually did with this id: filed, not filed (no longer live), or filed
+ * before.
+ */
+export function filingMessage(result, contentId, programName) {
+  if (listOf(result.created).some((row) => row?.sourceId === contentId)) {
+    return { title: `Filed as evidence for ${programName}` };
+  }
+  if (listOf(result.missing).includes(contentId)) {
+    return {
+      title: 'Not filed',
+      description: 'That piece is no longer live, so it cannot be filed as evidence.',
+      variant: 'destructive',
+    };
+  }
+  return {
+    title: 'Already filed',
+    description: 'It was filed before; attach it to this program on the Evidence tab.',
+  };
+}
+
+/** The Programs tab: the catalogue as cards, each with its details and Start application. */
+export default function ProgramsTab({ hub, nav }) {
+  const { programs, applications, evidence } = hub;
+  // Upkeep counts wait for the evidence read: a count taken before it lands
+  // would read as nothing filed.
+  const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
+  const reads = [programs, applications];
+  const [detailsId, setDetailsId] = useProgramSelection();
   const [starting, setStarting] = useState(null);
   const [filing, setFiling] = useState(null);
   const { toast } = useToast();
@@ -210,24 +242,8 @@ export default function ProgramsTab({ hub, nav }) {
     setFiling(contentId);
     const result = await hub.writes.importEvidence('content', [contentId], [details.id]);
     setFiling(null);
-    if (!result) return; // refused: the write guard's toast already said why
-    // The import answers 200 whether it filed the piece or not (review of
-    // #1890), so the message follows what it actually did with this id.
-    const listOf = (value) => (Array.isArray(value) ? value : []);
-    if (listOf(result.created).some((row) => row?.sourceId === contentId)) {
-      toast({ title: `Filed as evidence for ${details.name}` });
-    } else if (listOf(result.missing).includes(contentId)) {
-      toast({
-        title: 'Not filed',
-        description: 'That piece is no longer live, so it cannot be filed as evidence.',
-        variant: 'destructive',
-      });
-    } else {
-      toast({
-        title: 'Already filed',
-        description: 'It was filed before; attach it to this program on the Evidence tab.',
-      });
-    }
+    // Null means refused: the write guard's toast already said why.
+    if (result) toast(filingMessage(result, contentId, details.name));
   };
 
   return (
