@@ -59,10 +59,12 @@ import { ARTICLE_CLOSE, ARTICLE_OPEN, fenceArticleText } from '../ai/prompt-fenc
 import { generateJsonResponse as routerGenerateJson, getCostEstimate as routerCostEstimate } from '../ai/router.js';
 import { AI_TASKS } from '../ai/tasks.js';
 import { budgetExceeded, monthInterviewSpend, monthlyCeilingUsd } from './budget.js';
-import { MAX_TRANSCRIPT_INPUT_BYTES } from '../listen-and-learn/recording-script.js';
 import { JobFailedError } from '../jobs.js';
 import { storedFailure } from '../http/error-response.js';
 import { guardDraft } from './draft-guard.js';
+import { guestSpeaker, splitTranscript } from './draft-text.js';
+
+export { guessInterviewer, splitText, splitTranscript, splitTurn } from './draft-text.js';
 import { LIMITS, isObject, validateQa } from './schema.js';
 import { INTERVIEWS_AUDIO_CONTAINER, transcriptBlobPath } from './storage.js';
 
@@ -138,79 +140,6 @@ export function draftPrompt({ guestName, guestRole, transcript, pass, passes, al
     .join('\n');
 }
 
-/** The `Speaker N: ` label at the start of a turn line, or '' when it has none. */
-const LABEL = /^([^\n:]{1,60}): /;
-
-/** A sentence end followed by space: where a long turn is best cut. */
-const SENTENCE_END = /[.!?\u2026]["'\u201d\u2019)\]]*\s+/g;
-
-/**
- * Split one text into pieces of at most `maxBytes` of UTF-8 each, losing
- * nothing: every cut is on a character boundary (never inside a multi-byte
- * character), at the last sentence end in the piece when one falls in its
- * second half, and the pieces joined back give the text exactly.
- *
- * @param {string} text
- * @param {number} maxBytes - at least 4, so any one character fits
- * @returns {string[]}
- */
-export function splitText(text, maxBytes) {
-  const limit = Math.max(4, Math.floor(maxBytes));
-  const pieces = [];
-  let rest = String(text);
-  while (Buffer.byteLength(rest, 'utf8') > limit) {
-    const bytes = Buffer.from(rest, 'utf8');
-    // Back off from the limit to the first byte of a character.
-    let cut = limit;
-    while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
-    let piece = bytes.subarray(0, cut).toString('utf8');
-    // Prefer the last sentence end, when it leaves a piece at least half full.
-    let best = -1;
-    for (const match of piece.matchAll(SENTENCE_END)) best = match.index + match[0].length;
-    if (best > piece.length / 2 && best < piece.length) piece = piece.slice(0, best);
-    pieces.push(piece);
-    rest = rest.slice(piece.length);
-  }
-  if (rest.length > 0 || pieces.length === 0) pieces.push(rest);
-  return pieces;
-}
-
-/**
- * One turn line as lines of at most `maxBytes` each: the line itself when
- * it fits, else its text split by `splitText` with the turn's label on
- * every piece.
- */
-export function splitTurn(line, maxBytes) {
-  if (Buffer.byteLength(line, 'utf8') <= maxBytes) return [line];
-  const label = LABEL.exec(line)?.[0] ?? '';
-  const room = maxBytes - Buffer.byteLength(label, 'utf8');
-  return splitText(line.slice(label.length), room).map((piece) => `${label}${piece}`);
-}
-
-/**
- * Turn lines, split into passes under `maxBytes` each on turn boundaries;
- * a turn longer than a pass becomes several labelled turns (splitTurn),
- * so nothing is dropped and no pass is over the limit.
- */
-export function splitTranscript(lines, maxBytes = MAX_TRANSCRIPT_INPUT_BYTES) {
-  const passes = [];
-  let current = [];
-  let size = 0;
-  // Each line costs its bytes plus the newline that joins it.
-  for (const line of lines.flatMap((l) => splitTurn(l, maxBytes - 1))) {
-    const bytes = Buffer.byteLength(line, 'utf8') + 1;
-    if (size + bytes > maxBytes && current.length > 0) {
-      passes.push(current.join('\n'));
-      current = [];
-      size = 0;
-    }
-    current.push(line);
-    size += bytes;
-  }
-  if (current.length > 0) passes.push(current.join('\n'));
-  return passes;
-}
-
 /** Each pass's deadline: one router call, its repair round included. */
 export const PASS_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -231,32 +160,6 @@ export function savedPasses(drafting, { transcriptVersion, passCount }) {
     usable.push({ transcriptVersion, qa: qa.value, speakers });
   }
   return usable;
-}
-
-/**
- * The interviewer by a simple count: the speaker whose turns carry the
- * most question marks. Ties and a transcript with no questions answer
- * null, and the model's word stands.
- */
-export function guessInterviewer(segments) {
-  const marks = new Map();
-  for (const s of segments || []) {
-    const count = (String(s.text || '').match(/\?/g) || []).length;
-    marks.set(s.speaker, (marks.get(s.speaker) || 0) + count);
-  }
-  let best = null;
-  let bestCount = 0;
-  let tie = false;
-  for (const [speaker, count] of marks) {
-    if (count > bestCount) {
-      best = speaker;
-      bestCount = count;
-      tie = false;
-    } else if (count === bestCount && count > 0) {
-      tie = true;
-    }
-  }
-  return bestCount > 0 && !tie ? best : null;
 }
 
 /**
@@ -401,43 +304,32 @@ export async function draftInterview({
   }
 }
 
-async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container, passTimeoutMs }) {
-  const lines = segments.map((s) => `${String(s.speaker || 'Speaker 1')}: ${s.text}`);
-  const passes = splitTranscript(lines);
-  const usageOut = [];
-  const guestName = isObject(doc.guest) ? doc.guest.name : '';
-  const guestRole = isObject(doc.guest) ? doc.guest.role : '';
-  const ceiling = monthlyCeilingUsd(env);
-  const getCostEstimate = typeof ai.getCostEstimate === 'function' ? ai.getCostEstimate : routerCostEstimate;
-
-  // Resume: the passes an earlier run of this version already saved.
-  const saved = savedPasses(provenance.drafting, { transcriptVersion, passCount: passes.length });
+/**
+ * The passes not yet saved, each counted against the ceiling before it is
+ * sent and checkpointed after it answers. Starts from the passes an earlier
+ * run saved; answers the speakers (from the first pass) and every item.
+ */
+async function runPasses(job, passes, saved) {
+  const { interviewId, transcriptVersion, provenance, store, ai, now, signal, container } = job;
   const checkpoints = saved.map((entry) => ({ transcriptVersion, qa: entry.qa, speakers: entry.speakers }));
   let speakers = saved[0]?.speakers ?? { interviewer: null, guest: null };
   let qa = saved.flatMap((entry) => entry.qa);
-  const resumedFrom = saved.length;
-  for (let pass = resumedFrom; pass < passes.length; pass += 1) {
+  for (let pass = saved.length; pass < passes.length; pass += 1) {
     if (signal?.aborted) throw signal.reason || new Error('aborted');
-    // Every pass is counted before it is sent: the month's rows (the router
-    // writes this job's own as it goes) plus this pass's estimate.
-    const month = await monthInterviewSpend({ store, now });
-    const passUsd = passCostUsd(passes[pass], getCostEstimate);
-    if (month.costUsd + passUsd > ceiling) {
-      throw budgetExceeded({ what: 'Drafting', usedUsd: month.costUsd, ceiling, since: month.since, costUsd: passUsd });
-    }
+    await assertPassBudget(job, passes[pass]);
     const result = await draftPass(ai, {
       prompt: draftPrompt({
-        guestName,
-        guestRole,
+        guestName: job.guestName,
+        guestRole: job.guestRole,
         transcript: passes[pass],
         pass: pass + 1,
         passes: passes.length,
         alreadyAsked: qa.map((item) => item.q),
       }),
       signal,
-      usageOut,
+      usageOut: job.usageOut,
       pass: pass + 1,
-      timeoutMs: passTimeoutMs,
+      timeoutMs: job.passTimeoutMs,
     });
     if (pass === 0) speakers = result.speakers;
     qa = qa.concat(result.qa);
@@ -451,37 +343,69 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
       },
     });
   }
-  // The combined list, validated once: over 40 items the first 40 are kept
-  // and the editor is told (`truncated`); a list that fails the shape here
-  // cannot happen, since each pass's items passed it, but the check is the
-  // one the page makes and it is cheap.
-  const truncated = qa.length > LIMITS.MAX_QA;
+  return { speakers, qa };
+}
+
+/**
+ * Every pass is counted before it is sent: the month's rows (the router
+ * writes this job's own as it goes) plus this pass's estimate.
+ */
+async function assertPassBudget({ store, now, env, ai }, passText) {
+  const ceiling = monthlyCeilingUsd(env);
+  const getCostEstimate = typeof ai.getCostEstimate === 'function' ? ai.getCostEstimate : routerCostEstimate;
+  const month = await monthInterviewSpend({ store, now });
+  const passUsd = passCostUsd(passText, getCostEstimate);
+  if (month.costUsd + passUsd > ceiling) {
+    throw budgetExceeded({ what: 'Drafting', usedUsd: month.costUsd, ceiling, since: month.since, costUsd: passUsd });
+  }
+}
+
+/**
+ * The combined list, validated once: over 40 items the first 40 are kept
+ * and the editor is told (`truncated`); a list that fails the shape here
+ * cannot happen, since each pass's items passed it, but the check is the
+ * one the page makes and it is cheap.
+ */
+function combinedQa(qa) {
   const combined = validateQa(qa.slice(0, LIMITS.MAX_QA));
   if (!combined.ok) {
     throw new JobFailedError(`The combined question-and-answer list was refused: ${combined.error}`, { code: 'INVALID_DRAFT', status: 422 });
   }
-  qa = combined.value;
+  return { qa: combined.value, truncated: qa.length > LIMITS.MAX_QA };
+}
+
+async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container, passTimeoutMs }) {
+  const lines = segments.map((s) => `${String(s.speaker || 'Speaker 1')}: ${s.text}`);
+  const passes = splitTranscript(lines);
+  const job = {
+    interviewId,
+    transcriptVersion,
+    provenance,
+    store,
+    ai,
+    env,
+    now,
+    signal,
+    container,
+    passTimeoutMs,
+    usageOut: [],
+    guestName: isObject(doc.guest) ? doc.guest.name : '',
+    guestRole: isObject(doc.guest) ? doc.guest.role : '',
+  };
+
+  // Resume: the passes an earlier run of this version already saved.
+  const saved = savedPasses(provenance.drafting, { transcriptVersion, passCount: passes.length });
+  const resumedFrom = saved.length;
+  const answered = await runPasses(job, passes, saved);
+  const { qa, truncated } = combinedQa(answered.qa);
+  const { speakers } = answered;
 
   // Speaker to guest mapping: the model's word, checked against the count.
-  const interviewerByCount = guessInterviewer(segments);
-  const labels = [...new Set(segments.map((s) => String(s.speaker || 'Speaker 1')))];
-  let guestLabel = speakers.guest && labels.includes(speakers.guest) ? speakers.guest : null;
-  let unsure = false;
-  if (interviewerByCount && guestLabel === interviewerByCount) {
-    // The model's guest asks the questions: the two disagree, the count wins, the editor is asked.
-    unsure = true;
-    guestLabel = labels.find((l) => l !== interviewerByCount) || guestLabel;
-  } else if (!guestLabel) {
-    // The model named nobody, or a label the transcript does not have: the
-    // count decides where it can, and the editor is asked where it cannot
-    // or where the model's answer had to be ignored.
-    guestLabel = interviewerByCount ? labels.find((l) => l !== interviewerByCount) || labels[0] : labels[0];
-    unsure = labels.length > 1 && (!interviewerByCount || Boolean(speakers.guest));
-  }
+  const { guestLabel, interviewerByCount, unsure } = guestSpeaker(segments, speakers);
   const guestText = segments.filter((s) => String(s.speaker || 'Speaker 1') === guestLabel).map((s) => s.text).join('\n');
   const guarded = guardDraft(qa, { transcriptText: segments.map((s) => s.text).join('\n'), guestText, speakersUnsure: unsure });
 
-  const last = usageOut[usageOut.length - 1] || {};
+  const last = job.usageOut[job.usageOut.length - 1] || {};
   const stamp = now().toISOString();
   const drafting = {
     model: last.model || null,

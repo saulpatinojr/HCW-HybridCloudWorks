@@ -84,12 +84,14 @@ function isoDate(value, where) {
   const raw = text(value, where, { max: 10 });
   const match = ISO_DATE.exec(raw);
   if (!match) throw new FieldError(`${where} must be a date written YYYY-MM-DD.`);
-  const [, year, month, day] = match.map(Number);
-  const real = new Date(Date.UTC(year, month - 1, day));
-  if (real.getUTCFullYear() !== year || real.getUTCMonth() !== month - 1 || real.getUTCDate() !== day) {
-    throw new FieldError(`${where} is not a real date.`);
-  }
+  if (!isRealDate(match.map(Number))) throw new FieldError(`${where} is not a real date.`);
   return raw;
+}
+
+/** True when the year, month and day name a day the calendar has (no 31 April). */
+function isRealDate([, year, month, day]) {
+  const real = new Date(Date.UTC(year, month - 1, day));
+  return real.getUTCFullYear() === year && real.getUTCMonth() === month - 1 && real.getUTCDate() === day;
 }
 
 function link(value, where) {
