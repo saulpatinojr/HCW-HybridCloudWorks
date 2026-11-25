@@ -1,6 +1,7 @@
 import { block, file, joinBlocks, q } from '../format';
 import { isSelected } from '../../state';
 import { githubOrganizationVariable } from './identity';
+import { nearestRegion } from '../cloudRegion';
 
 /**
  * The pack's variables. `github_organization` has no default, so Terraform
@@ -84,7 +85,7 @@ export function tfvarsExample(state) {
     '# Sample Google Cloud Landing Zone Configuration Parameters',
     'organization_id    = "123456789012"',
     'billing_account_id = "012345-6789AB-CDEF01"',
-    `gcp_region         = "${state.options?.location || 'us-central1'}"`,
+    `gcp_region         = "${nearestRegion('gcp', state.options?.location, 'us-central1')}"`,
     'host_project_id    = "prj-shared-vpc-host-hcw"',
     'logging_project_id = "prj-logging-hub-hcw"',
     `spoke_cidr         = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,

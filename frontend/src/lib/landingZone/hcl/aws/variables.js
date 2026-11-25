@@ -1,6 +1,7 @@
 import { block, file, joinBlocks, q } from '../format';
 import { isSelected } from '../../state';
 import { ALLOW_LIST_VARIABLE } from './networkFirewall';
+import { nearestRegion } from '../cloudRegion';
 
 export function variablesTf() {
   const blocks = [];
@@ -51,7 +52,7 @@ export function variablesTf() {
 export function tfvarsExample(state) {
   const lines = [
     '# Sample AWS Landing Zone Configuration Parameters',
-    `aws_region   = "${state.options?.location || 'us-east-1'}"`,
+    `aws_region   = "${nearestRegion('aws', state.options?.location, 'us-east-1')}"`,
     `hub_cidr     = "${state.options?.hubCidr || '10.0.0.0/16'}"`,
     `spoke_cidr   = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,
     `corp_count   = ${state.options?.corpCount ?? 1}`,
