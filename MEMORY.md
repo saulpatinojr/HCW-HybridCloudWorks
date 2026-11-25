@@ -291,12 +291,12 @@ Tuesday 2026-11-03 06:45 UTC (lab supply-chain run); 2026-11-10 ([#1431](https:/
 ### Rules that were learned the hard way
 
 The standing rules (secrets and ids, image tags, no admin bypass or force-push, no `terraform apply` or Azure deletes unless told to, safety-check refusals,
-merging your own pull requests, the review bots and their three-round cap, CodeRabbit's boxes, one pull request at a time on the same lines) are in
+merging your own pull requests, Copilot's review and its three-round cap, one pull request at a time on the same lines) are in
 [`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md), the file every session reads, with the commands to check a pull request's
 reviews. Its section "Lines a session does not cross" gathers the ones that used to be written only here ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)). Follow that file, not a copy here.
 A few notes that are about this handoff rather than standing rules:
 
-- CodeRabbit is removed until further notice (owner instruction 2026-11-06): do not ask it for a review or wait for one; the merge signal is the first bullet of "Pull requests open ready for review" in `.claude/CLAUDE.md`. Copilot was out of credits until 2026-10-31; check whether its reviews are arriving again before waiting for one.
+- The merge signal is the first bullet of "Pull requests open ready for review" in `.claude/CLAUDE.md`. Copilot reviews only when the author has Copilot code review and AI credits; that file says how long to wait for one and when not to wait at all.
 - The Docker-Sponsored Open Source application is tracked only by the admin calendar alert for 2026-10-30. Do not list it as waiting.
 - Obsidian and the Second Brain work are not part of this workstream.
 
