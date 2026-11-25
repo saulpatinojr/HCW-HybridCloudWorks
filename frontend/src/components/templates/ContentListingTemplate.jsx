@@ -111,6 +111,75 @@ function renderContentCard(item, index, itemType, actionLabel) {
   }
 }
 
+// Wraps a card so clicking it calls onItemClick with its item.
+function clickableCard(card, item, onItemClick) {
+  if (!onItemClick) return card;
+  return React.cloneElement(card, {
+    onClick: () => onItemClick(item),
+    className: `${card.props.className || ''} cursor-pointer`,
+  });
+}
+
+// The grid area: loading, error, the cards, or why there are none.
+function ListingGridState({
+  loading,
+  error,
+  items,
+  filteredItems,
+  itemType,
+  actionLabel,
+  onItemClick,
+  onClearFilters,
+}) {
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-destructive text-lg">Failed to load content.</p>
+        <p className="text-muted-foreground text-sm mt-2">{error}</p>
+      </div>
+    );
+  }
+
+  if (filteredItems.length > 0) {
+    return (
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredItems.map((item, index) =>
+          clickableCard(renderContentCard(item, index, itemType, actionLabel), item, onItemClick)
+        )}
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    // Nothing published for this provider and type at all (issue #373).
+    // The filter message below would invite the reader to clear filters
+    // that are not the reason; say the true thing instead.
+    return (
+      <div className="text-center py-20">
+        <p className="text-muted-foreground text-lg">No {itemType}s published yet.</p>
+        <p className="text-muted-foreground text-sm mt-2">Check back soon for updates.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-center py-20">
+      <p className="text-muted-foreground text-lg">No {itemType}s found matching your criteria.</p>
+      <Button variant="outline" className="mt-4" onClick={onClearFilters}>
+        Clear Filters
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Enhanced Content Hub Template for Blog/Architecture listings
  * @param {string} title - Page title
@@ -142,71 +211,6 @@ export function ContentListingTemplate({
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
-
-  function renderGridState() {
-    if (loading) {
-      return (
-        <div className="flex justify-center items-center min-h-[400px]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      );
-    }
-
-    if (error) {
-      return (
-        <div className="text-center py-20">
-          <p className="text-destructive text-lg">Failed to load content.</p>
-          <p className="text-muted-foreground text-sm mt-2">{error}</p>
-        </div>
-      );
-    }
-
-    if (filteredItems.length > 0) {
-      return (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredItems.map((item, index) => {
-            const card = renderContentCard(item, index, itemType, actionLabel);
-            if (!onItemClick) return card;
-
-            return React.cloneElement(card, {
-              onClick: () => onItemClick(item),
-              className: `${card.props.className || ''} cursor-pointer`,
-            });
-          })}
-        </div>
-      );
-    }
-
-    if (items.length === 0) {
-      // Nothing published for this provider and type at all (issue #373).
-      // The filter message below would invite the reader to clear filters
-      // that are not the reason; say the true thing instead.
-      return (
-        <div className="text-center py-20">
-          <p className="text-muted-foreground text-lg">No {itemType}s published yet.</p>
-          <p className="text-muted-foreground text-sm mt-2">Check back soon for updates.</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="text-center py-20">
-        <p className="text-muted-foreground text-lg">
-          No {itemType}s found matching your criteria.
-        </p>
-        <Button
-          variant="outline"
-          className="mt-4"
-          onClick={() => {
-            setSearchTerm('');
-            setSelectedCategory('all');
-          }}
-        >
-          Clear Filters
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <main className="flex-grow pt-28 pb-20 px-4 md:px-8 max-w-[1600px] mx-auto w-full">
@@ -267,7 +271,19 @@ export function ContentListingTemplate({
       </div>
 
       {/* Content Grid */}
-      {renderGridState()}
+      <ListingGridState
+        loading={loading}
+        error={error}
+        items={items}
+        filteredItems={filteredItems}
+        itemType={itemType}
+        actionLabel={actionLabel}
+        onItemClick={onItemClick}
+        onClearFilters={() => {
+          setSearchTerm('');
+          setSelectedCategory('all');
+        }}
+      />
     </main>
   );
 }
