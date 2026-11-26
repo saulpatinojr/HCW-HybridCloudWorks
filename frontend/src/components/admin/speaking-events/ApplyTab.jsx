@@ -25,6 +25,15 @@
  * with no status never clashes; its row says in plain grey words what its
  * dates would meet. Days are compared as calendar days in each event's own
  * local time.
+ *
+ * THE OWNER'S OWN IDEAS ARE LISTED TOO (owner request 2026-11-25). A
+ * speaking event the owner added by hand with the status Idea, and that the
+ * directory does not already list by the same name, is a row here as well
+ * (manualOpportunities.js). It comes from the hub's existing read of the
+ * stored events, not from a second read on this tab. Its row has the same
+ * dates, days left and clash words; its notes are the entry's own
+ * description, it has no estimate (the estimate reads the directory's copy
+ * of an event), and Edit opens the entry's form on the Speaking hub.
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
@@ -52,6 +61,8 @@ import { Dismissible, ReadsStatus, RefreshButton } from './TabParts';
 import { SectionHeading } from './EventTables';
 import { httpUrl } from './eventModel';
 import useApplyEvents from './useApplyEvents';
+import { manualOpportunities, withManualRows } from './manualOpportunities';
+import { ORIGIN_RECORD_PATHS } from '@/lib/pageLinks';
 import {
   APPLY_STATUSES,
   COST_FIELDS,
@@ -375,7 +386,7 @@ function RowHeader({ event }) {
       <div className="flex flex-wrap items-center gap-1.5">
         {event.cancelled && <StatusBadge status={CANCELLED} />}
         {event.postponed && <StatusBadge status={POSTPONED} />}
-        <StatusBadge status={applyStatusInfo(event.note?.status)} />
+        <StatusBadge status={event.manual ? MANUAL_BADGE : applyStatusInfo(event.note?.status)} />
       </div>
     </div>
   );
@@ -512,6 +523,56 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
           onEstimate={() => apply.estimate(event.id)}
         />
       )}
+    </li>
+  );
+}
+
+/** Where Edit on a manual row goes: the entry's own form on the Speaking hub. */
+export const manualEditHref = (row) => ORIGIN_RECORD_PATHS.speaking({ id: row.docId });
+export const MANUAL_BADGE = {
+  id: 'manual',
+  label: 'Added by you',
+  tone: 'muted',
+  help: 'A speaking event you entered on the Speaking hub, with the status Idea.',
+};
+export const MANUAL_NO_ESTIMATE =
+  'Not available for an event you added yourself: the estimate reads the directory’s copy of an event.';
+
+/**
+ * A speaking event the owner added by hand (status Idea). The same dates,
+ * days left and clash words as a directory row; its notes and its form are
+ * the stored entry's own, so Edit opens that entry rather than this tab's
+ * status and costs (those belong to directory events).
+ */
+function ManualRow({ event, overlap, today }) {
+  const close = callCloseInfo(event.callCloses, today);
+  return (
+    <li className="space-y-2 rounded-xl border border-border p-4" data-event={event.id}>
+      <RowHeader event={event} />
+      <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-[8rem_1fr]">
+        <dt className="text-muted-foreground">Where</dt>
+        <dd>{locationLine(event)}</dd>
+        <dt className="text-muted-foreground">When</dt>
+        <dd>{formatRange(eventRange(event))}</dd>
+        <dt className="text-muted-foreground">Call for speakers</dt>
+        <dd className={CLOSE_TONES[close.tone]}>{close.label}</dd>
+        {event.entryNotes && (
+          <>
+            <dt className="text-muted-foreground">Your notes</dt>
+            <dd className="whitespace-pre-wrap break-words">{event.entryNotes}</dd>
+          </>
+        )}
+        <dt className="text-muted-foreground">Estimate</dt>
+        <dd className="text-muted-foreground">{MANUAL_NO_ESTIMATE}</dd>
+      </dl>
+      <Overlap overlap={overlap} />
+      <div className="flex flex-wrap gap-2">
+        <Button asChild size="sm" variant="outline" className="h-7 text-xs">
+          <Link to={manualEditHref(event)} aria-label={`Edit ${event.title} on the Speaking hub`}>
+            <Pencil className="mr-1 h-3 w-3" /> Edit on the Speaking hub
+          </Link>
+        </Button>
+      </div>
     </li>
   );
 }
@@ -691,6 +752,8 @@ function TopicsLine({ topics, canEstimate }) {
 
 /** The rows, or what to do when there are none. */
 function EventList({ list, shown, children }) {
+  // `list.events` here is every row the tab could show: the directory's and
+  // the owner's own ideas (ApplyTab passes the merged list).
   if (shown.length > 0) {
     return (
       <ul className="space-y-3" aria-label="Future Events">
@@ -721,7 +784,8 @@ function Intro({ fetchedAt }) {
       <p>
         Community events with an open call for speakers, read from the Community Days directory.
         Record a status, your costs and notes for each, and see where its dates meet talks you
-        already have.
+        already have. Speaking events you added yourself with the status Idea are listed here too,
+        marked “Added by you”.
       </p>
       {fetchedAt && (
         <p className="text-xs">
@@ -751,13 +815,20 @@ export default function ApplyTab({ data }) {
   const [month, setMonth] = useState(null);
 
   const talks = useMemo(() => ownTalks(data.rows), [data.rows]);
-  const overlaps = useMemo(
-    () => allOverlaps({ events: list.events, saved: list.saved, talks }),
-    [list.events, list.saved, talks]
+  // The directory's rows with the owner's own ideas slotted in by date. The
+  // clash rule, the calendar and the filters all read this one list.
+  const manual = useMemo(
+    () => manualOpportunities(data.rows?.manualEntries, { events: list.events, saved: list.saved }),
+    [data.rows, list.events, list.saved]
   );
-  const shownMonth = month ?? firstMonth(list.events, today);
-  const marks = marksForMonth(shownMonth, { events: list.events, saved: list.saved, talks });
-  const shown = filterEvents(list.events, { search, status });
+  const events = useMemo(() => withManualRows(list.events, manual), [list.events, manual]);
+  const overlaps = useMemo(
+    () => allOverlaps({ events, saved: list.saved, talks }),
+    [events, list.saved, talks]
+  );
+  const shownMonth = month ?? firstMonth(events, today);
+  const marks = marksForMonth(shownMonth, { events, saved: list.saved, talks });
+  const shown = filterEvents(events, { search, status });
   const canEstimate = list.topics.count > 0 || list.topics.hasBio;
   const askClear = (target) =>
     setPendingClear({ id: target.id, title: target.title, note: target.note });
@@ -801,7 +872,7 @@ export default function ApplyTab({ data }) {
       {read.loaded && (
         <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
           <div className="order-2 space-y-4 lg:order-1">
-            {list.keySet && (
+            {(list.keySet || manual.length > 0) && (
               <>
                 <Filters
                   search={search}
@@ -809,21 +880,31 @@ export default function ApplyTab({ data }) {
                   status={status}
                   setStatus={setStatus}
                 />
-                <TopicsLine topics={list.topics} canEstimate={canEstimate} />
-                <EventList list={list} shown={shown}>
-                  {shown.map((event) => (
-                    <EventRow
-                      key={event.id}
-                      event={event}
-                      overlap={overlaps.get(event.id)}
-                      today={today}
-                      apply={apply}
-                      canEstimate={canEstimate}
-                      editing={editing === event.id}
-                      setEditing={setEditing}
-                      askClear={askClear}
-                    />
-                  ))}
+                {/* About the estimate, which only directory events have. */}
+                {list.keySet && <TopicsLine topics={list.topics} canEstimate={canEstimate} />}
+                <EventList list={{ ...list, events }} shown={shown}>
+                  {shown.map((event) =>
+                    event.manual ? (
+                      <ManualRow
+                        key={event.id}
+                        event={event}
+                        overlap={overlaps.get(event.id)}
+                        today={today}
+                      />
+                    ) : (
+                      <EventRow
+                        key={event.id}
+                        event={event}
+                        overlap={overlaps.get(event.id)}
+                        today={today}
+                        apply={apply}
+                        canEstimate={canEstimate}
+                        editing={editing === event.id}
+                        setEditing={setEditing}
+                        askClear={askClear}
+                      />
+                    )
+                  )}
                 </EventList>
               </>
             )}

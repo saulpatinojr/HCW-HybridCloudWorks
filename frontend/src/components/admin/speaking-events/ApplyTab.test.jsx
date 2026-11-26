@@ -14,6 +14,7 @@ import ApplyTab, {
   CHANGED_ELSEWHERE,
   ESTIMATE_LABEL,
   KEYS_HREF,
+  MANUAL_NO_ESTIMATE,
   SWITCHED_OFF_CODE,
 } from './ApplyTab';
 import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
@@ -767,6 +768,74 @@ describe('the list’s filters', () => {
       target: { value: 'nothing like this' },
     });
     expect(screen.getByText('No events match these filters.')).toBeInTheDocument();
+  });
+});
+
+describe('the owner’s own ideas', () => {
+  const idea = (over = {}) => ({
+    _docId: 'example-conf-2099',
+    eventName: 'Example Conf 2099',
+    date: '2099-08-02',
+    status: 'idea',
+    cfpDeadline: '2099-01-14',
+    location: 'Exampleton, WA',
+    eventUrl: 'https://example.org/conf',
+    description: 'Two talk ideas.',
+    display: false,
+    ...over,
+  });
+
+  it('lists an Idea entry next to the directory rows, with its deadline and days left, and no second read', async () => {
+    await show(hubData([idea()]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    const rows = within(list).getAllByRole('listitem');
+    // Soonest first: the directory event in March, then the idea in August.
+    expect(rows.map((row) => row.getAttribute('data-event'))).toEqual([
+      'event-1',
+      'manual-example-conf-2099',
+    ]);
+    const inRow = within(rows[1]);
+    expect(inRow.getByRole('link', { name: /^Example Conf 2099/ })).toHaveAttribute(
+      'href',
+      'https://example.org/conf'
+    );
+    expect(inRow.getByText('Added by you')).toBeInTheDocument();
+    expect(inRow.getByText('Exampleton, WA')).toBeInTheDocument();
+    expect(inRow.getByText(/Closes Jan 14, 2099, about \d+ days left/)).toBeInTheDocument();
+    expect(inRow.getByText('Two talk ideas.')).toBeInTheDocument();
+    expect(inRow.getByText(MANUAL_NO_ESTIMATE)).toBeInTheDocument();
+    expect(inRow.queryByRole('button', { name: /Estimate/ })).toBeNull();
+    expect(
+      inRow.getByRole('link', { name: 'Edit Example Conf 2099 on the Speaking hub' })
+    ).toHaveAttribute('href', '/admin/speaking?talk=example-conf-2099');
+    // The tab still reads one route; the entry came from the hub's own read.
+    expect(getJSON).toHaveBeenCalledTimes(1);
+    expect(getJSON).toHaveBeenCalledWith(EVENTS_ROUTE);
+  });
+
+  it('shows an entry with the same name as a directory event once, as the directory row', async () => {
+    await show(hubData([idea({ eventName: 'Example Community Day' })]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(list).queryByText('Added by you')).toBeNull();
+  });
+
+  it('leaves out a Proposed entry: it is one of the owner’s talks already', async () => {
+    await show(hubData([idea({ status: 'proposed' })]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('lists the owner’s ideas even before the Community Days key is set', async () => {
+    getJSON.mockResolvedValue(
+      answer({ status: 'no_key', keySet: false, events: [], fetchedAt: null })
+    );
+    await show(hubData([idea()]));
+    expect(await screen.findByText(/The Community Days key is not set yet/)).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Future Events' });
+    expect(within(list).getByText('Example Conf 2099')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    expect(screen.queryByTestId('topics-line')).toBeNull();
   });
 });
 
