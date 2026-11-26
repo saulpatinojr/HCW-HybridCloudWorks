@@ -18,6 +18,7 @@ import PipelinePieces, {
   usePipelinePieces,
 } from '@/components/admin/shared/pipeline/PipelinePieces';
 import SendToPipelineButton from '@/components/admin/shared/pipeline/SendToPipelineButton';
+import { isLivePiece } from '@/lib/nextSteps';
 
 /** The nav id this Page sends work under (functions/src/lib/page-links/origin-ref.js). */
 export const AMBASSADOR_PAGE = 'ambassador';
@@ -46,16 +47,12 @@ export function evidenceStateByContent(evidenceRows, programId) {
 }
 
 /**
- * Whether a piece can be filed: exactly the test the server's import applies
- * (functions/src/lib/ambassador/import-readers.js isLiveContent): `Live` is
- * true, or the older `Status` is "Live", or the status is "published", and
- * the piece is not deleted. The same rule on both sides means the button
- * shows exactly when the import would accept the piece (reviews of #1891).
+ * Whether a piece can be filed: the one live rule (lib/nextSteps.js), the
+ * same test the server's import applies, so the button shows exactly when
+ * the import would accept the piece (reviews of #1891). Re-exported for the
+ * Page's own callers.
  */
-export function isLivePiece(piece) {
-  if (!piece || ![undefined, null, '', false].includes(piece.softDeletedAt)) return false;
-  return piece.Live === true || piece.Status === 'Live' || piece.contentStatus === 'published';
-}
+export { isLivePiece };
 
 /** The program's reference, as the hand-off sends it. */
 export const programRef = (program) => ({ page: AMBASSADOR_PAGE, id: program.id });
@@ -84,8 +81,9 @@ export default function ProgramPipeline({ program, evidenceRows, onFileEvidence,
   const pieces = usePipelinePieces(programRef(program));
   const filed = evidenceStateByContent(evidenceRows, program.id);
   const action = (piece) => {
-    // Live as every Pipeline page reads it (lib/status.js), so an older
-    // document marked live another way is offered too.
+    // Live by the same rule as the server's import and the Pipeline's next
+    // step (lib/nextSteps.js), so an older document marked live another way
+    // is offered too.
     if (!isLivePiece(piece)) return null;
     const state = filed.get(String(piece.id));
     if (state === 'program') {
