@@ -544,7 +544,7 @@ describe('the hub', () => {
     const claude = {
       ...SNAPSHOT.agent,
       id: 'claude',
-      label: 'Claude',
+      label: 'Claude Publisher',
       sectionsOff: [],
       denials: {
         ...SNAPSHOT.agent.denials,
@@ -556,13 +556,13 @@ describe('the hub', () => {
       name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agents: [SNAPSHOT.agent, claude] } : {}
     );
     renderAt();
-    expect(await screen.findByText('Content agent (Claude)')).toBeInTheDocument();
+    expect(await screen.findByText('Content agent (Claude Publisher)')).toBeInTheDocument();
     const [kodaCard, claudeCard] = screen.getAllByTestId('content-agent-card');
     expect(within(kodaCard).getByText('route-not-allowed')).toBeInTheDocument();
     expect(within(kodaCard).queryByText('capability-off')).not.toBeInTheDocument();
     expect(within(claudeCard).getByText('capability-off')).toBeInTheDocument();
     expect(within(claudeCard).queryByText('route-not-allowed')).not.toBeInTheDocument();
-    expect(within(claudeCard).getByRole('link', { name: /Claude tab/ })).toHaveAttribute(
+    expect(within(claudeCard).getByRole('link', { name: /Claude Publisher tab/ })).toHaveAttribute(
       'href',
       '/admin/agents?tab=claude'
     );
