@@ -176,7 +176,7 @@ never applied, so nothing is destroyed), and this change follows it:
   row and phone message for each change.
 - **Two more limits for an agent key, in the custom security rules and the
   rate limiting rules** (`GUARDED_PHASES` in
-  `functions/src/lib/cloudflare/rules-routes.js`), each refused with 403
+  `functions/src/lib/cloudflare/rules-guards.js`), each refused with 403
   `CLOUDFLARE_OWNER_ONLY` before anything is written: it may not switch a
   rule off, or add one that starts switched off, because a rule switched
   off is a rule removed in effect; and it may not set a custom response
