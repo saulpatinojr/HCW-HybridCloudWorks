@@ -4,9 +4,7 @@
  * server's protected rule phases.
  */
 import { describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { PROTECTED_PHASES as SERVER_PROTECTED_PHASES } from '../../../../../functions/src/lib/cloudflare/protected.js';
 import {
   PROTECTED_PHASES,
   dnsForm,
@@ -49,16 +47,6 @@ const STATUS = {
 };
 
 describe('the browser’s mirror of the server’s protected phases', () => {
-  const serverFile = join(
-    process.cwd(),
-    '..',
-    'functions',
-    'src',
-    'lib',
-    'cloudflare',
-    'protected.js'
-  );
-
   it('locks the origin secret rule and the API rate limit, each with a reason', () => {
     expect(PROTECTED_PHASES.map((item) => item.phase)).toEqual([
       'http_request_late_transform',
@@ -68,11 +56,9 @@ describe('the browser’s mirror of the server’s protected phases', () => {
   });
 
   // functions/src/lib/cloudflare/protected.js imports nothing, so the browser
-  // can read it. It must export PROTECTED_PHASES: a list of phase names, or of
-  // objects with a `phase` field. Skipped until the file exists.
-  it.skipIf(!existsSync(serverFile))('names the same phases as the server’s list', async () => {
-    const server = await import(/* @vite-ignore */ pathToFileURL(serverFile).href);
-    const phases = (server.PROTECTED_PHASES ?? []).map((item) =>
+  // reads it directly, as agentKeys.test.js reads the server's key list.
+  it('names the same phases as the server’s list', () => {
+    const phases = SERVER_PROTECTED_PHASES.map((item) =>
       typeof item === 'string' ? item : item.phase
     );
     expect([...phases].sort()).toEqual(PROTECTED_PHASES.map((item) => item.phase).sort());

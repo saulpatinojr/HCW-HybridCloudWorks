@@ -444,6 +444,16 @@ describe('rules', () => {
     expect(api.calls[0].body).toEqual({ rules, description: 'Redirects' });
     expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: 'http_request_dynamic_redirect', count: 1 });
   });
+
+  it('drops Cloudflare’s own version and last_updated stamps from a rule sent back, and keeps the rest', async () => {
+    const stamped = [{ id: 'x1', ref: 'r1', version: '3', last_updated: '2026-11-01T00:00:00Z', expression: 'true', action: 'redirect' }];
+    const { handlers, api } = setup({
+      routes: { [`PUT ${ZONE_PATH}/rulesets/phases/http_request_dynamic_redirect/entrypoint`]: (url, init) => ok({ id: 'r2', phase: 'http_request_dynamic_redirect', ...JSON.parse(init.body) }) },
+    });
+    const res = parse(await handlers.putPhase(request({ params: { phase: 'http_request_dynamic_redirect' }, body: { rules: stamped } }), {}));
+    expect(res.status).toBe(200);
+    expect(api.calls[0].body).toEqual({ rules: [{ id: 'x1', ref: 'r1', expression: 'true', action: 'redirect' }] });
+  });
 });
 
 describe('a refusal from Cloudflare', () => {

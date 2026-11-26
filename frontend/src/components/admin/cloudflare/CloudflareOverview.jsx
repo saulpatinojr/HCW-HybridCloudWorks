@@ -16,6 +16,10 @@ import { familyRows, protectedDnsList, protectedPhaseList } from './cloudflareVi
 
 const NETWORK_AGENT = agentKeyTab('claude-network');
 
+/** The runbook for this page: the token, Claude Network Guy's key, and what is refused. */
+export const CLOUDFLARE_RUNBOOK_URL =
+  'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md';
+
 /** The runbook for the one Cloudflare value that must change on both sides at once. */
 export const ORIGIN_SECRET_RUNBOOK_URL =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/origin-secret-rotation.md';
@@ -181,6 +185,10 @@ function WhereCard() {
               {agents.label} → {NETWORK_AGENT.displayName}
             </Link>
             .
+          </li>
+          <li>
+            Every step, in order (the token, the key, what is refused and why):{' '}
+            <ExternalLink href={CLOUDFLARE_RUNBOOK_URL}>the Cloudflare admin runbook</ExternalLink>.
           </li>
           <li>
             Making the admin token (an account-owned token, limited to this zone):{' '}

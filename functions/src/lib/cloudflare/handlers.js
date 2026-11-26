@@ -185,7 +185,10 @@ function rulesBody(body) {
   refuseUnknownFields(body, ['rules', 'description']);
   if (!Array.isArray(body.rules) || body.rules.length > MAX_RULES) throw bad(`rules must be a list of at most ${MAX_RULES} rules.`);
   if (body.rules.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule))) throw bad('Each rule must be an object.');
-  const out = { rules: body.rules };
+  // `version` and `last_updated` are Cloudflare's own stamps on a rule it
+  // returned; they are dropped so a rule read from the page and sent back
+  // unchanged is not refused for carrying them.
+  const out = { rules: body.rules.map(({ version: _version, last_updated: _lastUpdated, ...rule }) => rule) };
   if (body.description !== undefined) {
     if (typeof body.description !== 'string' || body.description.length > 500) throw bad('description must be text of at most 500 characters.');
     out.description = body.description;
