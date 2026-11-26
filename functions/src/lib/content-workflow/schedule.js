@@ -6,10 +6,24 @@ import { normalizePublishTarget } from '../cms/publish-targets.js';
 import { toValidDate } from '../cms/content-status.js';
 import { actor, json, readBody, workflowFailure } from './shared.js';
 
-/** Why a schedule cannot be saved, as the response to send, or null. */
+/**
+ * Why a schedule cannot be saved, as the response to send, or null.
+ *
+ * A live page is refused (#1889): saving a schedule writes `Live: false`, so
+ * it would take the page off the public site, and the timer never publishes a
+ * page that is live, so keeping `Live` instead would leave a schedule that
+ * never fires. The Calendar offers only pages that are not live, but the
+ * article review page's schedule card (`useScheduleActions` in
+ * frontend/src/components/admin/blog-review/useBlogReviewActions.js) calls
+ * this for any article, live ones included, so this refusal is what keeps a
+ * live page on the site. Unpublish first, as `unscheduleRefusal` says.
+ */
 function scheduleRefusal(contentId, validId, contentData) {
   if (!validId) return json(400, { error: 'contentId required' });
   if (!contentData) return json(404, { error: `content ${contentId} not found` });
+  if (contentData.Live === true) {
+    return json(409, { error: 'This content is live; unpublish it before scheduling it.' });
+  }
   return null;
 }
 
