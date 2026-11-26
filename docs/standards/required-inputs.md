@@ -708,7 +708,8 @@ exchange was refused.
 
 ## 4.11b Agent keys — made on the site, held outside it
 
-Each agent key the site can hold is made on its own AI Engine tab and shown
+Each agent key the site can hold is made on its own tab of the Agents page
+(`/admin/agents`; the AI Engine page held these tabs until 2026-11-26) and shown
 once; the site keeps only a hash of it in Cosmos `admin_config`. No store in
 this page holds one, and nothing has to be set for the site to start: a key
 that does not exist simply refuses every call. The list of keys is
