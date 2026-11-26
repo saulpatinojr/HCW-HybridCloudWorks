@@ -45,11 +45,21 @@ Issue a replacement token strictly restricted to needed permissions:
 1. In Cloudflare Dashboard -> **API Tokens** -> **Create Token**.
 2. Select **Create Custom Token**:
    - **Token Name:** `hcw-dns-automation-2026`
-   - **Permissions:**
+   - **Permissions** (the same list as `cloudflare_api_token` in
+     `infra/variables.tf`; a token with less fails the apply on the
+     resource that needs the missing permission):
      - `Zone` -> `DNS` -> `Edit`
      - `Zone` -> `Zone` -> `Read`
+     - `Zone` -> `Transform Rules` -> `Edit` (the origin secret rule)
+     - `Zone` -> `Zone WAF` -> `Edit` (the API rate limit)
+     - `Account` -> `Account Rulesets` -> `Read`
+     - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site)
    - **Zone Resources:**
      - `Include` -> `Specific zone` -> `hybridcloudworks.com`
+   - **Account Resources** (needed because two permissions above are
+     Account permissions; without it the token cannot manage the Web
+     Analytics site):
+     - `Include` -> the account that owns `hybridcloudworks.com`
    - **Client IP Address Filtering (Recommended):**
      - Restrict to known Terraform Cloud runner IP blocks or operator CIDRs if static.
    - **TTL:**
