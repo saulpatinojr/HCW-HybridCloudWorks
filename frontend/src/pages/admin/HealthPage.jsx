@@ -128,6 +128,12 @@ const PANELS = {
   report: ReportTab,
 };
 
+/** The snapshot's agent key blocks, or Koda's alone (or none) for an older snapshot. */
+function agentBlocks(snapshot) {
+  if (Array.isArray(snapshot.agents) && snapshot.agents.length) return snapshot.agents;
+  return [snapshot.agent || null];
+}
+
 export default function HealthPage() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();
@@ -166,6 +172,9 @@ export default function HealthPage() {
     publishingWatchdog: digestForDisplay?.publishingWatchdog || null,
     // The content agent's block (#1491); null until a snapshot that carries it lands.
     agent: snapshot.agent || null,
+    // One block per agent key; a snapshot written before there were more
+    // carries Koda's alone, and one before #1491 none (one card says so).
+    agents: agentBlocks(snapshot),
     // The nightly export's block (#1409); the same rule.
     backups: snapshot.backups || null,
   };

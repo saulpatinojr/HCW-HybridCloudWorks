@@ -16,12 +16,13 @@
 
 import React, { useEffect } from 'react';
 import { buildIntegrationView } from './integrationView';
-import { SERVICES, SERVICE_GROUPS } from './serviceRegistry';
+import { SERVICES, SERVICE_GROUPS, agentKeyPanel } from './serviceRegistry';
 import ServiceCard from './ServiceCard';
 import CloudPricingRefresh from './CloudPricingRefresh';
 import CoderAutomation from './CoderAutomation';
 import ClaudeCodeNote from './ClaudeCodeNote';
 import {
+  AgentKeyNote,
   CopilotReviewNote,
   HostingerMcpNote,
   MuseReaderNote,
@@ -32,6 +33,7 @@ import SessionizeSetting, { useSpeakerId } from './SessionizeSetting';
 import StreamYardOnAirPanel from './StreamYardOnAirPanel';
 import useSecretStatus from './useSecretStatus';
 import { TabError, TabLoading } from './TabNotice';
+import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
 
 /**
  * A filter, not a second tab widget: a group of toggle buttons (aria-pressed).
@@ -73,6 +75,15 @@ const KEY_GROUP_PANELS = {
   copilotReview: CopilotReviewNote,
   museReader: MuseReaderNote,
   terraformRunIdentity: TerraformRunIdentityNote,
+  // One box per agent key the site issues, on the Agent keys card.
+  ...Object.fromEntries(
+    AGENT_KEY_TABS.map((agent) => [
+      agentKeyPanel(agent.id),
+      function AgentKeyPanel() {
+        return <AgentKeyNote agent={agent} />;
+      },
+    ])
+  ),
 };
 
 function panelsFor(service) {

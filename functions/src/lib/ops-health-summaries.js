@@ -5,6 +5,7 @@
  * out of ops-health.js, which re-exports the public names.
  */
 import { CAPABILITIES, enabledCapabilities, isUsable } from './agent-content/keys.js';
+import { DEFAULT_AGENT_KEY } from './agent-content/agent-keys.js';
 
 export function toMillis(value) {
   if (!value) return 0;
@@ -115,7 +116,8 @@ const NO_KEY = Object.freeze({
 });
 
 /**
- * The content agent (Koda, ADR 0037 and 0038) as the Health page shows it:
+ * One agent key (Koda's by default; one per row of agent-content/agent-keys.js,
+ * ADR 0037 and 0038) as the Health page shows it:
  * the state of its key without the hint or the hash, the switches that are
  * off, and the refusals the last day recorded. A denial row is content-free
  * by design (`agent-content/guard.js`), so counting them by reason discloses
@@ -132,10 +134,10 @@ const NO_KEY = Object.freeze({
  * `timestamp`), so `lastAt` is the newest row's time even when the read hit
  * its bound; `bounded` then says the total and the reasons are a floor.
  */
-export function agentSummary({ record, keyUnavailable = false, denialRows, sinceIso, lastCheckedAt }) {
+export function agentSummary({ key = DEFAULT_AGENT_KEY, record, keyUnavailable = false, denialRows, sinceIso, lastCheckedAt }) {
   return {
-    id: 'koda',
-    label: 'Koda',
+    id: key.id,
+    label: key.displayName,
     key: keyState(record, keyUnavailable),
     sectionsOff: sectionsOffOf(record),
     denials: denialsSummary(denialRows, sinceIso),

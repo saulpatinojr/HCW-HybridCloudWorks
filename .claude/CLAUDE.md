@@ -505,7 +505,7 @@ stays in code; the owner does not want it editable from the portal.
 | Telegram alerts | `createNotifier().notifyTelegram` with a `source` per thing, so its 15-minute cooldown is per thing | `functions/src/lib/notify.js` |
 | Background work | A job type through `registerJobType` | `functions/src/lib/job-model.js` |
 | Telegram commands | One entry in `COMMANDS` | `functions/src/lib/telegram/commands.js` |
-| Agent keys (the owner's content agent) | Nothing: an agent key uses the same routes, through its own key, switches and allow-list | `functions/src/lib/agent-content/admin-access.js` |
+| Agent keys (Koda's and Claude's, one list) | Nothing: an agent key uses the same routes, through its own key, switches and allow-list. Each key is a row in `AGENT_KEYS` with its own record, switches, AI Engine tab and audit rows; a check on an agent key reads that key's own record (`agentSwitchesOn(store, user.agent)`), never another's | `functions/src/lib/agent-content/agent-keys.js`, `functions/src/lib/agent-content/admin-access.js` |
 
 **Built so far, and still to come.** Phase 1 of #1886 built the Pipeline
 hand-off with Ambassador as its first Page: "Draft a piece" on a held

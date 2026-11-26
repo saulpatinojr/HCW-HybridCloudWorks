@@ -1,7 +1,7 @@
 /**
  * AI Engine — Admin Page  (/admin/ai-engine)
  *
- * Seven tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
+ * Eight tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
  *   1. AI Services   — the Priority list (ADR 0034 §4), feature switches,
  *                      provider cards with status, enable toggle, the
  *                      catalogue's model list, Test
@@ -16,6 +16,9 @@
  *   6. Koda          — the content agent's API key, what it may do, and how
  *                      the Muse connector reaches the site (ADR 0037;
  *                      components/admin/ai-engine/KodaTab.jsx)
+ *   6a. Claude       — one more agent key, on the same tab component over its
+ *                      own record, switches and audit trail
+ *                      (components/admin/ai-engine/agentKeys.js)
  *   7. Developer API — event organizers' keys for the Developer API: make,
  *                      re-scope, rotate, revoke, and what a key can reach
  *                      (ADR 0042; components/admin/ai-engine/DeveloperApiTab.jsx)
@@ -52,6 +55,7 @@ import ServicesTab, {
 import McpTab, { McpServerCard } from '@/components/admin/ai-engine/McpTab';
 import PlaygroundTab from '@/components/admin/ai-engine/PlaygroundTab';
 import KodaTab from '@/components/admin/ai-engine/KodaTab';
+import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
 import DeveloperApiTab from '@/components/admin/ai-engine/DeveloperApiTab';
 import { useAiEngineSeed, useModelCatalog } from './aiEngine/useAiEngineData';
 
@@ -199,6 +203,14 @@ export default function AIEnginePage() {
     mcp: () => <McpTab servers={servers} />,
     playground: () => <PlaygroundTab providers={providersWithModels} servers={servers} />,
     koda: () => <KodaTab />,
+    // Every other agent key gets the same tab over its own record; `key`
+    // remounts it, so a key shown once on one tab never shows on another.
+    ...Object.fromEntries(
+      AGENT_KEY_TABS.filter((entry) => entry.id !== 'koda').map((entry) => [
+        entry.id,
+        () => <KodaTab key={entry.id} agent={entry} />,
+      ])
+    ),
     'developer-api': () => <DeveloperApiTab />,
     usage: () => (
       <Suspense

@@ -11,6 +11,10 @@
  * of every handler, so the key is instead accepted by the admin role guard
  * itself, through `withAgentAccess`, and only for the routes in `POLICY`.
  *
+ * The same table serves every agent key the site holds (agent-keys.js):
+ * each key's own record decides which of its sections are open, and the key
+ * acts as its own agent (`<id> (agent)`). Koda's key is the first.
+ *
  * The rules, all enforced here and tested in admin-access.test.js:
  *
  *   - A DELETE is never allowed, whatever the route. A POST or PUT that
@@ -28,14 +32,15 @@
  *     among them. Platform Settings may be read (owner request 2026-11-10,
  *     "all platform items"), never written: its autoposting settings decide
  *     what is published.
- *   - Each route belongs to a section switch on the Koda tab
- *     (keys.js CAPABILITIES, the `admin.*` ids). A section that is off
- *     refuses its routes with 403 and an audit row, like a capability.
- *   - The key acts as `koda (agent)` everywhere except the Second Brain,
- *     which is the owner's private workspace partitioned by the owner's
- *     object id: there the key acts as the owner (`asOwner`), so the notes
- *     it writes land in the owner's partition. Audit rows still say which
- *     key did it.
+ *   - Each route belongs to a section switch on each key's own tab
+ *     (keys.js CAPABILITIES, the `admin.*` ids), read from that key's own
+ *     record. A section that is off refuses its routes with 403 and an
+ *     audit row, like a capability.
+ *   - Each key acts as its own agent (`<id> (agent)`, so `koda (agent)` for
+ *     Koda's) everywhere except the Second Brain, which is the owner's
+ *     private workspace partitioned by the owner's object id: there the key
+ *     acts as the owner (`asOwner`), so the notes it writes land in the
+ *     owner's partition. Audit rows still say which key did it.
  *   - The role each route requires is the role the policy grants: `editor`
  *     for nearly everything, `publisher` for the Doc Vault (whose reads
  *     already need it) and for acknowledging or resolving a workflow alert
@@ -45,17 +50,17 @@
  * Every refusal of a presented key is an `admin_audit_logs` row of kind
  * agent-content-denial with `surface: 'admin'`, the reason
  * (`route-not-allowed`, `section-off`, `role`, `body-not-allowed`,
- * `body-unreadable`, `user-only-route`, or the key guard's own `wrong-key`,
- * `revoked-key`, `no-key`, `rate-limited`), the method and the route as the
+ * `body-unreadable`, `user-only-route`, `no-agent`, or the key guard's own
+ * `wrong-key`, `revoked-key`, `no-key`, `ambiguous-key`, `rate-limited`), the method and the route as the
  * policy spells it (the template, or `unlisted`), and never the key, the
  * body or the concrete path, whose segments can be document ids.
  */
-import { CAPABILITIES } from './keys.js';
+import { CAPABILITIES, capabilitySwitches, defaultCapabilities } from './keys.js';
 import { createKeyAwareGuard } from './admin-key-guard.js';
 
 export { agentUserFor, checkBodyRule } from './admin-key-guard.js';
 
-/** The section switches, in the order the Koda tab shows them. */
+/** The section switches, in the order each key's own tab shows them. */
 export const ADMIN_SECTION_IDS = Object.freeze(
   CAPABILITIES.filter((capability) => capability.id.startsWith('admin.')).map((capability) => capability.id)
 );
@@ -364,21 +369,29 @@ export function sectionsFor(row, path = '') {
   return sections;
 }
 
+/**
+ * A key record's switches, filled with the defaults of the key it belongs
+ * to (keys.js capabilitySwitches): a switch Koda's record never stored is
+ * on, one a later key's record never stored is off. With no record, the
+ * switches a new key of `agentId` would get (Koda's when absent).
+ */
+const switchesOf = (record, agentId) => (record ? capabilitySwitches(record) : defaultCapabilities(agentId));
+
 /** Which of the sections that open this row for this path the record has on, or null when none is. */
 export function openSection(row, record, path = '') {
-  const switches = record?.capabilities || {};
-  return sectionsFor(row, path).find((section) => switches[section] !== false) || null;
+  const switches = switchesOf(record);
+  return sectionsFor(row, path).find((section) => switches[section] === true) || null;
 }
 
-/** The policy as the status route and the Koda tab show it: one line per row, grouped by section. */
-export function describePolicy(record = null) {
-  const switches = record?.capabilities || {};
+/** The policy as the status route and each agent key's tab show it: one line per row, grouped by section. */
+export function describePolicy(record = null, agentId = undefined) {
+  const switches = switchesOf(record, agentId);
   return ADMIN_SECTION_IDS.map((section) => {
     const capability = CAPABILITIES.find((entry) => entry.id === section);
     return {
       id: section,
       label: capability?.label || section,
-      on: switches[section] !== false,
+      on: switches[section] === true,
       routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => {
         const limits = [
           ...(row.body ? row.body.map(bodyLimitText) : []),

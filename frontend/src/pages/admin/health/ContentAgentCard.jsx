@@ -94,10 +94,23 @@ function RefusalReasons({ denials }) {
 }
 
 /**
- * The content agent (Koda): its key, the switches that are off and the day's
- * refusals by reason, from the snapshot's `agent` block (#1491). The same
+ * The key's own AI Engine tab: Koda's link as it always was, and the same
+ * shape for any other agent key the snapshot names.
+ */
+function keyTab(agent) {
+  if (!agent?.id || agent.id === 'koda') return KODA;
+  return {
+    to: `/admin/ai-engine?tab=${encodeURIComponent(agent.id)}`,
+    label: `${agent.label || agent.id} tab`,
+  };
+}
+
+/**
+ * One agent key's card (Koda's, and one more per key the snapshot's
+ * `agents` carries): its key, the switches that are off and the day's
+ * refusals by reason, from its block in the snapshot (#1491). The same
  * verdict as the Content agent probe on Checks. Never the key or its hint:
- * that is the Koda tab's, behind super_admin. A snapshot without the block
+ * that is the key's own tab's, behind super_admin. A snapshot without the block
  * (one written before this card existed) gets the verdict sentence and the
  * link only: rows of "none" and "0" would read as findings.
  */
@@ -107,10 +120,11 @@ export function ContentAgentCard({ agent }) {
   const denials = agent?.denials || {};
   const badge = keyBadge(key);
   const sectionsOff = agent?.sectionsOff || [];
+  const tab = keyTab(agent);
   const kodaLink = (
     <p className="text-xs">
-      <Link to={KODA.to} className="font-medium text-primary underline-offset-2 hover:underline">
-        {KODA.label}: the key, its switches and the route list
+      <Link to={tab.to} className="font-medium text-primary underline-offset-2 hover:underline">
+        {tab.label}: the key, its switches and the route list
       </Link>
     </p>
   );

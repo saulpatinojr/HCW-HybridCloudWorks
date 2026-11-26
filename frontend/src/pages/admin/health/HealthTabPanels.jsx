@@ -164,7 +164,9 @@ export function OverviewTab({ ops, derived, identity, labs }) {
             />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ContentAgentCard agent={derived.agent} />
+            {(derived.agents || [derived.agent]).map((agent, index) => (
+              <ContentAgentCard key={agent?.id || `agent-${index}`} agent={agent} />
+            ))}
             <OperationalSignalsCard
               signals={derived.operationalSignals}
               backups={derived.backups}

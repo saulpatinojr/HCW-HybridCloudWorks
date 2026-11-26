@@ -228,6 +228,35 @@ with access to "everything possible".
   key is suspected leaked (rotate on the tab, then read the audit rows of
   kind `agent-content-denial`).
 
+## Amendment 2026-11-26: more than one agent key
+
+The site can now hold more than one agent key, each with its own record,
+switches, tab and audit trail. The keys are one list,
+[`functions/src/lib/agent-content/agent-keys.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/agent-content/agent-keys.js)
+(`{ id, displayName, recordId, switchesOnWhenMade }`), which takes the
+"registry" branch of the revisit trigger above.
+
+- **Koda's key is unchanged**: the first entry, `agent_content_key:koda`, every
+  switch on when made. `AGENT_ID`, `KEY_RECORD_ID` and `AGENT_USER` still name
+  it.
+- **Claude's key is the second**, `agent_content_key:claude`. Claude is a draft
+  creator; its key starts with only `drafts.read` and `drafts.write` on.
+- **The guard** reads the records in the list's order and compares the
+  presented key with each live hash in constant time; the first match names
+  the key. The request then acts as `agent:<id>` / `<id> (agent)`, with that
+  key's own switches and its own per-minute counter
+  (`agent-content:<id>:<minute>`), and stamps that key's `lastUsedAt`. A
+  missing or revoked record matches nothing.
+- **Every check that asked "is this the agent key?"** now asks "is this an
+  agent key?" and reads that key's own record: the capability check, the
+  admin allow-list's section switches, the Pipeline's origin references and
+  the kept reminder rows. A missing record, or an agent id not on the list,
+  fails closed.
+- **The admin route** takes `?agent=<id>`, checked against the list (`400
+  UNKNOWN_AGENT` otherwise); no `agent` means Koda's. Roles are unchanged.
+- **A switch a record never stored** reads as its key's starting value: on
+  for Koda's, as before; for Claude's, on only for the two draft switches.
+
 ## Related decisions and references
 
 - [ADR 0033](0033-contentforge-alignment.md) (the content pipeline)

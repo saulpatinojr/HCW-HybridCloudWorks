@@ -22,9 +22,9 @@ import { MAX_LISTED_DRAFTS } from '../cms/drafts-handlers.js';
 import { createPublicReadHandlers } from '../public-reads.js';
 import { errorResponse } from '../http/error-response.js';
 import { describePolicy } from './admin-access.js';
-import { AGENT_ID, API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
+import { API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
 
-/** What the transition audit rows record as the credential for Koda's moves. */
+/** What the transition audit rows record as the credential for each agent key's moves. */
 export const AGENT_AUTH_METHOD = 'agent_key';
 
 /** The ideaOrigin a draft Koda creates carries when Koda names none (taxonomy.js DEFAULT_IDEA_ORIGINS). */
@@ -57,8 +57,12 @@ export const LIMITS = Object.freeze({
   maxListedDrafts: MAX_LISTED_DRAFTS,
 });
 
-/** Is the key's "Read drafts" switch on? Absent switches are on (keys.js). */
-const canRead = (record) => record?.capabilities?.['drafts.read'] !== false;
+/**
+ * Is the key's "Read drafts" switch on, on its own record? A switch the record
+ * never stored takes that key's starting value (keys.js capabilitySwitches):
+ * on for Koda's, on for Claude's only for the draft switches.
+ */
+const canRead = (record) => enabledCapabilities(record || {}).includes('drafts.read');
 
 /**
  * The same answer without the draft's text. On every draft summary the answer
@@ -167,7 +171,7 @@ export function createAgentContentHandlers({
     status: guarded('read the agent status', (request) => guard.authenticate(request), async (request, context, auth) =>
       json(200, {
         ok: true,
-        agent: AGENT_ID,
+        agent: auth.user.agent,
         keyHint: auth.record.keyHint || null,
         capabilities: enabledCapabilities(auth.record),
         limits: LIMITS,

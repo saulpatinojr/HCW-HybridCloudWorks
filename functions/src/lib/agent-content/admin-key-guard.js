@@ -1,12 +1,12 @@
 /**
- * agent-content/admin-key-guard.js — the wrapper that lets Koda's key through
+ * agent-content/admin-key-guard.js — the wrapper that lets an agent key through
  * the admin role guard for the routes in the policy table, and the body rules
  * and identity it acts with there. The table, and the rules it encodes, are
  * in ./admin-access.js, which builds withAgentAccess from this module and
  * re-exports checkBodyRule and agentUserFor.
  */
 import { satisfiesRole, minimumRole } from '../auth/roles.js';
-import { AGENT_ID, AGENT_USER, agentKeyFrom, looksLikeKey } from './keys.js';
+import { AGENT_ID, AGENT_USER, agentKeyById, agentKeyFrom, agentUserOf, isAgentUser, looksLikeKey } from './keys.js';
 
 /**
  * Read the one body field a rule cares about, from a clone so the handler
@@ -56,13 +56,23 @@ function breaksBodyRule(rule, body) {
   return (present && !plain) || rule.refuse.includes(value);
 }
 
-/** The identity the key acts with on a row: Koda, or the Second Brain's owner for `asOwner` rows. */
-export function agentUserFor(row, env = process.env) {
-  if (!row.asOwner) return { ...AGENT_USER, roles: [], scp: '' };
+/**
+ * The identity a key acts with on a row: its own agent (Koda's when none is
+ * named), or the Second Brain's owner for `asOwner` rows.
+ *
+ * @param {object} row a POLICY row
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {string} [agentId] the key that signed in, from its user's `agent`
+ */
+export function agentUserFor(row, env = process.env, agentId = AGENT_ID) {
+  const entry = agentKeyById(agentId);
+  if (!entry) throw new Error('agentUserFor: not an agent key');
+  const base = entry.id === AGENT_ID ? AGENT_USER : agentUserOf(entry);
+  if (!row.asOwner) return { ...base, roles: [], scp: '' };
   return {
-    ...AGENT_USER,
-    oid: env.BRAIN_OWNER_OID || AGENT_USER.oid,
-    sub: env.BRAIN_OWNER_OID || AGENT_USER.sub,
+    ...base,
+    oid: env.BRAIN_OWNER_OID || base.oid,
+    sub: env.BRAIN_OWNER_OID || base.sub,
     tid: env.BRAIN_OWNER_TENANT_ID || null,
     actingFor: 'owner',
     roles: [],
@@ -92,7 +102,11 @@ export function createKeyAwareGuard(roleGuard, { agentGuard, auditDenial = null,
   };
 }
 
-/** Write a denial row through the sink, never letting the sink change the refusal. */
+/**
+ * Write a denial row through the sink, never letting the sink change the
+ * refusal. `entry.agent`, when the key is known, names it; otherwise the row
+ * names the first key, as it always has.
+ */
 function auditDenialRow(auditDenial, entry) {
   try {
     const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_ID, ...entry });
@@ -139,13 +153,20 @@ async function keyAwareRequireRole({ roleGuard, agentGuard, auditDenial, env, po
   const auth = await agentGuard.authenticate(request, where);
   if (auth.error) return { user: null, role: null, error: auth.error };
 
+  // A key the guard let through always names its agent. One that does not
+  // is refused as a bad key would be, never taken for the first key.
+  if (!isAgentUser(auth.user)) {
+    auditDenialRow(auditDenial, { outcome: 'denied', reason: 'no-agent', ...where });
+    return { user: null, role: null, error: deny(401, 'Authentication required') };
+  }
+  const agent = auth.user.agent;
   const refusal = await policyRefusal(policy, { row, path, record: auth.record, minimum }, request);
   if (refusal) {
-    auditDenialRow(auditDenial, { outcome: 'denied', reason: refusal.reason, ...where, ...(refusal.extra || {}) });
+    auditDenialRow(auditDenial, { outcome: 'denied', reason: refusal.reason, agent, ...where, ...(refusal.extra || {}) });
     return { user: null, role: null, error: deny(403, FORBIDDEN) };
   }
 
-  return { user: agentUserFor(row, env), role: row.role, error: null };
+  return { user: agentUserFor(row, env, agent), role: row.role, error: null };
 }
 
 /**

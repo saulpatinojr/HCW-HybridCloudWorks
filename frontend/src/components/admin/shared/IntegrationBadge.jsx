@@ -137,9 +137,15 @@ export const BRANDS = Object.freeze({
  * badge is honest for them: the cloud price lists are three publishers at
  * once, the Hybrid Lab card is Coder on this site's own host behind a
  * Cloudflare check, and the migration add-on (ADR 0035) is this site's own
- * image on that host. They get no badge, by decision rather than omission.
+ * image on that host, and the agent keys are keys this site issues itself.
+ * They get no badge, by decision rather than omission.
  */
-export const COMPOSITE_SERVICES = Object.freeze(['cloud-pricing', 'hybrid-lab', 'migration-addon']);
+export const COMPOSITE_SERVICES = Object.freeze([
+  'cloud-pricing',
+  'hybrid-lab',
+  'migration-addon',
+  'agent-keys',
+]);
 
 /** The brand for a service id, or null when the registry has no entry. */
 export function brandFor(id) {

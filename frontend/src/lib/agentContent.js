@@ -1,5 +1,8 @@
 /**
- * The Koda tab's calls (ADR 0037): one admin route, cms/agent-content/key.
+ * Each agent key tab's calls (ADR 0037): one admin route, cms/agent-content/key.
+ * Every call takes the key's agent id; Koda's (or none) uses the bare route,
+ * and any other key adds `?agent=<id>`, which the API checks against its
+ * list of keys.
  *
  *   readKodaKey()                 GET     the key's state, never the key   editor
  *   generateKodaKey()             POST    make or rotate; the answer carries
@@ -18,20 +21,26 @@ import { getFunctionsBase } from '@/lib/functionsBase';
 
 export const KODA_KEY_ROUTE = 'cms/agent-content/key';
 
-export function readKodaKey() {
-  return getJSON(KODA_KEY_ROUTE);
+/** The route for one agent key: the bare route for Koda's, `?agent=<id>` for any other. */
+export function agentKeyRoute(agent) {
+  if (!agent || agent === 'koda') return KODA_KEY_ROUTE;
+  return `${KODA_KEY_ROUTE}?agent=${encodeURIComponent(agent)}`;
 }
 
-export function generateKodaKey() {
-  return postJSON(KODA_KEY_ROUTE, {});
+export function readKodaKey(agent) {
+  return getJSON(agentKeyRoute(agent));
 }
 
-export function setKodaCapabilities(capabilities) {
-  return sendJSON(KODA_KEY_ROUTE, 'PATCH', { capabilities });
+export function generateKodaKey(agent) {
+  return postJSON(agentKeyRoute(agent), {});
 }
 
-export function revokeKodaKey() {
-  return sendJSON(KODA_KEY_ROUTE, 'DELETE');
+export function setKodaCapabilities(capabilities, agent) {
+  return sendJSON(agentKeyRoute(agent), 'PATCH', { capabilities });
+}
+
+export function revokeKodaKey(agent) {
+  return sendJSON(agentKeyRoute(agent), 'DELETE');
 }
 
 /**

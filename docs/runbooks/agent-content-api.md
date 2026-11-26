@@ -232,6 +232,63 @@ To take a section away, turn its switch off on the tab; to give Koda a route
 that is not listed, or to let it publish, change the table in
 `functions/src/lib/agent-content/admin-access.js` through a pull request.
 
+## 8. Claude's key: a second agent key
+
+The site can hold more than one agent key. Each has its own record (one
+`admin_config` document holding a hash of the key, never the key), its own
+switches, its own tab on the AI Engine, its own limit of 120 calls a minute
+and its own audit rows. The list of keys is
+[`functions/src/lib/agent-content/agent-keys.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/agent-content/agent-keys.js).
+Koda's key is the first and works exactly as the parts above say.
+
+The second key is **Claude**'s. Claude is a draft creator: it writes and edits
+drafts on the Drafts page through the agent API. It cannot publish, schedule
+or delete, whatever its switches say, because no route it can reach does.
+
+Its tab is <https://hybridcloudworks.com/admin/ai-engine?tab=claude>. It is the
+same tab as Koda's, over Claude's own record, so parts 1, 3, 4 and 5 work the
+same way there, with these differences:
+
+- **No key exists until you make one.** The tab says **No key yet** until you
+  press **Generate key**.
+- **Only the draft switches start on.** A new Claude key starts with
+  **Read drafts** (`drafts.read`) and **Create and edit drafts**
+  (`drafts.write`) on, and every other switch off: sending to review, the
+  published reads and all five admin sections. That is all the agent API's
+  draft routes need (`GET` and `POST drafts`, `POST drafts/from-markdown`,
+  `GET` and `PUT drafts/{id}`). The **Pipeline** admin switch is left off on
+  purpose: it opens the admin routes of the whole Pipeline, including moving
+  content between review states and starting jobs, which a draft creator
+  does not need. Turn on more only if Claude needs it.
+- **Where the key goes.** The key is shown once. Copy it and paste it into the
+  secure field Claude asks for; never into chat. The site keeps only its hash.
+- **The first test call** is the same `GET …/agent-content/v1/status`; a good
+  answer has `"agent": "claude"`.
+- **Drafts Claude writes** carry `claude (agent)` as their author.
+
+A refusal of a key that matched no record (a wrong, revoked or missing key)
+cannot say which key it was meant to be, so its audit row names the first
+key, `koda`, as it always has; once a key matches, its rows name it. A key
+that matched two records at once is refused the same way, with the reason
+`ambiguous-key`; it should never happen, because every key is 32 random
+bytes.
+
+The [Health page](https://hybridcloudworks.com/admin/health) shows one
+**Content agent** card per key, each with that key's own state, switches and
+refusals of the last day. Refusals of a key that matched no record count on
+Koda's card, for the reason above.
+
+The admin route behind both tabs is `/api/cms/agent-content/key`; Claude's tab
+adds `?agent=claude`, and any agent id that is not on the list is refused with
+`400`. The roles are the same for every key: an editor reads, a super_admin
+makes, switches, rotates and revokes.
+
+Each key has its own row on the
+[Credentials tab](https://hybridcloudworks.com/admin/integrations?tab=credentials)
+(`agent-key-koda`, `agent-key-claude`) with the 180-day reminder, and its own
+box on the **Agent keys** card under
+[Integrations → Services → Site platform](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform).
+
 ## What the API expects from Koda, in brief
 
 - Drafts are addressed by `id`, not slug. `GET drafts` returns the list with

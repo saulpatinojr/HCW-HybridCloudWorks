@@ -1,11 +1,16 @@
 /**
- * Koda — the AI Engine's agent tab (ADR 0037).
+ * An agent key's tab on the AI Engine (ADR 0037): Koda's, and one more for
+ * each key the site can hold (agentKeys.js). Every tab is this component,
+ * over its own key's record, switches and audit trail; `agent` names the key
+ * and Koda's is the default.
  *
  * Koda is the owner's content agent, run by the Muse service. It reaches the
  * site through the Agent Content API with one key. This tab is the only place
  * that key is made, switched and revoked, and the only place its value is
  * ever shown: once, right after Generate, for the owner to paste into Muse's
  * secure connector page. After that the site holds a hash and shows a hint.
+ * Another key's tab (Claude's) says the same with its own name and
+ * description, and says which switches its key starts with.
  *
  * Four cards:
  *   1. The key      state, Generate / Rotate, Revoke (super_admin), the
@@ -41,9 +46,20 @@ import EmptyState from '@/components/admin/shared/EmptyState';
 import useWriteGuard from '@/components/admin/shared/useWriteGuard';
 import { kodaApiAddress } from '@/lib/agentContent';
 import useKodaKey from './useKodaKey';
-import { capabilityRows, connectorValues, endpointGroups, keyState, whenText } from './kodaView';
+import { KODA_KEY_TAB } from './agentKeys';
+import {
+  agentWords,
+  capabilityRows,
+  connectorValues,
+  endpointGroups,
+  keyState,
+  startingSwitches,
+  whenText,
+} from './kodaView';
 
-const WRITE_REASON = 'Making, changing or revoking Koda’s key needs the super_admin role.';
+const KODA_WORDS = agentWords(KODA_KEY_TAB);
+const writeReason = (words) =>
+  `Making, changing or revoking ${words.name}’s key needs the super_admin role.`;
 
 const TONE = {
   ok: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -63,14 +79,17 @@ function StateBadge({ state }) {
  * The one-time reveal. The secret lives in the parent's state and nowhere
  * else; Dismiss drops it. There is no "show again".
  */
-export function SecretReveal({ secret, onDismiss }) {
+export function SecretReveal({ secret, onDismiss, words = KODA_WORDS }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(secret);
       setCopied(true);
-      toast({ title: 'Key copied', description: 'Paste it into Muse’s secure field now.' });
+      toast({
+        title: 'Key copied',
+        description: `Paste it into ${words.secureField} now.`,
+      });
     } catch {
       toast({
         title: 'Could not copy',
@@ -82,13 +101,12 @@ export function SecretReveal({ secret, onDismiss }) {
   return (
     <div
       role="region"
-      aria-label="Koda's new key"
+      aria-label={`${words.name}'s new key`}
       className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3 dark:bg-amber-900/20 dark:border-amber-700"
     >
       <p className="flex items-start gap-2 text-sm font-medium text-amber-900 dark:text-amber-200">
         <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-        This is the only time the key is shown. Copy it into Muse’s secure connector page now. The
-        site keeps a fingerprint, not the key: if it is lost, rotate it.
+        This is the only time the key is shown. {words.revealText}
       </p>
       <code
         data-testid="koda-secret"
@@ -109,8 +127,9 @@ export function SecretReveal({ secret, onDismiss }) {
   );
 }
 
-function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) {
-  const state = keyState(data.key);
+function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret, words }) {
+  const state = keyState(data.key, words);
+  const reason = writeReason(words);
   const [confirm, setConfirm] = useState(null); // 'rotate' | 'revoke' | null
   const generateLabel = data.key.active ? 'Rotate key' : 'Generate key';
   return (
@@ -119,14 +138,14 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <KeyRound className="h-5 w-5" aria-hidden="true" />
-            Koda’s key
+            {words.name}’s key
           </CardTitle>
           <StateBadge state={state} />
         </div>
         <CardDescription>{state.sentence}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {secret && <SecretReveal secret={secret} onDismiss={onDismissSecret} />}
+        {secret && <SecretReveal secret={secret} onDismiss={onDismissSecret} words={words} />}
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
           <div>
             <dt className="text-muted-foreground">Made by</dt>
@@ -146,7 +165,7 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
           </div>
         </dl>
         <div className="flex flex-wrap gap-2">
-          <RoleGate minRole="super_admin" reason={WRITE_REASON}>
+          <RoleGate minRole="super_admin" reason={reason}>
             <Button
               size="sm"
               disabled={busy}
@@ -161,7 +180,7 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
             </Button>
           </RoleGate>
           {data.key.active && (
-            <RoleGate minRole="super_admin" reason={WRITE_REASON}>
+            <RoleGate minRole="super_admin" reason={reason}>
               <Button
                 size="sm"
                 variant="destructive"
@@ -178,19 +197,19 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
           <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
           <span>
             Rotating or revoking cuts the old key on its very next request; there is no cache in
-            front of it. Every refused call is written to the audit log without the key. Drafts Koda
-            writes appear on the{' '}
+            front of it. Every refused call is written to the audit log without the key. Drafts{' '}
+            {words.name} writes appear on the{' '}
             <Link to="/admin/drafts" className="underline">
               Drafts page
             </Link>{' '}
-            with <code>koda (agent)</code> as their author.
+            with <code>{words.id} (agent)</code> as their author.
           </span>
         </p>
       </CardContent>
       <ConfirmModal
         open={confirm === 'rotate'}
-        title="Rotate Koda’s key?"
-        description="A new key is made and shown once. The key Muse holds now stops working on its next request, so update Muse straight after."
+        title={`Rotate ${words.name}’s key?`}
+        description={`A new key is made and shown once. The key ${words.client} holds now stops working on its next request, so update ${words.client} straight after.`}
         confirmLabel="Rotate key"
         busy={busy}
         onConfirm={async () => {
@@ -201,8 +220,8 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
       />
       <ConfirmModal
         open={confirm === 'revoke'}
-        title="Revoke Koda’s key?"
-        description="Koda loses access on its next request. Nothing Koda wrote is changed. Generate a new key here when you want it back."
+        title={`Revoke ${words.name}’s key?`}
+        description={`${words.name} loses access on its next request. Nothing ${words.name} wrote is changed. Generate a new key here when you want it back.`}
         confirmLabel="Revoke key"
         busy={busy}
         onConfirm={async () => {
@@ -215,31 +234,32 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret }) 
   );
 }
 
-function CapabilitiesCard({ data, busyIds, onToggle }) {
-  const rows = capabilityRows(data.capabilities, data.key.capabilities);
+function CapabilitiesCard({ data, busyIds, onToggle, words }) {
+  const rows = capabilityRows(data.capabilities, data.key.capabilities, words.switchesOnWhenMade);
   const disabled = !data.key.present;
+  const reason = writeReason(words);
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">What Koda may do</CardTitle>
+        <CardTitle className="text-lg">What {words.name} may do</CardTitle>
         <CardDescription>
-          Each switch is a group of endpoints. All are on for a new key. Deleting and publishing are
-          not on this list and have no endpoint: a draft Koda sends to review is published by a
-          person, on the Review board, as every other draft is.
+          Each switch is a group of endpoints. {startingSwitches(words, data.capabilities)} Deleting
+          and publishing are not on this list and have no endpoint: a draft {words.name} sends to
+          review is published by a person, on the Review board, as every other draft is.
         </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
         {rows.map((row) => (
           <div key={row.id} className="flex items-start justify-between gap-4 py-3">
             <div className="min-w-0">
-              <Label htmlFor={`koda-cap-${row.id}`} className="font-medium">
+              <Label htmlFor={`${words.id}-cap-${row.id}`} className="font-medium">
                 {row.label}
               </Label>
               <p className="text-sm text-muted-foreground">{row.description}</p>
             </div>
-            <RoleGate minRole="super_admin" reason={WRITE_REASON}>
+            <RoleGate minRole="super_admin" reason={reason}>
               <Switch
-                id={`koda-cap-${row.id}`}
+                id={`${words.id}-cap-${row.id}`}
                 checked={row.on}
                 disabled={disabled || busyIds.has(row.id)}
                 aria-label={row.label}
@@ -258,16 +278,16 @@ function CapabilitiesCard({ data, busyIds, onToggle }) {
   );
 }
 
-function ConnectCard({ data }) {
+function ConnectCard({ data, words }) {
   const address = kodaApiAddress(data.basePath);
-  const values = connectorValues(address, data.limits?.requestsPerMinute ?? 120);
+  const values = connectorValues(address, data.limits?.requestsPerMinute ?? 120, words);
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Connect Muse to the site</CardTitle>
+        <CardTitle className="text-lg">Connect {words.client} to the site</CardTitle>
         <CardDescription>
           Every value the connector form asks for, none of them secret. The key itself goes only
-          into Muse’s secure field.
+          into {words.secureField}.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -285,18 +305,20 @@ function ConnectCard({ data }) {
         <ol className="list-decimal pl-5 space-y-1 text-sm">
           <li>Press Generate key above and keep this tab open; the key is shown once.</li>
           <li>
-            In Muse, add a custom connector with the host and base URL above and API-key
-            authentication in the Authorization header as Bearer.
+            {words.koda
+              ? 'In Muse, add a custom connector with the host and base URL above and API-key authentication in the Authorization header as Bearer.'
+              : `Give ${words.name} the base URL above, and have it send the key in the Authorization header as Bearer.`}
           </li>
-          <li>Paste the key into Muse’s secure field, then press “I have pasted it” above.</li>
+          <li>Paste the key into {words.secureField}, then press “I have pasted it” above.</li>
           <li>
-            Let Muse make the first test call. A good answer is <code>200</code> with{' '}
-            <code>&quot;agent&quot;: &quot;koda&quot;</code> and the capabilities list;{' '}
+            Let {words.client} make the first test call. A good answer is <code>200</code> with{' '}
+            <code>&quot;agent&quot;: &quot;{words.id}&quot;</code> and the capabilities list;{' '}
             <code>401</code> means the key was pasted wrong, <code>403</code> means the switch for
             that call is off here.
           </li>
           <li>
-            Check the card above: “Last used” updates within a few minutes of Koda’s first call.
+            Check the card above: “Last used” updates within a few minutes of {words.name}’s first
+            call.
           </li>
         </ol>
       </CardContent>
@@ -304,12 +326,12 @@ function ConnectCard({ data }) {
   );
 }
 
-function ReachCard({ data }) {
+function ReachCard({ data, words }) {
   const groups = endpointGroups(data.endpoints, data.capabilities);
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">What Koda can reach</CardTitle>
+        <CardTitle className="text-lg">What {words.name} can reach</CardTitle>
         <CardDescription>
           The agent API, as it reports itself. Paths are under the base URL. Drafts are the same
           documents the Drafts page edits: the same fields, size cap, version check and audit rows.
@@ -338,17 +360,17 @@ function ReachCard({ data }) {
  * body limit where a route has one. Deletes are never listed because the
  * key can never delete.
  */
-function AdminReachCard({ data }) {
+function AdminReachCard({ data, words }) {
   const sections = Array.isArray(data.adminAccess) ? data.adminAccess : [];
   if (sections.length === 0) return null;
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">What Koda may do in the admin</CardTitle>
+        <CardTitle className="text-lg">What {words.name} may do in the admin</CardTitle>
         <CardDescription>
-          With the same key, on the admin routes under <code>/api/</code>, Koda acts as{' '}
-          <code>koda (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault, and as
-          you in the Second Brain). Each section is a switch above. Nothing can be deleted,
+          With the same key, on the admin routes under <code>/api/</code>, {words.name} acts as{' '}
+          <code>{words.id} (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault,
+          and as you in the Second Brain). Each section is a switch above. Nothing can be deleted,
           published, scheduled or unpublished; no secret or credential can be read, and no setting
           can be changed (settings are read-only, where the editor needs them); a route that is not
           listed answers 403 and is logged.
@@ -376,9 +398,31 @@ function AdminReachCard({ data }) {
   );
 }
 
-export default function KodaTab() {
+/** What the tab says first: Koda's own sentence, or the key's own description. */
+function Intro({ words, catalogue }) {
+  if (words.koda) {
+    return (
+      <span>
+        Koda is the content agent that drafts and reviews posts for the series. It signs in with the
+        key below. It works on the Drafts stage, the published reads and the admin sections switched
+        on in the card below; it cannot publish, delete, change a setting or read a secret.
+      </span>
+    );
+  }
+  return (
+    <span>
+      {words.description ||
+        `${words.name} signs in with the key below and reaches only what its switches allow.`}{' '}
+      Its key has its own record, switches and audit trail, apart from every other agent key.{' '}
+      {startingSwitches(words, catalogue)}
+    </span>
+  );
+}
+
+export default function KodaTab({ agent = KODA_KEY_TAB }) {
+  const words = agentWords(agent);
   const { toast } = useToast();
-  const { data, loaded, error, refresh, generate, setCapability, revoke } = useKodaKey();
+  const { data, loaded, error, refresh, generate, setCapability, revoke } = useKodaKey(agent.id);
   const { busyIds, claim, release } = useWriteGuard();
   const [secret, setSecret] = useState(null);
 
@@ -415,10 +459,10 @@ export default function KodaTab() {
   if (error && !loaded) {
     return (
       <div className="space-y-6">
-        {secret && <SecretReveal secret={secret} onDismiss={() => setSecret(null)} />}
+        {secret && <SecretReveal secret={secret} onDismiss={() => setSecret(null)} words={words} />}
         <EmptyState
           variant="error"
-          title="Koda’s key could not be read"
+          title={`${words.name}’s key could not be read`}
           description={error}
           onRetry={refresh}
         />
@@ -427,7 +471,11 @@ export default function KodaTab() {
   }
   if (!loaded) {
     return (
-      <div className="flex justify-center py-12" role="status" aria-label="Reading Koda's key">
+      <div
+        className="flex justify-center py-12"
+        role="status"
+        aria-label={`Reading ${words.name}'s key`}
+      >
         <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
       </div>
     );
@@ -438,14 +486,10 @@ export default function KodaTab() {
     <div className="space-y-6">
       <p className="flex items-start gap-2 text-sm text-muted-foreground">
         <Bot className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-        <span>
-          Koda is the content agent that drafts and reviews posts for the series. It signs in with
-          the key below. It works on the Drafts stage, the published reads and the admin sections
-          switched on in the card below; it cannot publish, delete, change a setting or read a
-          secret.
-        </span>
+        <Intro words={words} catalogue={data.capabilities} />
       </p>
       <KeyCard
+        words={words}
         data={data}
         busy={busy}
         secret={secret}
@@ -459,11 +503,15 @@ export default function KodaTab() {
         onRevoke={() =>
           run('key', revoke, () => {
             setSecret(null);
-            toast({ title: 'Key revoked', description: 'Koda’s next request is refused.' });
+            toast({
+              title: 'Key revoked',
+              description: `${words.name}’s next request is refused.`,
+            });
           })
         }
       />
       <CapabilitiesCard
+        words={words}
         data={data}
         busyIds={busyIds}
         onToggle={(id, on) =>
@@ -474,9 +522,9 @@ export default function KodaTab() {
           )
         }
       />
-      <ConnectCard data={data} />
-      <ReachCard data={data} />
-      <AdminReachCard data={data} />
+      <ConnectCard data={data} words={words} />
+      <ReachCard data={data} words={words} />
+      <AdminReachCard data={data} words={words} />
     </div>
   );
 }

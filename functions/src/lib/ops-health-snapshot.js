@@ -6,7 +6,7 @@
 import { readConfigStamp } from './auth/http-route.js';
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
 import { splitUnresolved, unresolvedSecretNames } from './secrets-health.js';
-import { KEY_RECORD_ID } from './agent-content/keys.js';
+import { AGENT_KEYS } from './agent-content/agent-keys.js';
 import { backupsUnavailable } from './backup/backup-status.js';
 import {
   AGENT_DENIALS_BOUND,
@@ -23,6 +23,43 @@ import {
   toHoursSince,
   toMillis,
 } from './ops-health-summaries.js';
+
+/**
+ * One agent key's record and its refusals of the last day.
+ *
+ * The record is read for its state only; the hash never leaves the store and
+ * the hint stays on the key's own tab, which is super_admin. readDoc answers
+ * null for a missing record; a failed read is kept apart from that, so the
+ * card can say "could not read" instead of "no key".
+ *
+ * The refusals are this key's alone, by reason, newest first. The rows carry
+ * `action` and `timestamp` (auth/denial-audit.js), the two paths the audit
+ * container indexes, so the read is an index seek on those; `agent` is not
+ * indexed and is checked on the rows that seek finds. A refusal of a key
+ * that matched no record cannot say which key it was meant to be and names
+ * the first key (`koda`), so it counts on Koda's card, as the runbook says.
+ * Null when the read fails, so the card says so.
+ */
+async function readAgentKey(store, key, sinceIso) {
+  const [read, denialRows] = await Promise.all([
+    store
+      .readDoc('admin_config', key.recordId, ADMIN_CONFIG_PARTITION)
+      .then((record) => ({ record: record || null, unavailable: false }))
+      .catch(() => ({ record: null, unavailable: true })),
+    store
+      .queryDocs(
+        'admin_audit_logs',
+        `SELECT TOP ${AGENT_DENIALS_BOUND} c.reason, c.timestamp FROM c WHERE c.action = @action AND c.timestamp >= @since AND c.agent = @agent ORDER BY c.timestamp DESC`,
+        [
+          { name: '@action', value: AGENT_DENIAL_ACTION },
+          { name: '@since', value: sinceIso },
+          { name: '@agent', value: key.id },
+        ]
+      )
+      .catch(() => null),
+  ]);
+  return { key, read, denialRows };
+}
 
 export async function buildOpsHealthSnapshot({ store, now, env, backups }) {
   const count = async (where, params = []) => {
@@ -65,8 +102,7 @@ export async function buildOpsHealthSnapshot({ store, now, env, backups }) {
     notifyState,
     forgeStats,
     failedJobRows,
-    agentKeyRead,
-    agentDenialRows,
+    agentReads,
     jobStatusRows,
     backupReading,
   ] = await Promise.all([
@@ -135,30 +171,9 @@ export async function buildOpsHealthSnapshot({ store, now, env, backups }) {
         []
       )
       .catch(() => null),
-    // The content agent's key record (agent-content/keys.js): read for its
-    // state only; the hash never leaves the store and the hint stays on
-    // the Koda tab, which is super_admin. readDoc answers null for a
-    // missing record; a failed read is kept apart from that, so the card
-    // can say "could not read" instead of "no key".
-    store
-      .readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION)
-      .then((record) => ({ record: record || null, unavailable: false }))
-      .catch(() => ({ record: null, unavailable: true })),
-    // Its refusals in the last day, by reason, newest first. The rows
-    // carry `action` and `timestamp` (auth/denial-audit.js), the two paths
-    // the audit container indexes, so this is an index seek, not a scan,
-    // and the order is served by the same index. Null when it fails, so
-    // the card says so.
-    store
-      .queryDocs(
-        'admin_audit_logs',
-        `SELECT TOP ${AGENT_DENIALS_BOUND} c.reason, c.timestamp FROM c WHERE c.action = @action AND c.timestamp >= @since ORDER BY c.timestamp DESC`,
-        [
-          { name: '@action', value: AGENT_DENIAL_ACTION },
-          { name: '@since', value: agentSinceIso },
-        ]
-      )
-      .catch(() => null),
+    // Each agent key's record and refusals (agent-content/agent-keys.js),
+    // one pair per key, read side by side.
+    Promise.all(AGENT_KEYS.map((key) => readAgentKey(store, key, agentSinceIso))),
     // The last day's jobs by status; status and createdAt are indexed.
     store
       .queryDocs(
@@ -196,6 +211,17 @@ export async function buildOpsHealthSnapshot({ store, now, env, backups }) {
 
   const orphanedGeneratedImages = await countOrphanedImages(store, generatedImages);
 
+  const agents = agentReads.map(({ key, read, denialRows }) =>
+    agentSummary({
+      key,
+      record: read.record,
+      keyUnavailable: read.unavailable,
+      denialRows,
+      sinceIso: agentSinceIso,
+      lastCheckedAt,
+    })
+  );
+
   const operationalSignals = {
     queueBreachCount,
     oldestStagedHours,
@@ -229,13 +255,10 @@ export async function buildOpsHealthSnapshot({ store, now, env, backups }) {
     operationalSignals,
     storage,
     forge: forgeSummary(forgeStats, lastCheckedAt),
-    agent: agentSummary({
-      record: agentKeyRead.record,
-      keyUnavailable: agentKeyRead.unavailable,
-      denialRows: agentDenialRows,
-      sinceIso: agentSinceIso,
-      lastCheckedAt,
-    }),
+    // One block per agent key, in the list's order; `agent` stays the
+    // first key's (Koda's) for every reader written before there were more.
+    agent: agents[0],
+    agents,
     // `checkedAt` inside the block is when the blobs were read, which can
     // be up to ten minutes before this snapshot; `lastCheckedAt` is this
     // snapshot's, like every other block.

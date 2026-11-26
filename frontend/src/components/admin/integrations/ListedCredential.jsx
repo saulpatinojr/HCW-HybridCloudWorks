@@ -273,6 +273,70 @@ export function MuseReaderNote() {
   );
 }
 
+/** The runbook for the agent keys: what each can reach, how to make, rotate and revoke it. */
+export const AGENT_KEYS_RUNBOOK_URL =
+  'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/agent-content-api.md';
+
+/** An agent key's own tab on the AI Engine, where it is made, switched, rotated and revoked. */
+export const agentKeyTabHref = (id) => `/admin/ai-engine?tab=${encodeURIComponent(id)}`;
+
+/**
+ * One agent key the site issues itself (agentKeys.js lists them). The site
+ * makes the key, shows it once, and keeps only a hash in its database; its
+ * tab on the AI Engine is where it is made, switched, rotated and revoked.
+ * The register row is `agent-key-<id>`.
+ *
+ * @param {{ agent: { id: string, displayName: string, switchesOnWhenMade: boolean } }} props
+ */
+export function AgentKeyNote({ agent }) {
+  const tab = <Internal to={agentKeyTabHref(agent.id)}>AI Engine → {agent.displayName}</Internal>;
+  return (
+    <ListedCredential
+      intro={
+        <>
+          {agent.description ||
+            'A key this site makes for an outside agent, so it can call the site’s agent API and the admin routes this key’s switches open.'}{' '}
+          It has its own record, switches and audit trail, apart from every other agent key.{' '}
+          {agent.switchesOnWhenMade === true
+            ? 'Its key started with every switch on.'
+            : `A new key starts with only ${(agent.switchesOnWhenMade || []).join(' and ') || 'nothing'} on; anything more is yours to turn on.`}
+        </>
+      }
+      facts={{
+        'Stored in': (
+          <>
+            The site’s own database, as a fingerprint (a SHA-256 hash) in <code>admin_config</code>,
+            never the key itself. Not in Key Vault, so it is not on the Keys tab: the site does not
+            use this key, it only checks it. The key is shown once, on {tab}, when it is made.
+          </>
+        ),
+        Cost: 'Nothing: the site makes the key itself, and no outside service bills for it.',
+        Test: (
+          <>
+            This page cannot test it, because the site keeps only a fingerprint. Open {tab}: it
+            shows whether the key is active and when it was last used, and the client’s first call
+            to <code>/status</code> answers with this key’s name.
+          </>
+        ),
+        Replace: (
+          <>
+            Press Rotate key on {tab} and paste the new key (shown once) where the old one was kept.
+            The old key stops working on its next request. Revoke key there switches it off
+            altogether. The steps are in{' '}
+            <External href={AGENT_KEYS_RUNBOOK_URL}>the runbook</External>.
+          </>
+        ),
+        Expires: (
+          <>
+            It does not expire by itself. The house rule is to replace it every 180 days; the date
+            and the reminder are on the {credentialsTab}.
+          </>
+        ),
+      }}
+    />
+  );
+}
+
 /**
  * The sign-in Terraform runs with. No secret exists, so this box is here for
  * the other half of the question a card answers: what the sign-in can reach.

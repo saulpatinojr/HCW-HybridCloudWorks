@@ -1,6 +1,9 @@
 /**
- * agent-content/admin-handlers.js — the Koda tab's routes (ADR 0037),
- * all on one template, cms/agent-content/key:
+ * agent-content/admin-handlers.js — the routes behind each agent key's tab
+ * (ADR 0037), all on one template, cms/agent-content/key. Every route takes
+ * the key it acts on as `?agent=<id>`, checked against the list of agent
+ * keys (agent-keys.js); with no `agent` it is Koda's, as it always was, and
+ * an id the list does not have is refused with 400 before anything is read.
  *
  *   GET     the key's state (never the key), the capability list, the limits
  *           and the endpoints, for the tab to show              editor
@@ -9,11 +12,12 @@
  *   DELETE  revoke: the hash is removed, the record keeps its history           super_admin
  *
  * THE PLAINTEXT IS ANSWERED ONCE, to the super_admin who pressed Generate,
- * so they can paste it into Muse's secure connector page. It is not stored
+ * so they can paste it into the secure field of whatever holds the key
+ * (Muse's connector page, for Koda's). It is not stored
  * (keys.js keeps the hash), not logged (the audit row carries the hint only)
  * and not shown again: a lost key is rotated. This is different from the
  * Keys tab's credentials, which the app itself consumes from Key Vault and
- * therefore never need to be read back; this key is consumed by Muse.
+ * therefore never need to be read back; an agent key is consumed outside the site.
  *
  * Writes are create-only or under the record's ETag (createDoc, then
  * replaceDocIfMatch) and each attempt rebuilds the record from a fresh read,
@@ -29,7 +33,7 @@ import {
   AGENT_ID,
   API_BASE_PATH,
   CAPABILITIES,
-  KEY_RECORD_ID,
+  agentKeyById,
   buildKeyRecord,
   generateKey,
   normalizeCapabilities,
@@ -60,10 +64,31 @@ const NO_KEY = () =>
 const actorOf = (user = {}) =>
   [user.email, user.preferred_username, user.oid, user.sub].find(Boolean) || 'admin';
 
-const readRecord = (store) => store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
+const readRecord = (store, key) => store.readDoc('admin_config', key.recordId, ADMIN_CONFIG_PARTITION);
+
+/** The `agent` a request names: from the query, or '' when it names none. */
+function agentParam(request) {
+  const fromQuery = request?.query?.get?.('agent');
+  if (typeof fromQuery === 'string') return fromQuery;
+  try {
+    return new URL(request?.url || '', 'http://request.local').searchParams.get('agent') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** The agent key a request acts on: Koda's when it names none; throws a 400 answer for one not on the list. */
+function keyOf(request) {
+  const named = agentParam(request).trim();
+  const key = agentKeyById(named || AGENT_ID);
+  if (!key) {
+    throw new Answer(json(400, { ok: false, code: 'UNKNOWN_AGENT', error: 'There is no agent key by that name.' }));
+  }
+  return key;
+}
 
 /** One audit row for a key change. Best effort: a failed row is logged, never answered. */
-async function audit({ store, now, uuid, log }, action, { user, request, details = {} }) {
+async function audit({ store, now, uuid, log }, action, { key, user, request, details = {} }) {
   try {
     await store.upsertDoc('admin_audit_logs', {
       id: uuid(),
@@ -72,7 +97,7 @@ async function audit({ store, now, uuid, log }, action, { user, request, details
       userId: user.oid || user.sub || null,
       userEmail: user.email || null,
       resourceType: 'agent_content_key',
-      resourceId: AGENT_ID,
+      resourceId: key.id,
       details,
       userAgent: request.headers?.get?.('user-agent') || null,
       compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
@@ -102,10 +127,10 @@ async function writeOnce(store, current, next) {
  * the first key), so a retry works from the latest version, never from a
  * value computed before the race.
  */
-async function write(store, build) {
+async function write(store, key, build) {
   let lastError = null;
   for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
-    const current = await readRecord(store);
+    const current = await readRecord(store, key);
     const next = build(current);
     try {
       return await writeOnce(store, current, next);
@@ -117,15 +142,17 @@ async function write(store, build) {
   throw lastError;
 }
 
-const describe = (record) => ({
+const describe = (record, key) => ({
   ok: true,
-  agent: AGENT_ID,
-  key: presentKeyRecord(record),
+  agent: key.id,
+  displayName: key.displayName,
+  switchesOnWhenMade: key.switchesOnWhenMade,
+  key: presentKeyRecord(record, key.id),
   capabilities: CAPABILITIES,
   limits: LIMITS,
   basePath: `/api/${API_BASE_PATH}`,
   endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
-  adminAccess: describePolicy(record),
+  adminAccess: describePolicy(record, key.id),
 });
 
 /** A route: the role check, then `work`, with its refusals and failures turned into answers. */
@@ -134,7 +161,7 @@ function route(guard, role, what, work) {
     const auth = await guard.requireRole(request, role);
     if (auth.error) return auth.error;
     try {
-      return await work({ request, context, user: auth.user });
+      return await work({ request, context, user: auth.user, key: keyOf(request) });
     } catch (error) {
       if (error instanceof Answer) return error.response;
       if (isAuthoredError(error)) {
@@ -146,35 +173,36 @@ function route(guard, role, what, work) {
 }
 
 /** POST cms/agent-content/key — make or rotate. The plaintext is in this answer and nowhere else. */
-async function generateKeyWork(deps, { request, user }) {
+async function generateKeyWork(deps, { request, user, key }) {
   const { store, now, generate } = deps;
   const secret = generate();
   const actor = actorOf(user);
   let rotated = false;
-  const written = await write(store, (current) => {
+  const written = await write(store, key, (current) => {
     rotated = Boolean(current?.keyHash || current?.revokedAt);
-    return { ...(current || {}), ...buildKeyRecord({ secret, actor, now, previous: current }) };
+    return { ...(current || {}), ...buildKeyRecord({ secret, actor, now, previous: current, agentId: key.id }) };
   });
   await audit(deps, rotated ? 'agent_content_key_rotated' : 'agent_content_key_generated', {
+    key,
     user,
     request,
     details: { keyHint: written.keyHint },
   });
-  return json(201, { ...describe(written), secret, shownOnce: true });
+  return json(201, { ...describe(written, key), secret, shownOnce: true });
 }
 
 /** PATCH cms/agent-content/key — { capabilities: { id: boolean } } */
-async function updateCapabilitiesWork(deps, { request, user }) {
+async function updateCapabilitiesWork(deps, { request, user, key }) {
   const { store, now } = deps;
   const body = await request.json().catch(() => ({}));
   // The change is one or more switches, merged over the switches as they
   // are at write time (inside the build, so a retry after a lost race
   // merges over the other tab's change instead of reverting it).
-  const change = normalizeCapabilities(body?.capabilities, {});
+  const change = normalizeCapabilities(body?.capabilities, {}, key.id);
   const asked = Object.keys(body?.capabilities || {});
-  const written = await write(store, (latest) => {
+  const written = await write(store, key, (latest) => {
     if (!latest) throw NO_KEY();
-    const merged = { ...normalizeCapabilities(null, latest.capabilities || {}) };
+    const merged = { ...normalizeCapabilities(null, latest.capabilities || {}, key.id) };
     for (const id of asked) merged[id] = change[id];
     return {
       ...latest,
@@ -184,26 +212,27 @@ async function updateCapabilitiesWork(deps, { request, user }) {
     };
   });
   await audit(deps, 'agent_content_capabilities_changed', {
+    key,
     user,
     request,
     details: { capabilities: written.capabilities },
   });
-  return json(200, describe(written));
+  return json(200, describe(written, key));
 }
 
 /** DELETE cms/agent-content/key — revoke. The next request with the old key is 401. */
-async function revokeKeyWork(deps, { request, user }) {
+async function revokeKeyWork(deps, { request, user, key }) {
   const { store, now } = deps;
-  const current = await readRecord(store);
+  const current = await readRecord(store, key);
   if (!current || !current.keyHash) {
-    return json(200, describe(current));
+    return json(200, describe(current, key));
   }
-  const written = await write(store, (latest) => {
+  const written = await write(store, key, (latest) => {
     const { keyHash: _removed, ...rest } = latest;
     return { ...rest, revokedAt: now().toISOString(), revokedBy: actorOf(user) };
   });
-  await audit(deps, 'agent_content_key_revoked', { user, request, details: { keyHint: written.keyHint } });
-  return json(200, describe(written));
+  await audit(deps, 'agent_content_key_revoked', { key, user, request, details: { keyHint: written.keyHint } });
+  return json(200, describe(written, key));
 }
 
 /**
@@ -227,7 +256,9 @@ export function createAgentContentAdminHandlers({
   const deps = { store, now, uuid, generate, log };
   return {
     /** GET cms/agent-content/key */
-    getKey: route(guard, READ_ROLE, 'read the agent key', async () => json(200, describe(await readRecord(store)))),
+    getKey: route(guard, READ_ROLE, 'read the agent key', async ({ key }) =>
+      json(200, describe(await readRecord(store, key), key)),
+    ),
 
     /** POST cms/agent-content/key — make or rotate. The plaintext is in this answer and nowhere else. */
     generateKey: route(guard, WRITE_ROLE, 'generate the agent key', (args) => generateKeyWork(deps, args)),

@@ -47,6 +47,7 @@ import { DEFAULT_PRICING_REGION, describeAge, describeCounts } from '@/lib/cloud
 import { countList, unwrapProxy } from '@/lib/proxyEnvelope';
 import { extractProfiles } from '@/lib/linkie';
 import { DEFAULT_SESSIONIZE_SPEAKER_ID } from '@/lib/adminSettings';
+import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
 
 // lucide-react v1.x dropped brand icons — inline YouTube glyph (same as SocialHubPage).
 const Youtube = ({ className }) => (
@@ -443,6 +444,9 @@ export const DISCONNECT_NOTE =
 /** What a LLM provider card says the key can reach. */
 const LLM_SECURITY_NOTE =
   'The key never reaches a browser: every call is made server-side through the AI router, and a rejected key is reported as a red light on the Keys tab.';
+
+/** The panel name of one agent key's box on the Agent keys card (IntegrationsServices draws it). */
+export const agentKeyPanel = (id) => `agentKey:${id}`;
 
 /**
  * Every service, and the credentials that belong to it.
@@ -1076,6 +1080,41 @@ export const SERVICES = Object.freeze([
     cost: 'Nothing for either sign-in: a directory entry and Reader grants are not billed. The Azure resources themselves are on the Cost page.',
     securityNote:
       'Muse’s secret: built-in Reader on the application, management and connectivity subscriptions; no change of any kind, and no Key Vault secret values, stored files or database documents. Terraform’s identity: the Azure resources it manages, plus the Microsoft Graph permission Application.ReadWrite.OwnedBy, which creates app registrations and changes only the ones it owns. This site can read or write neither.',
+  },
+
+  {
+    // Listed, not held: the agent keys this site makes itself, one box per
+    // key (ai-engine/agentKeys.js). The site keeps a hash of each, never the
+    // key, so there is nothing to paste here and nothing to read back.
+    id: 'agent-keys',
+    group: 'platform',
+    icon: Bot,
+    name: 'Agent keys (issued by this site)',
+    description:
+      'Keys this site makes for outside agents to call it, among them Claude, which creates drafts. Each key has its own record, switches, tab and audit trail.',
+    url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/agent-content-api.md',
+    test: null,
+    untestedReason:
+      'The site keeps only a fingerprint of each key, so it cannot test one. Each key’s tab on the AI Engine shows whether it is active and when it was last used.',
+    secrets: [],
+    keyGroups: AGENT_KEY_TABS.map((agent) => ({
+      title: `${agent.displayName} key (made on its AI Engine tab)`,
+      panel: agentKeyPanel(agent.id),
+    })),
+    capabilities: [
+      'Let an agent read, create and edit drafts and send them to review',
+      'Let an agent reach the admin routes its own switches open, never publishing, deleting, settings or secrets',
+    ],
+    usedIn: [
+      'AI Engine (one tab per key)',
+      'Drafts',
+      'The admin sections each key’s switches open',
+    ],
+    dataDirection:
+      'Inbound: whoever holds a key calls this site with it. Nothing is sent out, and the key never leaves the tab that shows it once.',
+    cost: 'Nothing: the site makes these keys itself, and no outside service bills for them.',
+    securityNote:
+      'Each key is shown once when it is made and kept only as a SHA-256 hash in the site’s database. Each reaches only what its own switches allow, Claude’s key starts with only reading and writing drafts on, and a revoked key is refused on its next request.',
   },
 
   // ── Hybrid Lab (ADR 0033) ────────────────────────────────────────────────

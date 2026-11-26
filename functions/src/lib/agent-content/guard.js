@@ -16,11 +16,16 @@
  *      The key is read from the shapes connectors send (agentKeyFrom):
  *      `Authorization: Bearer <key>`, the bare key as the Authorization
  *      value, or an X-API-Key / X-Agent-Key header; never a query string.
- *   2. Its SHA-256 matches the hash in the one key record, which is not
- *      revoked. Compared in constant time. No cache: revoking the key on the
- *      Koda tab must cut the next request, the same reason require-agent.js
- *      gives for not caching the lab agent registry.
- *   3. The key is under its per-minute limit, counted with the same
+ *   2. Its SHA-256 matches the hash in one of the key records (one per
+ *      agent key, agent-keys.js), which is not revoked. Each record is
+ *      compared in constant time, and the one that matches names the key
+ *      (a key that matches two records is refused): the request then acts
+ *      as that key's agent,
+ *      with that key's switches, limit and audit rows. A missing or revoked
+ *      record matches nothing. No cache: revoking a key on its tab must cut
+ *      the next request, the same reason require-agent.js gives for not
+ *      caching the lab agent registry.
+ *   3. The key is under its own per-minute limit, counted with the same
  *      compare-and-increment counter the public submission routes use
  *      (submissions.js enforceSubmissionQuota) under a key that names the
  *      minute, so a burst cannot read-then-write its way past it.
@@ -49,10 +54,11 @@ import {
 } from '../cosmos-client.js';
 import { enforceSubmissionQuota } from '../submissions.js';
 import {
+  AGENT_KEYS,
   AGENT_USER,
   CAPABILITIES,
-  KEY_RECORD_ID,
   REQUESTS_PER_MINUTE,
+  agentUserOf,
   hashMatches,
   isUsable,
   looksLikeKey,
@@ -91,6 +97,9 @@ export { agentKeyFrom, KEY_HEADERS } from './keys.js';
  */
 function audit(auditDenial, entry, where = {}) {
   try {
+    // `agent` is the key's own id once a key is matched; before that (a
+    // wrong, revoked or missing key) no key is known, and the row names
+    // the first key, as it always has.
     const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...where, ...entry });
     // writeDenialAudit never rejects; a test double might. Nothing on a
     // denial path may become an unhandled rejection.
@@ -101,14 +110,14 @@ function audit(auditDenial, entry, where = {}) {
 }
 
 /** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
-function touchLastUsed(store, record, nowMs) {
+function touchLastUsed(store, key, record, nowMs) {
   const last = Date.parse(record.lastUsedAt || '') || 0;
   if (nowMs - last < LAST_USED_EVERY_MS) return;
   Promise.resolve()
     .then(() =>
       store.patchDoc(
         'admin_config',
-        KEY_RECORD_ID,
+        key.recordId,
         { lastUsedAt: new Date(nowMs).toISOString() },
         { partitionKey: ADMIN_CONFIG_PARTITION },
       ),
@@ -119,28 +128,52 @@ function touchLastUsed(store, record, nowMs) {
 /** The 401 every failed key check answers with. */
 const unauthenticated = () => ({ record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) });
 
-/** The stored key record when `secret` is the live key; null, after its denial row, when not. */
+/**
+ * One key's record, or null when there is none. A document whose own id is
+ * not the record id asked for is no record of this key.
+ */
+async function readKeyRecord(store, key) {
+  const record = await store.readDoc('admin_config', key.recordId, ADMIN_CONFIG_PARTITION);
+  if (!record) return null;
+  return typeof record.id === 'string' && record.id !== key.recordId ? null : record;
+}
+
+/**
+ * Why no key matched, for the denial row: no record at all, records that
+ * are all revoked, or a key that is none of the live ones.
+ */
+function noMatchReason(seen) {
+  if (seen.some(isUsable)) return 'wrong-key';
+  return seen.some(Boolean) ? 'revoked-key' : 'no-key';
+}
+
+/**
+ * `{ key, record }` for the one agent key whose live hash `secret` matches;
+ * null, after its denial row, when none does. Every record is read and
+ * compared, so the answer does not depend on which key was presented. Two
+ * records holding the same hash should never happen (each key is 32 random
+ * bytes); if they ever do, the key cannot say which agent it is, so it is
+ * refused like an unknown key rather than taken as the first.
+ */
 async function matchingRecord({ store, auditDenial }, secret, where) {
-  const record = await store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
-  if (!isUsable(record)) {
-    audit(auditDenial, { outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' }, where);
-    return null;
-  }
-  if (!hashMatches(secret, record.keyHash)) {
-    audit(auditDenial, { outcome: 'denied', reason: 'wrong-key' }, where);
-    return null;
-  }
-  return record;
+  const seen = await Promise.all(AGENT_KEYS.map((key) => readKeyRecord(store, key)));
+  const matches = AGENT_KEYS.map((key, index) => ({ key, record: seen[index] })).filter(
+    ({ record }) => isUsable(record) && hashMatches(secret, record.keyHash),
+  );
+  if (matches.length === 1) return matches[0];
+  const reason = matches.length > 1 ? 'ambiguous-key' : noMatchReason(seen);
+  audit(auditDenial, { outcome: 'denied', reason }, where);
+  return null;
 }
 
 /** The per-minute limit: the 429 answer, after its denial row, when this request is over it; null when not. */
-async function rateLimitRefusal({ store, auditDenial, requestsPerMinute }, nowMs, where) {
+async function rateLimitRefusal({ store, auditDenial, requestsPerMinute }, key, nowMs, where) {
   try {
-    await enforceSubmissionQuota(store, quotaKeyFor(nowMs), { now: nowMs, limit: requestsPerMinute });
+    await enforceSubmissionQuota(store, quotaKeyFor(nowMs, key.id), { now: nowMs, limit: requestsPerMinute });
     return null;
   } catch (error) {
     if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-    audit(auditDenial, { outcome: 'denied', reason: 'rate-limited' }, where);
+    audit(auditDenial, { outcome: 'denied', reason: 'rate-limited', agent: key.id }, where);
     return {
       record: null,
       user: null,
@@ -166,15 +199,16 @@ async function authenticate(deps, request, where = {}) {
   // admin_audit_logs.
   if (!secret || !looksLikeKey(secret)) return unauthenticated();
 
-  const record = await matchingRecord(deps, secret, where);
-  if (!record) return unauthenticated();
+  const match = await matchingRecord(deps, secret, where);
+  if (!match) return unauthenticated();
+  const { key, record } = match;
 
   const nowMs = deps.now();
-  const limited = await rateLimitRefusal(deps, nowMs, where);
+  const limited = await rateLimitRefusal(deps, key, nowMs, where);
   if (limited) return limited;
 
-  touchLastUsed(deps.store, record, nowMs);
-  return { record, user: { ...AGENT_USER, keyHint: record.keyHint || null }, error: null };
+  touchLastUsed(deps.store, key, record, nowMs);
+  return { record, user: { ...agentUserOf(key), keyHint: record.keyHint || null }, error: null };
 }
 
 /** The gates, then the capability the route needs. */
@@ -185,14 +219,15 @@ async function requireCapability(deps, request, capability) {
   // record is read the same way as a new one: a switch it never stored
   // takes today's default, and a switch stored false stays off.
   if (!enabledCapabilities(auth.record).includes(capability)) {
-    audit(deps.auditDenial, { outcome: 'denied', reason: 'capability-off', capability });
+    audit(deps.auditDenial, { outcome: 'denied', reason: 'capability-off', capability, agent: auth.user.agent });
+    const name = auth.user.name;
     return {
       record: null,
       user: null,
       error: deny(
         403,
         'FORBIDDEN',
-        `Koda's key does not allow this: "${labelOf(capability)}" is switched off on the AI Engine's Koda tab.`,
+        `${name}'s key does not allow this: "${labelOf(capability)}" is switched off on the AI Engine's ${name} tab.`,
       ),
     };
   }

@@ -540,6 +540,34 @@ describe('the hub', () => {
     expect(screen.getByTestId('publishing-nothing-due')).toHaveTextContent('Nothing was due');
   });
 
+  it('shows one card per agent key, each with its own refusals and a link to its own tab', async () => {
+    const claude = {
+      ...SNAPSHOT.agent,
+      id: 'claude',
+      label: 'Claude',
+      sectionsOff: [],
+      denials: {
+        ...SNAPSHOT.agent.denials,
+        total: 1,
+        byReason: [{ reason: 'capability-off', count: 1 }],
+      },
+    };
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agents: [SNAPSHOT.agent, claude] } : {}
+    );
+    renderAt();
+    expect(await screen.findByText('Content agent (Claude)')).toBeInTheDocument();
+    const [kodaCard, claudeCard] = screen.getAllByTestId('content-agent-card');
+    expect(within(kodaCard).getByText('route-not-allowed')).toBeInTheDocument();
+    expect(within(kodaCard).queryByText('capability-off')).not.toBeInTheDocument();
+    expect(within(claudeCard).getByText('capability-off')).toBeInTheDocument();
+    expect(within(claudeCard).queryByText('route-not-allowed')).not.toBeInTheDocument();
+    expect(within(claudeCard).getByRole('link', { name: /Claude tab/ })).toHaveAttribute(
+      'href',
+      '/admin/ai-engine?tab=claude'
+    );
+  });
+
   it('marks the refusal total and every reason count as a floor at the read bound (#1491)', async () => {
     postJSON.mockImplementation(async (name) =>
       name === 'getOpsHealthSnapshot'

@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 
 import { SECRET_CATALOG } from '../secret-catalog.js';
+import { AGENT_KEYS } from '../agent-content/agent-keys.js';
 import { MAX_LEAD_DAYS } from '../reminders/settings.js';
 import {
   HAND_ROTATION_DAYS,
@@ -199,8 +200,25 @@ describe('the issue’s list', () => {
         'lab-agent-certificate',
         'lab-vault-tls-certificate',
         'tfc-azure-muse-reader-secret',
+        // One per agent key the site can hold (agent-content/agent-keys.js).
+        'agent-key-koda',
+        'agent-key-claude',
       ].sort()
     );
+  });
+
+  it('gives every agent key the site can hold its own hand-renewed row on the owner’s rule, never its value', () => {
+    for (const key of AGENT_KEYS) {
+      const row = findCredential(`agent-key-${key.id}`);
+      expect(row, key.id).toBeTruthy();
+      expect(row.store).toBe('site-agent-keys');
+      expect(row.renewal).toBe('hand');
+      expect(row.lifetimeDays).toBe(HAND_ROTATION_DAYS);
+      expect(row.name).toContain(key.recordId);
+      expect(row.name).toMatch(/hash/);
+      expect(row.rotate).toContain(`${key.displayName} tab`);
+      expect(isRecordable(row)).toBe(true);
+    }
   });
 
   it('uses the rules the repository states', () => {

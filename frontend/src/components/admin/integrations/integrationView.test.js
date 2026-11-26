@@ -175,10 +175,10 @@ describe('joining services to credentials', () => {
     const { serviceGroups } = buildIntegrationView({ sections, secrets: [originSecret] });
     const platform = serviceGroups.find((group) => group.id === 'platform');
     expect(platform.loose.map((row) => row.secret)).toEqual(['CF-ORIGIN-SECRET']);
-    // The group's one card lists Azure sign-ins and claims no key, so the
-    // origin secret stays loose beside it.
-    expect(platform.cards.map((card) => card.id)).toEqual(['azure']);
-    expect(platform.cards[0].items).toEqual([]);
+    // The group's two cards list Azure sign-ins and the agent keys the site
+    // issues, and claim no key, so the origin secret stays loose beside them.
+    expect(platform.cards.map((card) => card.id)).toEqual(['azure', 'agent-keys']);
+    for (const card of platform.cards) expect(card.items).toEqual([]);
   });
 
   it('gives a credential whose group this page does not know a heading of its own', () => {
