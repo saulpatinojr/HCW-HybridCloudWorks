@@ -559,6 +559,27 @@ describe('DNS records', () => {
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 
+  it('refuses an edit that asks for a different record type, after reading it, and writes nothing', async () => {
+    const { handlers, api, store } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()) } });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { type: 'MX', content: 'mail.example.com', priority: 10 } }), {}));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/type cannot be changed/);
+    expect(WRITES(api)).toEqual([]);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('accepts an edit that names the record’s own type', async () => {
+    const { handlers, api } = setup({
+      routes: {
+        [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()),
+        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ content: '192.0.2.8' })),
+      },
+    });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { type: 'A', content: '192.0.2.8' } }), {}));
+    expect(res.status).toBe(200);
+    expect(WRITES(api)).toHaveLength(1);
+  });
+
   it.each(['www', '*.api-azure', '*'])('refuses an edit that would rename a record onto %j, before calling Cloudflare', async (name) => {
     const { handlers, api } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()) } });
     const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { name } }), {}));

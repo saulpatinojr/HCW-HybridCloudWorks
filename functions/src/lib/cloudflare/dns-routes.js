@@ -152,6 +152,18 @@ function refuseCurrent(current) {
   refuseProtectedName('That record is protected', current?.name);
 }
 
+/**
+ * Refuses an edit that asks for a different record type. Cloudflare does not
+ * change a record's type in place, and the page keeps the type fixed, so a
+ * new type means a new record.
+ */
+function refuseTypeChange(current, changes) {
+  if (changes.type === undefined) return;
+  if (changes.type !== String(current?.type ?? '').toUpperCase()) {
+    throw bad("A record's type cannot be changed. Add a new record of the type you need, and remove the old one in the Cloudflare dashboard.");
+  }
+}
+
 /** The audit row's details for an edit: type, name (and the old one when renamed), proxied and ttl before and after. */
 function editDetails(current, changes, updated) {
   const after = { ...current, ...changes, ...updated };
@@ -189,6 +201,7 @@ export async function patchDns(call) {
   await requireOurZone(client);
   const current = await client.getDns(recordId);
   refuseCurrent(current);
+  refuseTypeChange(current, changes);
   const updated = await client.patchDns(recordId, changes);
   const note = protectedAfterWriteNote(updated);
   if (note) context?.warn?.('[cloudflare] dns-edit: the saved record carries a protected name');
