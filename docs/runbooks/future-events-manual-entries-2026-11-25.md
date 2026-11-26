@@ -5,7 +5,9 @@ Status: spec for implementation (owner request, 2026-11-25; scope updated same d
 
 ## Context
 
-The Speaking hub's "Future Events" tab (#1823, ADR 0045) reads exactly one
+The Speaking hub's "Future Events" tab
+([#1823](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1823);
+decision record [ADR 0045](../decisions/0045-community-days-events.md)) reads exactly one
 route, `cms/community-days/events`, and shows the Community Days developer
 API feed of events to apply to.
 
@@ -33,18 +35,22 @@ Community Days rows, so one list holds every event worth applying to:
   able to add an opportunity by hand without touching the API.
 - **Show manual entries in the tab.** Include `speakerevents` entries whose
   status marks them as opportunities not yet decided/applied (at minimum
-  `idea`; decide whether `proposed` belongs here or stays only in the
-  Upcoming tab, and say why).
+  `idea`). Decided under "What was built": `idea` only; `proposed` stays
+  on the Upcoming tab.
 - Give manual rows the same treatment as feed rows where it makes sense:
   CFP deadline and days left, clash marks against the owner's own talks
   (applyModel rules), notes, and the estimate button.
-- Keep the Community Days read path and its guard patterns (ADR 0033,
-  ADR 0045) intact. Decide server-side merge (extend the
+- Keep the Community Days read path and its guard patterns
+  ([ADR 0033](../decisions/0033-contentforge-alignment.md),
+  [ADR 0045](../decisions/0045-community-days-events.md)) intact. Decide server-side merge (extend the
   `cms/community-days/events` response) vs a second client read, following
   the existing one-route pattern in `useApplyEvents.js`; document the choice.
 - A manual entry that duplicates a feed event (same name) must not show
-  twice; the existing "you are already speaking here" same-name rule in
-  applyModel.js is the precedent.
+  twice. The name rule is `normalizeName` in
+  [`frontend/src/lib/speakingEvents.js`](../../frontend/src/lib/speakingEvents.js):
+  the one `matchStoredRow` uses to pair a Sessionize event with its stored
+  record (called by `mergeEvents` in `eventModel.js`), and the one the
+  "you are already speaking here" rule in `applyCalendarModel.js` uses.
 - Tests per repo conventions for whatever layer changes; CHANGELOG entry.
 
 ## Out of scope
@@ -107,4 +113,6 @@ a route that caches and paces an outside service, for no gain.
 Code: `frontend/src/components/admin/speaking-events/manualOpportunities.js`
 (the rules) and `ApplyTab.jsx` (the row). Tests:
 `manualOpportunities.test.js` and the "the owner's own ideas" block of
-`ApplyTab.test.jsx`.
+`ApplyTab.test.jsx`, which also holds the acceptance line: the recorded
+`vslive-ailive-mshq-2027` entry shows next to the directory row with
+"Closes Dec 14, 2026" and its days left.

@@ -819,6 +819,33 @@ describe('the owner’s own ideas', () => {
     expect(getJSON).toHaveBeenCalledWith(EVENTS_ROUTE);
   });
 
+  it('shows the entry the owner recorded on 2026-11-25 with its Dec 14, 2026 deadline (the spec’s acceptance line)', async () => {
+    // The real record, read with the clock set to the day after it was made.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 10, 26, 9) });
+    try {
+      await show(
+        hubData([
+          idea({
+            _docId: 'vslive-ailive-mshq-2027',
+            eventName: 'VSLive! & AiLive! @ Microsoft HQ 2027',
+            date: '2027-08-02',
+            location: 'Redmond, WA',
+            eventUrl: 'https://sessionize.com/VSLAILMSHQ27/',
+            cfpDeadline: '2026-12-14',
+          }),
+        ])
+      );
+      const row = (await screen.findByText('VSLive! & AiLive! @ Microsoft HQ 2027')).closest('li');
+      expect(row).toHaveAttribute('data-event', 'manual-vslive-ailive-mshq-2027');
+      expect(row).toHaveTextContent('Closes Dec 14, 2026, about 18 days left');
+      expect(row).toHaveTextContent('Aug 2, 2027');
+      // Next to the directory row, not instead of it.
+      expect(screen.getByText('Example Community Day')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows an entry with the same name as a directory event once, as the directory row', async () => {
     await show(hubData([idea({ eventName: 'Example Community Day' })]));
     const list = await screen.findByRole('list', { name: 'Future Events' });
