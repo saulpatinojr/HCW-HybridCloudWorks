@@ -497,6 +497,7 @@ stays in code; the owner does not want it editable from the portal.
 | Service | What a Page adds | Where |
 |---|---|---|
 | Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page, or `RecordPipeline` (the two in one box) when the Page adds nothing of its own to a piece; kept outside any `<form>`, because the button's dialog has a form whose submit React passes up through the component tree | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
+| The next step once a piece is live | An entry in `NEXT_STEPS` (its label and tooltip; the link is the Page's `ORIGIN_RECORD_PATHS` entry), or a reason in `NO_NEXT_STEP`. `NextStepLink` sits in `TaxonomyChips` beside the "sent from" chip, so every Pipeline list that shows a live piece offers it. "Live" is `isLivePiece`, the same rule as the server's evidence import (`isLiveContent`), held together by `liveRuleMirror.test.js`; `nextSteps.test.js` fails when a sending Page has neither an entry nor a reason | `frontend/src/lib/nextSteps.js`, `frontend/src/components/admin/shared/NextStepLink.jsx` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
 | Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
 | Telegram reminders | A row provider: an entry in `REMINDER_PROVIDERS`, its id prefix and reserved rows in `PROVIDED_ROWS`, the same prefix in the Reminders tab's `ROW_KEEPERS` (a test holds the two lists together), and a sync built on `syncProvidedRows`, which keeps the timer's stamps, writes under `ifMatch` and never lets an editor's save change a kept row. Each `PROVIDED_ROWS` entry also names its `agentSection` (an agent key with that switch off does not see the rows, or the alerts sent for them, `reminders/agent-visibility.js`) and `ownDashboardSource` (true when the Page lists the same items on the Dashboard itself, so the reminders source skips them). Today: the credential register and Ambassador | `functions/src/lib/reminders/providers.js`, `functions/src/lib/reminders/provided-rows.js`, `functions/src/lib/reminders/settings.js`, `frontend/src/components/admin/platform-settings/RemindersTab.jsx` |
@@ -520,9 +521,19 @@ Page that adds nothing of its own to a piece) under a stored talk's edit form
 and under a saved certification's editor, with "Draft a piece" and the
 record's pieces; both Pages are in `ORIGIN_PAGES` behind the Spotlight switch,
 and `?talk=` and `?certification=` open the record the chip links back to.
-Still to come, in later phases of #1886: hand-offs from the other Pages,
-next-step suggestions, and related items. Until a phase is merged, do not
-describe its part as working.
+Phase 4 built the next step: once a piece another Page sent is live, a link
+beside its "sent from" chip offers that Page's follow-up ("Open the
+program" for Ambassador, which opens the program's details where the piece is
+recorded as evidence), from one list (`NEXT_STEPS`) and one live rule
+(`isLivePiece`). Speaking and Certifications are in `NO_NEXT_STEP`: once
+their piece is live nothing is left to do on the record, and a link to the
+same place as the "sent from" chip would save nothing. The second way, related items, is met by what
+already exists: each Page lists its pieces, each piece names the Page and
+record it came from, and Ambassador's evidence links published pieces to
+programs. No separate "related" panels were added, because they would save
+the owner no step ("Join only where it helps the owner"). Still to come, in
+later phases of #1886: hand-offs from the other Pages. Until a phase is
+merged, do not describe its part as working.
 
 **Checklist: adding a Page, program or request type to the flow.** Go down
 it in the pull request and say for each line *done* (with the file), *already
@@ -540,18 +551,21 @@ above does.
    ships and the `agentSection` switch that guards it for an agent key, and in
    `ORIGIN_RECORD_PATHS`; it uses `SendToPipelineButton` and
    `PipelinePieces`, not its own draft or publish code.
-4. **If the owner must act on something by a date:** a Decision Center
+4. **If a piece from this Page has a natural follow-up once live:** an
+   entry in the next-step list (`NEXT_STEPS` in `frontend/src/lib/nextSteps.js`),
+   or a reason in `NO_NEXT_STEP` when it has none.
+5. **If the owner must act on something by a date:** a Decision Center
    source, a Calendar collector, and Telegram through the reminders sheet,
    each linking to the record.
-5. **If a step may be repeated:** it is safe to repeat (a fixed id, a
+6. **If a step may be repeated:** it is safe to repeat (a fixed id, a
    conditional write, a button disabled while busy), and a test shows the
    second try changes nothing.
-6. **Roles:** every new route asks for the same role the target Page would,
+7. **Roles:** every new route asks for the same role the target Page would,
    and the agent allow-list is checked for anything it should or should not
    reach.
-7. **Tests** cover the server check, the browser mirror, and the hand-off
+8. **Tests** cover the server check, the browser mirror, and the hand-off
    from the Page's own test file.
-8. **This section** is updated if the change adds a rule, a list or a
+9. **This section** is updated if the change adds a rule, a list or a
    service.
 
 ## Public text about Ambassador and community programs

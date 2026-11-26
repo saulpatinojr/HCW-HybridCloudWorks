@@ -1,13 +1,14 @@
 /**
- * "Is this piece live?" is asked twice: by the program's "File as evidence"
- * button (isLivePiece) and by the server's import, which decides
- * (isLiveContent). They must give the same answer for every shape a content
- * document can have, or the button offers a filing the import refuses
+ * "Is this piece live?" is asked in the browser (isLivePiece, lib/nextSteps.js:
+ * the program's "File as evidence" button and the Pipeline's next-step link)
+ * and by the server's import, which decides (isLiveContent). They must give
+ * the same answer for every shape a content document can have, or the button
+ * offers a filing the import refuses
  * (reviews of #1891).
  */
 import { describe, it, expect } from 'vitest';
 import { isLiveContent } from '../../../../../functions/src/lib/ambassador/import-readers.js';
-import { isLivePiece } from './ProgramPipeline';
+import { isLivePiece } from '@/lib/nextSteps';
 
 const CASES = [
   { Live: true },

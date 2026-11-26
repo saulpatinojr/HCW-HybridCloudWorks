@@ -7,13 +7,16 @@
  *
  * A third chip, when another admin Page sent the record into the Pipeline:
  * which Page and which record (OriginChip, #1886). It lives here so every
- * page that already shows the taxonomy shows it too.
+ * page that already shows the taxonomy shows it too. Beside it, once the
+ * record is live, the next step on that Page (NextStepLink): a link, so it is
+ * left out when the chips sit inside a row that is itself a link or button.
  */
 import React from 'react';
 import { Lightbulb, Shapes } from 'lucide-react';
 import { labelFor, resolveIdeaOrigin, resolveKind } from '@/lib/taxonomy';
 import { useTaxonomy } from './useTaxonomy';
 import OriginChip from './OriginChip';
+import NextStepLink from './NextStepLink';
 
 const CHIP =
   'inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-muted-foreground whitespace-nowrap';
@@ -49,6 +52,7 @@ export default function TaxonomyChips({
         </span>
       )}
       {showSource && <OriginChip originRef={item.originRef} asLink={sourceAsLink} />}
+      {showSource && sourceAsLink && <NextStepLink item={item} />}
     </span>
   );
 }
