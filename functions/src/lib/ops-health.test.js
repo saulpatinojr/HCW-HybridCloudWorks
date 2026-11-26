@@ -140,10 +140,14 @@ function opsStore() {
         expect(query).toContain('c.timestamp >= @since');
         expect(query).toContain('ORDER BY c.timestamp DESC');
         expect(query).not.toMatch(/c\.kind|c\.at\b|c\["at"\]/);
-        expect(params).toEqual([
+        // One read per agent key, each held to its own refusals.
+        expect(query).toContain('c.agent = @agent');
+        expect(params.slice(0, 2)).toEqual([
           { name: '@action', value: 'agent-content-denial' },
           { name: '@since', value: new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString() },
         ]);
+        expect(params[2].name).toBe('@agent');
+        if (params[2].value !== 'koda') return [{ reason: 'capability-off', timestamp: '2026-08-07T03:20:00Z' }];
         return [
           { reason: 'route-not-allowed', timestamp: '2026-08-07T03:10:00Z' },
           { reason: 'wrong-key', timestamp: '2026-08-07T02:00:00Z' },
@@ -449,6 +453,36 @@ describe('getOpsHealthSnapshot', () => {
     expect(body.agent.sectionsOff).toEqual([]);
     // The denial read is independent of the key read and still answers.
     expect(body.agent.denials).toMatchObject({ total: 4, unavailable: false });
+  });
+
+  it('gives every agent key its own block, with its own record and only its own refusals', async () => {
+    const store = opsStore();
+    const innerRead = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementation(async (container, id, pk) => {
+      if (container === 'admin_config' && id === 'agent_content_key:claude') {
+        return { id, keyHash: 'claude-hash-never-shown', keyHint: 'hcwk_cla', createdAt: '2026-08-05T00:00:00.000Z' };
+      }
+      return innerRead(container, id, pk);
+    });
+    const h = createOpsHealthHandlers({ guard: allowGuard(), store, ...fixed });
+    const body = JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body);
+    expect(body.agents.map((agent) => [agent.id, agent.label])).toEqual([
+      ['koda', 'Koda'],
+      ['claude', 'Claude'],
+    ]);
+    // `agent` stays Koda's block for every older reader.
+    expect(body.agent).toEqual(body.agents[0]);
+    const [koda, claude] = body.agents;
+    expect(koda.denials.total).toBe(4);
+    expect(claude.denials).toMatchObject({ total: 1, byReason: [{ reason: 'capability-off', count: 1 }] });
+    expect(claude.key).toMatchObject({ present: true, active: true, createdAt: '2026-08-05T00:00:00.000Z' });
+    // Claude's key starts with only the draft switches on, so every other is off.
+    expect(claude.sectionsOff.map((row) => row.id)).not.toContain('drafts.write');
+    expect(claude.sectionsOff.map((row) => row.id)).toContain('admin.pipeline');
+    const audits = store.queryDocs.mock.calls.filter(([container]) => container === 'admin_audit_logs');
+    expect(audits.map(([, , params]) => params.find((p) => p.name === '@agent').value).sort()).toEqual(['claude', 'koda']);
+    expect(JSON.stringify(body)).not.toContain('claude-hash-never-shown');
+    expect(JSON.stringify(body)).not.toContain('hcwk_cla');
   });
 
   it('carries the nightly export reader’s block, and says "not known" without one or when it fails (#1409)', async () => {

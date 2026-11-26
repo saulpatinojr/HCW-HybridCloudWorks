@@ -15,10 +15,11 @@
  * it opens the Drafts stage and the published reads, nothing in /api/cms/*,
  * and it is revoked by deleting one hash, with no cache in front of it.
  *
- * WHAT THE KEY CAN REACH is a closed list of capabilities, each a switch on
- * the Koda tab. All are on when Koda's key is made (a key added later starts
- * with only the switches its row lists: agent-keys.js); none can be added here without
- * code, because a capability is a route group the handlers wire by name.
+ * WHAT EACH KEY CAN REACH is a closed list of capabilities, each a switch on
+ * the key's own tab. All are on when Koda's key is made; a key added later
+ * starts with only the switches its row lists (agent-keys.js). None can be
+ * added here without code, because a capability is a route group the
+ * handlers wire by name.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';

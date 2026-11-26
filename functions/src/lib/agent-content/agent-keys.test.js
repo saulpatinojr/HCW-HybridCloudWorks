@@ -223,13 +223,27 @@ describe('the key guard', () => {
     expect(store.docs.get(KEY_RECORD_ID).lastUsedAt).toBeNull();
   });
 
-  it('still signs Koda’s key in as Koda, reading only Koda’s record', async () => {
+  it('still signs Koda’s key in as Koda, after comparing it with every key’s record', async () => {
     const store = memoryStore(kodaRecord(), claudeRecord());
     const auth = await guardOver(store).authenticate(request(KODA_SECRET));
     expect(auth.user).toEqual({ ...AGENT_USER, keyHint: kodaRecord().keyHint });
-    expect(store.readDoc.mock.calls.filter(([container]) => container === 'admin_config').map(([, id]) => id)).toEqual([
-      KEY_RECORD_ID,
-    ]);
+    expect(
+      store.readDoc.mock.calls.filter(([container]) => container === 'admin_config').map(([, id]) => id)
+    ).toEqual(AGENT_KEYS.map((key) => key.recordId));
+  });
+
+  it('refuses a key that matches more than one record, as it would an unknown key', async () => {
+    // Two records holding the same hash: the key cannot say which agent it is.
+    const twin = { ...claudeRecord(), keyHash: hashKey(KODA_SECRET) };
+    const store = memoryStore(kodaRecord(), twin);
+    const auth = await guardOver(store).authenticate(request(KODA_SECRET));
+    const unknown = await guardOver(memoryStore(kodaRecord())).authenticate(request(generateKey()));
+    expect(auth.user).toBeNull();
+    expect(auth.error.status).toBe(401);
+    expect(auth.error.body).toBe(unknown.error.body);
+    expect(audits[0]).toMatchObject({ reason: 'ambiguous-key', agent: 'koda' });
+    expect(store.quota.size).toBe(0);
+    expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
   it('does not let Koda’s switches reach the second key, or the second key’s reach Koda', async () => {
@@ -419,6 +433,18 @@ describe('the admin allow-list', () => {
     expect(audits.at(-1)).toMatchObject({ agent: 'koda', reason: 'section-off', section: 'admin.pipeline' });
   });
 
+  it('refuses a signed-in key that names no agent as a bad key, never taking it for Koda’s', async () => {
+    const agentGuard = {
+      authenticate: vi.fn(async () => ({ record: kodaRecord(), user: { oid: 'agent:?', agent: '' }, error: null })),
+    };
+    const guarded = withAgentAccess(roleGuard, { agentGuard, auditDenial });
+    const res = await guarded.requireRole(adminRequest(KODA_SECRET), 'editor');
+    expect(res.user).toBeNull();
+    expect(res.error.status).toBe(401);
+    expect(audits.at(-1)).toMatchObject({ reason: 'no-agent', surface: 'admin' });
+    expect(roleGuard.requireRole).not.toHaveBeenCalled();
+  });
+
   it('refuses the second key a section it has not had switched on, naming it in the row', async () => {
     const store = memoryStore(kodaRecord(), claudeRecord());
     const guarded = withAgentAccess(roleGuard, { agentGuard: guardOver(store), auditDenial });
@@ -453,6 +479,9 @@ describe('what each key may see on other Pages', () => {
     const store = memoryStore(kodaRecord(allSwitches(true)));
     expect(await agentSwitchesOn(store, 'claude')).toEqual([]);
     expect(await agentSwitchesOn(store, 'nobody')).toEqual([]);
+    // No id is no key, never Koda's.
+    expect(await agentSwitchesOn(store)).toEqual([]);
+    expect(await agentSwitchesOn(store, undefined)).toEqual([]);
     expect((await hiddenOriginPages(store, { agent: 'nobody' })).sort()).toEqual([...ORIGIN_PAGE_IDS].sort());
     expect(await hiddenOriginPages(store, { oid: 'person' })).toEqual([]);
   });

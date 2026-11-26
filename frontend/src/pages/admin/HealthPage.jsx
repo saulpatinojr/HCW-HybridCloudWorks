@@ -166,6 +166,12 @@ export default function HealthPage() {
     publishingWatchdog: digestForDisplay?.publishingWatchdog || null,
     // The content agent's block (#1491); null until a snapshot that carries it lands.
     agent: snapshot.agent || null,
+    // One block per agent key; a snapshot written before there were more
+    // carries Koda's alone, and one before #1491 none (one card says so).
+    agents:
+      Array.isArray(snapshot.agents) && snapshot.agents.length
+        ? snapshot.agents
+        : [snapshot.agent || null],
     // The nightly export's block (#1409); the same rule.
     backups: snapshot.backups || null,
   };

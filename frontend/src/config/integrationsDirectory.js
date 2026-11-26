@@ -249,7 +249,8 @@ export const DIRECTORY = Object.freeze([
     summary: 'Keys this site issues to outside agents, one record and tab per key.',
     powers:
       'Agents that read and write drafts, and reach only the admin routes each key’s own switches open.',
-    docsUrl: null,
+    docsUrl:
+      'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/agent-content-api.md',
   },
   {
     id: 'hybrid-lab',

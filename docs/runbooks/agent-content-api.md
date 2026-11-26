@@ -268,7 +268,15 @@ same way there, with these differences:
 
 A refusal of a key that matched no record (a wrong, revoked or missing key)
 cannot say which key it was meant to be, so its audit row names the first
-key, `koda`, as it always has; once a key matches, its rows name it.
+key, `koda`, as it always has; once a key matches, its rows name it. A key
+that matched two records at once is refused the same way, with the reason
+`ambiguous-key`; it should never happen, because every key is 32 random
+bytes.
+
+The [Health page](https://hybridcloudworks.com/admin/health) shows one
+**Content agent** card per key, each with that key's own state, switches and
+refusals of the last day. Refusals of a key that matched no record count on
+Koda's card, for the reason above.
 
 The admin route behind both tabs is `/api/cms/agent-content/key`; Claude's tab
 adds `?agent=claude`, and any agent id that is not on the list is refused with

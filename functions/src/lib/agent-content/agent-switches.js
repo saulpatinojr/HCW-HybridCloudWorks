@@ -6,20 +6,19 @@
  * can come from another key's record.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { AGENT_ID, agentKeyById, enabledCapabilities } from './keys.js';
+import { agentKeyById, enabledCapabilities } from './keys.js';
 
 /**
- * The switches on one agent key's record (Koda's when `agentId` is absent),
- * or none at all when the record cannot be found or the id is not an agent
- * key: a missing record fails closed here (review of #1891), rather than
+ * The switches on one agent key's record, or none at all when no id is
+ * given, the id is not an agent key, or the record cannot be found: a missing record fails closed here (review of #1891), rather than
  * taking the defaults an older record is read with. A document whose own id
  * is not that key's record id is no record of it.
  *
  * @param {{ readDoc: Function }} store
- * @param {string} [agentId]
+ * @param {string} agentId
  * @returns {Promise<string[]>} capability ids
  */
-export async function agentSwitchesOn(store, agentId = AGENT_ID) {
+export async function agentSwitchesOn(store, agentId) {
   const key = agentKeyById(agentId);
   if (!key) return [];
   const record = await store.readDoc('admin_config', key.recordId, ADMIN_CONFIG_PARTITION);

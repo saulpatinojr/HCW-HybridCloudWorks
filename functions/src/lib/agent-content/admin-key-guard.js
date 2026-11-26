@@ -6,7 +6,7 @@
  * re-exports checkBodyRule and agentUserFor.
  */
 import { satisfiesRole, minimumRole } from '../auth/roles.js';
-import { AGENT_ID, AGENT_USER, agentKeyById, agentKeyFrom, agentUserOf, looksLikeKey } from './keys.js';
+import { AGENT_ID, AGENT_USER, agentKeyById, agentKeyFrom, agentUserOf, isAgentUser, looksLikeKey } from './keys.js';
 
 /**
  * Read the one body field a rule cares about, from a clone so the handler
@@ -153,7 +153,13 @@ async function keyAwareRequireRole({ roleGuard, agentGuard, auditDenial, env, po
   const auth = await agentGuard.authenticate(request, where);
   if (auth.error) return { user: null, role: null, error: auth.error };
 
-  const agent = auth.user?.agent ?? AGENT_ID;
+  // A key the guard let through always names its agent. One that does not
+  // is refused as a bad key would be, never taken for the first key.
+  if (!isAgentUser(auth.user)) {
+    auditDenialRow(auditDenial, { outcome: 'denied', reason: 'no-agent', ...where });
+    return { user: null, role: null, error: deny(401, 'Authentication required') };
+  }
+  const agent = auth.user.agent;
   const refusal = await policyRefusal(policy, { row, path, record: auth.record, minimum }, request);
   if (refusal) {
     auditDenialRow(auditDenial, { outcome: 'denied', reason: refusal.reason, agent, ...where, ...(refusal.extra || {}) });

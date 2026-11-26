@@ -18,8 +18,9 @@
  *      value, or an X-API-Key / X-Agent-Key header; never a query string.
  *   2. Its SHA-256 matches the hash in one of the key records (one per
  *      agent key, agent-keys.js), which is not revoked. Each record is
- *      compared in constant time, in the list's order, and the first that
- *      matches names the key: the request then acts as that key's agent,
+ *      compared in constant time, and the one that matches names the key
+ *      (a key that matches two records is refused): the request then acts
+ *      as that key's agent,
  *      with that key's switches, limit and audit rows. A missing or revoked
  *      record matches nothing. No cache: revoking a key on its tab must cut
  *      the next request, the same reason require-agent.js gives for not
@@ -147,18 +148,21 @@ function noMatchReason(seen) {
 }
 
 /**
- * `{ key, record }` for the agent key whose live hash `secret` matches;
- * null, after its denial row, when none does. The records are read in the
- * list's order and the reads stop at the first match.
+ * `{ key, record }` for the one agent key whose live hash `secret` matches;
+ * null, after its denial row, when none does. Every record is read and
+ * compared, so the answer does not depend on which key was presented. Two
+ * records holding the same hash should never happen (each key is 32 random
+ * bytes); if they ever do, the key cannot say which agent it is, so it is
+ * refused like an unknown key rather than taken as the first.
  */
 async function matchingRecord({ store, auditDenial }, secret, where) {
-  const seen = [];
-  for (const key of AGENT_KEYS) {
-    const record = await readKeyRecord(store, key);
-    seen.push(record);
-    if (isUsable(record) && hashMatches(secret, record.keyHash)) return { key, record };
-  }
-  audit(auditDenial, { outcome: 'denied', reason: noMatchReason(seen) }, where);
+  const seen = await Promise.all(AGENT_KEYS.map((key) => readKeyRecord(store, key)));
+  const matches = AGENT_KEYS.map((key, index) => ({ key, record: seen[index] })).filter(
+    ({ record }) => isUsable(record) && hashMatches(secret, record.keyHash),
+  );
+  if (matches.length === 1) return matches[0];
+  const reason = matches.length > 1 ? 'ambiguous-key' : noMatchReason(seen);
+  audit(auditDenial, { outcome: 'denied', reason }, where);
   return null;
 }
 
