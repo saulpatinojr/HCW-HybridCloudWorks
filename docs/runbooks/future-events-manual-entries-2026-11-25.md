@@ -1,0 +1,52 @@
+# Future Events: show manual entries alongside the Community Days feed
+
+Date: 2026-11-25
+Status: spec for implementation (owner request, 2026-11-25)
+
+## Context
+
+The Speaking hub's "Future Events" tab (#1823, ADR 0045) reads exactly one
+route, `cms/community-days/events`, and shows the Community Days developer
+API feed of events to apply to.
+
+Manual opportunities that do not come from Community Days are recorded as
+speaker events (`speakerevents`) with `status: "idea"` and a `cfpDeadline`.
+Example, created 2026-11-25: `vslive-ailive-mshq-2027` — VSLive! & AiLive!
+@ Microsoft HQ 2027 (2027-08-02, Redmond, WA; proposals due 2026-12-14;
+https://sessionize.com/VSLAILMSHQ27/). It is in `speakerevents` but never
+appears in Future Events, because the tab only reads the Community Days feed.
+
+## Ask
+
+Surface manual speaker-event entries in the Future Events tab alongside the
+Community Days rows, so one list holds every event worth applying to:
+
+- Include `speakerevents` entries whose status marks them as opportunities
+  not yet decided/applied (at minimum `idea`; decide whether `proposed`
+  belongs here or stays only in the Upcoming tab, and say why).
+- Give manual rows the same treatment as feed rows where it makes sense:
+  CFP deadline and days left, clash marks against the owner's own talks
+  (applyModel rules), notes, and the estimate button.
+- Keep the Community Days read path and its guard patterns (ADR 0033,
+  ADR 0045) intact. Decide server-side merge (extend the
+  `cms/community-days/events` response) vs a second client read, following
+  the existing one-route pattern in `useApplyEvents.js`; document the choice.
+- A manual entry that duplicates a feed event (same name) must not show
+  twice; the existing "you are already speaking here" same-name rule in
+  applyModel.js is the precedent.
+- Tests per repo conventions for whatever layer changes; CHANGELOG entry.
+
+## Out of scope
+
+- Creating manual entries from the tab UI (entries are created via the API
+  or the existing Speaking hub editing flow).
+- Any change to the Community Days API client, key handling, or refresh.
+- Publishing anything: manual idea entries stay `display: false` on the
+  public site.
+
+## Acceptance
+
+- The VSLive entry above appears in Future Events with its Dec 14, 2026
+  deadline and days-left, next to the Community Days rows.
+- Existing tab behavior (notes, estimates, refresh, clash marks) unchanged
+  for feed rows; test suites green.
