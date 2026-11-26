@@ -43,7 +43,7 @@ export const NO_NEXT_STEP = Object.freeze({
 });
 
 /** The published statuses the public site admits (functions/src/lib/public-read-rules.js PUBLIC_STATUSES). */
-const PUBLIC_STATUSES = new Set([
+export const PUBLIC_STATUSES = new Set([
   'published',
   'published_blog',
   'published_news',
@@ -61,7 +61,7 @@ const PUBLIC_STATUSES = new Set([
  */
 export function isLivePiece(piece) {
   if (!piece || piece.softDeletedAt || piece.softDeleteExpiresAt) return false;
-  if (piece.contentStatus === 'drafting') return false;
+  if (String(piece.contentStatus || '') === 'drafting') return false;
   return (
     piece.Live === true ||
     piece.Status === 'Live' ||

@@ -9,8 +9,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import { isLiveContent } from '../../../../../functions/src/lib/ambassador/import-readers.js';
-import { isPublicDocument } from '../../../../../functions/src/lib/public-read-rules.js';
-import { isLivePiece } from '@/lib/nextSteps';
+import {
+  PUBLIC_STATUSES as SERVER_PUBLIC_STATUSES,
+  isPublicDocument,
+} from '../../../../../functions/src/lib/public-read-rules.js';
+import { PUBLIC_STATUSES, isLivePiece } from '@/lib/nextSteps';
 
 const CASES = [
   { Live: true },
@@ -23,6 +26,7 @@ const CASES = [
   { contentStatus: 'published_both' },
   { contentStatus: 'published_live' },
   { contentStatus: 'drafting', Live: true },
+  { contentStatus: ['drafting'], Status: 'Live' },
   { contentStatus: 'published', Live: false },
   { Live: true, softDeleteExpiresAt: '2026-12-20T00:00:00.000Z' },
   { Live: true, softDeletedAt: 0 },
@@ -41,5 +45,11 @@ describe('the page and the import agree on what is live', () => {
     const piece = { id: 'c1', ...doc };
     expect(isLiveContent(piece)).toBe(isPublicDocument(piece));
     expect(isLivePiece(piece)).toBe(isPublicDocument(piece));
+  });
+});
+
+describe('the published statuses', () => {
+  it('are the same list in the browser and on the public site', () => {
+    expect([...PUBLIC_STATUSES].sort()).toEqual([...SERVER_PUBLIC_STATUSES].sort());
   });
 });

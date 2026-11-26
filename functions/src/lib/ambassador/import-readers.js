@@ -5,7 +5,15 @@
  * source said at link time.
  */
 import { isHttpUrl, toCalendarDate } from './model.js';
-import { SQL_NOT_SOFT_DELETED, SQL_PUBLIC_CLAUSE, isPublicDocument } from '../public-read-rules.js';
+import {
+  NEVER_PUBLIC_STATUSES,
+  SQL_NOT_SOFT_DELETED,
+  SQL_PUBLIC_CLAUSE,
+  isPublicDocument,
+} from '../public-read-rules.js';
+
+/** isPublicDocument's "never public" statuses, in SQL, so the picker lists no draft the import would refuse. */
+const SQL_NOT_NEVER_PUBLIC = `(NOT IS_DEFINED(c.contentStatus) OR IS_NULL(c.contentStatus) OR c.contentStatus NOT IN (${[...NEVER_PUBLIC_STATUSES].map((s) => `"${s}"`).join(', ')}))`;
 import { parseCsv } from './csv.js';
 
 export { parseCsv } from './csv.js';
@@ -30,7 +38,7 @@ const LIVE_CONTENT_QUERY =
   'SELECT TOP 500 c.id, c.title, c.Title, c.publishedAt, c.publishedDate, c.cp_sortDate, c.publishedUrl, c.publicUrl, c.slugPageUrl, c.curatedSubpagePath, c.cloudProvider, c.type FROM c ' +
   // What visitors can open is what can be recorded (#1897): the public
   // site's own clauses, not a copy of them.
-  `WHERE ${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED}`;
+  `WHERE ${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED} AND ${SQL_NOT_NEVER_PUBLIC}`;
 
 /**
  * LIVE_CONTENT_QUERY's test, for one document read by id: the import may
