@@ -82,7 +82,12 @@ function useLinkedCertEditor(certs, setEditing, [searchParams, setSearchParams])
   const linkedId = searchParams.get(LINK_PARAMS.certification);
   const handled = useRef(null);
   useEffect(() => {
-    if (!linkedId || !certs.loaded || handled.current === linkedId) return;
+    // Once the parameter is gone the same link may open the editor again.
+    if (!linkedId) {
+      handled.current = null;
+      return;
+    }
+    if (!certs.loaded || handled.current === linkedId) return;
     handled.current = linkedId;
     const cert = linkedCert(certs.items, linkedId);
     if (cert) setEditing(cert);

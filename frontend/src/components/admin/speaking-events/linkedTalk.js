@@ -55,7 +55,12 @@ export default function useLinkedTalk({ talkId, listable, rows, editor, showTab,
   // 'opening' until the editor shows the linked talk, then 'open' until it closes.
   const linkState = useRef('idle');
   useEffect(() => {
-    if (!talkId || !listable || handled.current === talkId) return;
+    // Once the parameter is gone the same link may open the talk again.
+    if (!talkId) {
+      handled.current = null;
+      return;
+    }
+    if (!listable || handled.current === talkId) return;
     handled.current = talkId;
     const found = findLinkedTalk(rows, talkId);
     if (!found) return;

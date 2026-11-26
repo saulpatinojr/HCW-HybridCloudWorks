@@ -262,13 +262,19 @@ describe('a certification in the Pipeline (#1886)', () => {
 
   it('drops the parameter when the linked editor closes, and opens nothing for an unknown id', async () => {
     searchParams = 'certification=saa';
-    const { unmount } = render(<CertificationsPage />);
+    const { unmount, rerender } = render(<CertificationsPage />);
     await screen.findByRole('heading', { name: 'Edit Certification' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     const [update] = setSearchParams.mock.calls.at(-1);
     expect(update(new URLSearchParams('tab=catalog&certification=saa')).toString()).toBe(
       'tab=catalog'
     );
+    // The same link works again once the parameter has been dropped.
+    searchParams = '';
+    rerender(<CertificationsPage />);
+    searchParams = 'certification=saa';
+    rerender(<CertificationsPage />);
+    expect(await screen.findByRole('heading', { name: 'Edit Certification' })).toBeTruthy();
     unmount();
 
     searchParams = 'certification=no-such-cert';
