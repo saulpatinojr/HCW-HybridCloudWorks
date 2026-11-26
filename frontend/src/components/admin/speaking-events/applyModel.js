@@ -289,7 +289,9 @@ export function callCloseInfo(callCloses, today) {
 
 /** City, region and country on one line, with the kind of event in brackets. */
 export function locationLine(event) {
-  const place = [event?.city, event?.region, event?.country].filter(Boolean).join(', ');
+  // An entry the owner added (manualOpportunities.js) has one free-text place.
+  const place =
+    [event?.city, event?.region, event?.country].filter(Boolean).join(', ') || event?.place || '';
   const kind = event?.eventType ? `(${event.eventType})` : '';
   return [place || (event?.eventType ? '' : 'Place not given'), kind].filter(Boolean).join(' ');
 }
@@ -346,7 +348,15 @@ export function filterEvents(events, { search = '', status = 'all' } = {}) {
     if (status === 'open' && (own === 'not_going' || own === 'declined')) return false;
     if (status !== 'all' && status !== 'open' && own !== status) return false;
     if (!query) return true;
-    return [event.title, event.tagline, event.city, event.region, event.country, event.eventType]
+    return [
+      event.title,
+      event.tagline,
+      event.city,
+      event.region,
+      event.country,
+      event.eventType,
+      event.place,
+    ]
       .join(' ')
       .toLowerCase()
       .includes(query);

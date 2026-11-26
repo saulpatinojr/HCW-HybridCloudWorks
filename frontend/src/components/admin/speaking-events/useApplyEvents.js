@@ -44,7 +44,9 @@ export const EMPTY_LIST = Object.freeze({
   topics: Object.freeze({ count: 0, hasBio: false, from: Object.freeze([]) }),
 });
 
-const describeRead = (err) => `The events could not be loaded: ${err?.message}`;
+// Names the directory: the owner's own events come from the stored events and
+// still show under this message.
+const describeRead = (err) => `The Community Days events could not be loaded: ${err?.message}`;
 
 /** One loader per hook: `forceNext()` makes the next read a Refresh. */
 function makeLoader() {
