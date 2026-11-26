@@ -108,10 +108,12 @@ token and the two audit and analytics tokens, so each can be revoked alone.
      | Cache Purge | Purge | The Cache tab |
      | Transform Rules | Edit | Rules: header and URL rewrites |
      | Single Redirect | Edit | Rules: redirects |
-     | Cache Rules | Edit | Rules: cache rules |
      | Config Rules | Edit | Rules: configuration rules |
      | Zone WAF | Edit | Rules: custom security rules |
-     | Analytics | Read | The zone's traffic figures |
+
+     Nothing else is needed: the page does not read traffic figures, and
+     cache rules are not a phase it changes, so leave **Analytics** and
+     **Cache Rules** off the token.
 
      Leave out any you do not want the site to be able to change: the page
      shows which parts the token cannot read, and the rest keeps working.
