@@ -229,6 +229,14 @@ describe('ArchiveCard', () => {
     ).toBe(
       'the newest dry-run report met a record too large to search whole for names that look like a secret in content (1 record), designs (2 records) and frameworks (3 records), so it cannot vouch for those containers'
     );
+    // An entry with no container name is not counted: one named container is "that container".
+    expect(
+      blockerSentence(['report-cut-short'], {
+        cutShort: [{ container: 'blogs', records: 1 }, { records: 4 }, null],
+      })
+    ).toBe(
+      'the newest dry-run report met a record too large to search whole for names that look like a secret in blogs (1 record), so it cannot vouch for that container'
+    );
     const cutShortReport = {
       ...REPORT,
       report: {

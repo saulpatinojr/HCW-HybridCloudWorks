@@ -790,7 +790,7 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
     let deep = { token: 'made-up' };
     for (let i = 0; i < 200; i += 1) deep = { next: deep };
     expect(sensitiveNamesIn(deep)).toMatchObject({ cutShort: true });
-    const wide = { items: Array.from({ length: 800000 }, () => ({})) };
+    const wide = { items: Array.from({ length: 1100000 }, () => ({})) };
     expect(sensitiveNamesIn(wide).cutShort).toBe(true);
   });
 

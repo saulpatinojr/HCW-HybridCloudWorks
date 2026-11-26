@@ -50,18 +50,22 @@ export const REASONS = Object.freeze({
   orphan: 'its content item is not in the backup',
 });
 
+/** The entries of the status route's cut-short list that name a container. */
+const namedCutShort = (cutShort) =>
+  (Array.isArray(cutShort) ? cutShort : []).filter(
+    (entry) => entry && typeof entry.container === 'string'
+  );
+
 /**
  * Which containers had a record too large to search whole, and how many:
  * `in content (1 record) and designs (2 records)`. Container names and
  * counts only; the server never sends a record id. Empty for none.
  */
 export function cutShortWords(cutShort = []) {
-  const parts = (Array.isArray(cutShort) ? cutShort : [])
-    .filter((entry) => entry && typeof entry.container === 'string')
-    .map(
-      (entry) =>
-        `${entry.container} (${number(entry.records)} record${entry.records === 1 ? '' : 's'})`
-    );
+  const parts = namedCutShort(cutShort).map(
+    (entry) =>
+      `${entry.container} (${number(entry.records)} record${entry.records === 1 ? '' : 's'})`
+  );
   if (!parts.length) return '';
   const list =
     parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
@@ -73,7 +77,7 @@ function blockerWords(code, details) {
   if (code !== 'report-cut-short') return BLOCKERS[code] || code;
   const where = cutShortWords(details.cutShort);
   if (!where) return BLOCKERS[code];
-  const several = details.cutShort.length > 1;
+  const several = namedCutShort(details.cutShort).length > 1;
   return `the newest dry-run report met a record too large to search whole for names that look like a secret ${where}, so it cannot vouch for ${several ? 'those containers' : 'that container'}`;
 }
 

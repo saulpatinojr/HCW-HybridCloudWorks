@@ -32,9 +32,20 @@ describe('the limits come from the database, so a record it can hold is searched
     expect(SENSITIVE_MAX_DEPTH).toBe(COSMOS_MAX_NESTING);
     expect(COSMOS_MAX_NESTING).toBe(128);
     expect(COSMOS_MAX_ITEM_BYTES).toBe(2 * 1024 * 1024);
-    // The smallest object is `{}` and a comma: 3 bytes.
-    expect(SENSITIVE_MAX_NODES).toBe(699051);
-    expect(JSON.stringify(recordOfNodes(SENSITIVE_MAX_NODES)).length).toBeGreaterThan(COSMOS_MAX_ITEM_BYTES);
+    // Every object or list costs at least its two brackets; a comma is only
+    // needed between siblings, so a list's last child costs just `[]`.
+    expect(SENSITIVE_MAX_NODES).toBe(1048576);
+  });
+
+  it('searches whole the densest record found to fit in 2 MiB: lists of nested lists, 126 levels deep', () => {
+    const chain = () => {
+      let inner = [];
+      for (let level = 1; level < 126; level += 1) inner = [inner];
+      return inner;
+    };
+    const dense = { id: 'made-up', items: Array.from({ length: 8200 }, chain) };
+    expect(JSON.stringify(dense).length).toBeLessThan(COSMOS_MAX_ITEM_BYTES);
+    expect(sensitiveNamesIn(dense).cutShort).toBe(false);
   });
 
   it('searches a record exactly as deep as the limit whole, and still finds the name at the bottom', () => {
