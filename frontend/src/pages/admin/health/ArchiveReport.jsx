@@ -102,6 +102,24 @@ function TakenOutLine({ part, takenOut, hidden }) {
 }
 
 /**
+ * How many of a kept container's records were too large or too deep to
+ * search whole. Any such record stops the archive (`report-cut-short`), so
+ * the line is red. A container that is left out is not archived, so it says
+ * nothing. A count only; never which record.
+ */
+export function CutShortLine({ part }) {
+  const records = Number(part.sensitive?.cutShort) || 0;
+  if (records <= 0 || part.decision === 'leave-out') return null;
+  return (
+    <p className="text-xs text-destructive" data-testid="archive-cut-short">
+      {number(records)} record{records === 1 ? ' was' : 's were'} too large to search whole for
+      names that look like a secret, so the archive cannot start until a dry run searches{' '}
+      {records === 1 ? 'it' : 'them'} whole
+    </p>
+  );
+}
+
+/**
  * Everything the report says about names that look like a secret or contact
  * details, for one container: what would remain (in red when not explained),
  * what is only numbers or yes/no, what is kept on purpose, and what is taken

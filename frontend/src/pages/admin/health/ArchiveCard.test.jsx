@@ -214,6 +214,52 @@ describe('ArchiveCard', () => {
     );
   });
 
+  it('names the container a record too large to search whole was in, and how many, never which record', async () => {
+    expect(blockerSentence(['report-cut-short'], { cutShort: [] })).toBe(
+      blockerSentence(['report-cut-short'])
+    );
+    expect(
+      blockerSentence(['report-cut-short'], {
+        cutShort: [
+          { container: 'content', records: 1 },
+          { container: 'designs', records: 2 },
+          { container: 'frameworks', records: 3 },
+        ],
+      })
+    ).toBe(
+      'the newest dry-run report met a record too large to search whole for names that look like a secret in content (1 record), designs (2 records) and frameworks (3 records), so it cannot vouch for those containers'
+    );
+    const cutShortReport = {
+      ...REPORT,
+      report: {
+        ...REPORT.report,
+        containers: [
+          {
+            ...REPORT.report.containers[0],
+            sensitive: { ...REPORT.report.containers[0].sensitive, cutShort: 2 },
+          },
+          ...REPORT.report.containers.slice(1),
+        ],
+      },
+    };
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      switchOn: true,
+      blockers: ['report-cut-short'],
+      cutShort: [{ container: 'blogs', records: 2 }],
+      latest: cutShortReport,
+    });
+    renderAs('super_admin');
+    expect(await screen.findByTestId('archive-readiness')).toHaveTextContent(
+      'An archive of 2026 could not start today: the newest dry-run report met a record too large to search whole for names that look like a secret in blogs (2 records), so it cannot vouch for that container.'
+    );
+    // The every-container table says it on the container's own row, in red.
+    const line = screen.getByTestId('archive-cut-short');
+    expect(line.closest('tr')).toHaveTextContent('blogs');
+    expect(line).toHaveTextContent('2 records were too large to search whole');
+    expect(line).toHaveClass('text-destructive');
+  });
+
   it('shows the last archive: year, when, files, records, size and the Archive tier', async () => {
     getJSON.mockResolvedValue({
       ...STATUS,

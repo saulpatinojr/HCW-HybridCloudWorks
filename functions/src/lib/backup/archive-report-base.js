@@ -41,9 +41,41 @@ export const MIN_NAME_RECORDS = 2;
 export const MIN_NAME_SHARE = 0.01;
 /** The most names that look sensitive one container's part lists. */
 export const MAX_SENSITIVE_NAMES = 40;
-/** How deep, and how many values, one record is searched for a name that looks sensitive. */
-export const SENSITIVE_MAX_DEPTH = 8;
-export const SENSITIVE_MAX_NODES = 5000;
+/**
+ * How deep, and how many objects and lists, one record is searched for a
+ * name that looks sensitive. Past either, the record counts as "cut short"
+ * and the archive will not start (archive-report-gate.js).
+ *
+ * The first limits (8 levels, 5,000 objects) were set when the dry run was
+ * built, with no reason recorded, and the owner's newest dry run met a record
+ * past one of them. They are now set from the database's own limits, so a
+ * record the database can hold is searched whole
+ * (https://learn.microsoft.com/azure/cosmos-db/concepts-limits#per-item-limits):
+ *
+ *   - Depth: Cosmos DB refuses an item nested more than 128 levels. The
+ *     record itself is level 0 here and each object or list below it adds
+ *     one, so 128 is the deepest level an item can reach.
+ *   - Size: Cosmos DB refuses an item over 2 MB of JSON. The smallest object
+ *     or list is `{}` plus a comma, 3 bytes, so 2 MiB holds at most
+ *     2,097,152 / 3 = 699,051 of them.
+ *
+ * Still bounded, and not a security limit: only names are read, never a
+ * value. The bound is there so one huge record cannot hold a job. Measured
+ * in a development container (Node 22) at about 2.5 µs per object: the
+ * largest record these allow (699,051 objects) takes about 2 seconds, and
+ * 7,713 records of about 900 objects each about 7 seconds, against a job
+ * budget of 28 minutes per container (content-archive-http.js). A container
+ * of thousands of records at the size limit would run out of that budget;
+ * its part is then never written, the dry run does not finish, and the
+ * archive does not start, which is the safe way round.
+ *
+ * A record past these (a backup line the database could not have written)
+ * is still cut short, and still stops the archive.
+ */
+export const COSMOS_MAX_NESTING = 128;
+export const COSMOS_MAX_ITEM_BYTES = 2 * 1024 * 1024;
+export const SENSITIVE_MAX_DEPTH = COSMOS_MAX_NESTING;
+export const SENSITIVE_MAX_NODES = Math.ceil(COSMOS_MAX_ITEM_BYTES / 3);
 /** A dry run that has not finished after this long is called "did not finish", and a new one may start. */
 export const RUN_STALE_MINUTES = 30;
 /** Reports older than this are deleted when a new dry run starts. */

@@ -45,6 +45,7 @@ import {
   archiveStartDecision,
   archiveYearFor,
   createReportScheduler,
+  cutShortParts,
   findLatestFullBackup,
   readLatestReport,
   reportGate,
@@ -166,6 +167,9 @@ function statusBody({ env, at, year, state, progress, progressKnown, decision, b
     archived: state.archived,
     wouldStart: decision.start,
     blockers: decision.blockers,
+    // Behind `report-cut-short`: which kept containers had a record too
+    // large to search whole, and how many. Container names and counts only.
+    cutShort: decision.blockers.includes('report-cut-short') ? cutShortParts(latest?.report) : [],
     earliestBackup: decision.earliestBackup,
     latestBackup: backup ? { runId: backup.runId, containers: backup.containers.length } : null,
     classification: classificationSummary(),
