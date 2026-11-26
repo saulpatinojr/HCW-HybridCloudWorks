@@ -1175,7 +1175,7 @@ variable "functions_origin_lock_enabled" {
 # it ever blocks a legitimate caller. It needs Zone WAF Write on the token;
 # see the permission paragraph beside cloudflare_origin_secret.
 variable "api_rate_limit_enabled" {
-  description = "Rate-limit every /api/ path at Cloudflare (100 requests per 10 seconds per address). Needs Zone WAF Write on cloudflare_api_token"
+  description = "Rate-limit every /api/ path at Cloudflare (200 requests per 10 seconds per address, counted per Cloudflare data centre). Needs Zone WAF Write on cloudflare_api_token"
   type        = bool
   default     = true
 }

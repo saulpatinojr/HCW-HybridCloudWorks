@@ -532,12 +532,22 @@ resource "cloudflare_ruleset" "origin_secret" {
 # www are DNS-only. A path containing /api/ is the API in practice, and at
 # this limit a notes visitor would never meet it.
 #
-# THE LIMIT: 100 requests per 10 seconds from one address, about ten a second.
-# The busiest admin moment found is Health -> "Run all", 30 to 40 calls at
-# once; polling is every 5 seconds at fastest; and an agent key is held to
-# 120 a minute by the app itself (REQUESTS_PER_MINUTE in
-# functions/src/lib/agent-content/keys.js). A caller over the limit gets
-# Cloudflare's 429 for 10 seconds.
+# THE LIMIT: 200 requests per 10 seconds from one address, about twenty a
+# second. It sits above everything legitimate, so signed-in use and real keys
+# never meet it: an agent key is held to 120 a minute by the app itself
+# (REQUESTS_PER_MINUTE in functions/src/lib/agent-content/keys.js), so even a
+# key spending its whole minute in one burst stays under 200; the busiest
+# admin moment found is Health -> "Run all", 30 to 40 calls at once; polling
+# is every 5 seconds at fastest. A caller over the limit gets Cloudflare's 429
+# for 10 seconds. A made-up key costs two point reads, so the most one address
+# can make the app spend is about 40 small reads a second, instead of as many
+# as it can send.
+#
+# COUNTED PER DATA CENTRE, NOT GLOBALLY. cf.colo.id is mandatory in the
+# characteristics, so the count is per address at each Cloudflare data
+# centre: an address whose traffic lands on two data centres gets a window at
+# each. That is the Free plan's design and it is enough here: the aim is to
+# bound a loop, not to give an exact global figure.
 #
 # ONE RULE PER ZONE. If a rate limiting rule was ever made by hand in the
 # dashboard (Security -> WAF -> Rate limiting rules), this create fails until
@@ -562,7 +572,7 @@ resource "cloudflare_ruleset" "api_rate_limit" {
   rules = [
     {
       ref         = "api_key_paths_per_ip"
-      description = "Block an address sending more than 100 requests in 10 seconds to the API"
+      description = "Block an address sending more than 200 requests in 10 seconds to the API (counted per Cloudflare data centre)"
       enabled     = true
       action      = "block"
       expression  = "(lower(http.request.uri.path) contains \"/api/\")"
@@ -572,7 +582,7 @@ resource "cloudflare_ruleset" "api_rate_limit" {
         # centre (https://developers.cloudflare.com/waf/rate-limiting-rules/parameters/).
         characteristics     = ["cf.colo.id", "ip.src"]
         period              = 10
-        requests_per_period = 100
+        requests_per_period = 200
         mitigation_timeout  = 10
       }
     }

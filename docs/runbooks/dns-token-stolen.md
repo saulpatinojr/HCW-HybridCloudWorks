@@ -56,6 +56,10 @@ Issue a replacement token strictly restricted to needed permissions:
      - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site)
    - **Zone Resources:**
      - `Include` -> `Specific zone` -> `hybridcloudworks.com`
+   - **Account Resources** (needed because two permissions above are
+     Account permissions; without it the token cannot manage the Web
+     Analytics site):
+     - `Include` -> the account that owns `hybridcloudworks.com`
    - **Client IP Address Filtering (Recommended):**
      - Restrict to known Terraform Cloud runner IP blocks or operator CIDRs if static.
    - **TTL:**
