@@ -111,3 +111,12 @@ describe('a record still cut short still stops the archive, and the report says 
     expect(gate([part('blogs'), part('newsletters')])).toEqual([]);
   });
 });
+
+describe('size alone does not cut a record short', () => {
+  it('searches whole a record made large by one long value, since only names are read', () => {
+    const doc = { id: 'x', body: 'x'.repeat(2_100_000), password: 'not read' };
+    const { names, cutShort } = sensitiveNamesIn(doc);
+    expect(cutShort).toBe(false);
+    expect([...names]).toContain('password');
+  });
+});

@@ -75,8 +75,12 @@ export const MAX_SENSITIVE_NAMES = 40;
  * part is then never written, the dry run does not finish, and the archive
  * does not start, which is the safe way round.
  *
- * A record past these (a backup line the database could not have written)
- * is still cut short, and still stops the archive.
+ * A record deeper than 128 levels, or with more than 1,048,576 objects and
+ * lists (a backup line the database could not have written), is still cut
+ * short, and still stops the archive. Size alone does not cut a record
+ * short: only names are read, so a long value (a 2 MB body, say) adds
+ * nothing to search and the record is still searched whole. The limits
+ * count levels and objects, not bytes.
  */
 export const COSMOS_MAX_NESTING = 128;
 export const COSMOS_MAX_ITEM_BYTES = 2 * 1024 * 1024;
