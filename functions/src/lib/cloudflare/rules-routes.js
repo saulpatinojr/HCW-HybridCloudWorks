@@ -31,6 +31,16 @@
  * checks); and, from an agent key, never a list that leaves out a rule the
  * phase has now (an agent key adds and changes rules; only the owner
  * removes one, 403 CLOUDFLARE_OWNER_ONLY).
+ *
+ * THE GUARDED PHASES. In the custom security rules and the rate limiting
+ * rules (GUARDED_PHASES), a rule protects the site, so an agent key is held
+ * to two more limits, each 403 CLOUDFLARE_OWNER_ONLY before anything is
+ * written: it may not switch a rule off (an existing rule sent back with
+ * `enabled` anything but true, or a new rule that starts that way), because
+ * a rule switched off is a rule removed in effect; and it may not set a
+ * custom response (`action_parameters.response`), the body Cloudflare sends
+ * a blocked caller, which only a paid plan offers and is closed ahead of
+ * time.
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
 import { isAgentUser } from '../agent-content/agent-keys.js';
@@ -44,6 +54,8 @@ export { REDACTED_VALUE };
 export const SECRET_NAME = /secret|token|auth|key/i;
 
 const FIREWALL_CUSTOM = 'http_request_firewall_custom';
+/** The phases whose rules protect the site: an agent key may not switch one off or give it a custom response. */
+export const GUARDED_PHASES = Object.freeze([FIREWALL_CUSTOM, 'http_ratelimit']);
 /** Cloudflare's own stamps on a rule it returned; dropped so a rule sent back unchanged is not refused. */
 const STAMPS = ['version', 'last_updated'];
 
@@ -148,6 +160,9 @@ async function refuseStale(client, phase, expectedVersion) {
   return current;
 }
 
+/** A 403 refusal: what an agent key may not do, which the owner does on the Cloudflare page. */
+const ownerOnly = (message) => new Refusal(message, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY' });
+
 export const AGENT_REMOVAL_MESSAGE =
   'An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page.';
 
@@ -164,9 +179,39 @@ const idsOf = (rules) => (Array.isArray(rules) ? rules : []).map((rule) => rule?
 function refuseAgentRemoval(user, current, rules) {
   if (!isAgentUser(user)) return;
   const kept = new Set(idsOf(rules));
-  if (idsOf(current?.rules).some((id) => !kept.has(id))) {
-    throw new Refusal(AGENT_REMOVAL_MESSAGE, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY' });
-  }
+  if (idsOf(current?.rules).some((id) => !kept.has(id))) throw ownerOnly(AGENT_REMOVAL_MESSAGE);
+}
+
+export const AGENT_DISABLE_MESSAGE =
+  'An agent key may not switch a security or rate limiting rule off, or add one that starts switched off: a rule switched off is removed in effect. Switching a rule off is done by the owner on the Cloudflare page.';
+export const AGENT_RESPONSE_MESSAGE =
+  'An agent key may not set a custom response (action_parameters.response) on a security or rate limiting rule. That is done by the owner on the Cloudflare page.';
+
+/** Whether a rule is switched on: Cloudflare reads a rule with no `enabled` as on. */
+const isOn = (rule) => rule?.enabled === undefined || rule?.enabled === true;
+
+/** Refuses (403) an agent key's custom response in a guarded phase. Needs no read, so it runs before any Cloudflare call. */
+function refuseAgentResponse(user, phase, rules) {
+  if (!isAgentUser(user) || !GUARDED_PHASES.includes(phase)) return;
+  const responds = rules.some((rule) => rule.action_parameters && typeof rule.action_parameters === 'object' && Object.hasOwn(rule.action_parameters, 'response'));
+  if (responds) throw ownerOnly(AGENT_RESPONSE_MESSAGE);
+}
+
+/**
+ * Refuses (403) an agent key's list, in a guarded phase, that switches a
+ * rule off: a current rule that is on and comes back not on, or a new rule
+ * (an id the phase does not hold) that is not on. A rule already off may
+ * stay off.
+ */
+function refuseAgentDisable(user, phase, current, rules) {
+  if (!isAgentUser(user) || !GUARDED_PHASES.includes(phase)) return;
+  const before = new Map((Array.isArray(current?.rules) ? current.rules : []).filter((rule) => typeof rule?.id === 'string' && rule.id).map((rule) => [rule.id, rule]));
+  const switchedOff = rules.some((rule) => {
+    if (isOn(rule)) return false;
+    const was = typeof rule.id === 'string' ? before.get(rule.id) : undefined;
+    return !was || isOn(was);
+  });
+  if (switchedOff) throw ownerOnly(AGENT_DISABLE_MESSAGE);
 }
 
 /** A phase's new rules, checked for shape. Cloudflare checks what each rule says. */
@@ -193,9 +238,11 @@ export async function putPhase(call) {
   if (reason) throw protectedRefusal('That rule phase may not be changed from here', reason);
   const body = await bodyOf(request);
   const sent = rulesBody(phase, body);
+  refuseAgentResponse(user, phase, sent.rules);
   await requireOurZone(client);
   const current = await refuseStale(client, phase, body.expectedVersion);
   refuseAgentRemoval(user, current, sent.rules);
+  refuseAgentDisable(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
   const audited = await recordChange(call, { family: 'rules', phase, count }, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`);

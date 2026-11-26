@@ -133,7 +133,7 @@ export const CAPABILITIES = Object.freeze([
     id: 'admin.cloudflare.rules',
     label: 'Cloudflare: edit rules',
     description:
-      "Add rules and change existing ones in six kinds of phase: redirects, URL rewrites, response headers, configuration rules, custom security rules (never one that skips the other checks) and rate limiting (the API's rate limit lives there). It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. Every other phase is read-only. These rules can still redirect or change requests to the API, or loosen its rate limit, so turn this on only for a task that needs it.",
+      "Add rules and change existing ones in six kinds of phase: redirects, URL rewrites, response headers, configuration rules, custom security rules (never one that skips the other checks) and rate limiting (the API's rate limit lives there). It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. In the custom security and rate limiting rules it may not switch a rule off, add one switched off, or set a custom response. Every other phase is read-only. These rules can still redirect or change requests to the API, or loosen or tighten its rate limit, so turn this on only for a task that needs it.",
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));

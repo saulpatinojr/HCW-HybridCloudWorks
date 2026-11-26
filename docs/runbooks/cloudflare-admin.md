@@ -226,9 +226,13 @@ which is one of the six phases the page can change.
 
 The site's token needs **Zone WAF Edit** for this phase, which Part 2 already
 lists ([Cloudflare's page on rate limiting rules](https://developers.cloudflare.com/terraform/additional-configurations/rate-limiting-rules/)
-names Zone WAF Write as the permission). Cloudflare's Free plan includes one
-rate limiting rule, so if the phase already holds one, change that rule
-(keep its `id`) rather than adding a second.
+names Zone WAF Write as the permission). The rule cannot be made until that
+token has been made and pasted (Part 2). Cloudflare's Free plan includes
+exactly one rate limiting rule, with a 10-second period and a 10-second
+block
+([Cloudflare's availability table](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability)),
+so if the phase already holds one, change that rule (keep its `id`) rather
+than adding a second.
 
 **The easy way: ask Claude Network Guy.** Turn on **Cloudflare: edit rules**
 on its tab of the
@@ -245,8 +249,11 @@ off again afterwards if nothing else needs it.
    signed in as yourself.
 2. In **What can be changed here**, press **Open** beside `http_ratelimit`.
    You should see the phase with no rules yet (or the one rule it holds).
-   If the page says the token cannot read rules, add Zone WAF Edit to the
-   token (Part 2, step 2) and try again.
+   If instead you see "Cloudflare refused the token for this (HTTP 403). It
+   may be wrong, expired, or missing the permission for this kind of change;
+   check it on Integrations → Keys." (sometimes with a Cloudflare error code
+   in brackets after the 403), the token is most likely missing Zone WAF
+   Edit: add it to the token (Part 2, step 2) and open the phase again.
 3. Press **Edit these rules**, and replace what is in the box with this
    (keep the `id` of any rule that is already there):
 
@@ -274,15 +281,26 @@ off again afterwards if nothing else needs it.
    from step 3.
 
 Changing the limit later works the same way: edit the numbers and keep the
-rule's `id`. Network Guy may change the rule but never remove it. If you
-remove it yourself, the page asks you to type `http_ratelimit` first,
-because without it one address can send the API as many requests as it
-likes.
+rule's `id`. Network Guy may change the rule, but it may not remove it,
+switch it off (`"enabled": false`) or give it a custom response; those are
+refused before anything changes.
+
+**Removing the rule is done in the Cloudflare dashboard, not here.** On the
+Free plan the phase holds exactly one rule, and the page refuses an empty
+list (it would delete every rule in the phase), so neither you nor Network
+Guy can remove it from the page. To remove it, delete it in the Cloudflare
+dashboard on the security rules page: Cloudflare's
+[guide to rate limiting rules in the dashboard](https://developers.cloudflare.com/waf/rate-limiting-rules/create-zone-dashboard/)
+calls it **Security rules** (in the older dashboard, **Security** → **WAF**
+→ **Rate limiting rules**). Without the rule, one address can send the API
+as many requests as it likes. On a paid plan with several rate limiting
+rules, removing one of them from the page asks you to type `http_ratelimit`
+first.
 
 ## What is refused, and why
 
 The server refuses each of these before it changes anything in Cloudflare,
-whoever asks. Three rows apply to an agent key only, and say so.
+whoever asks. Four rows apply to an agent key only, and say so.
 
 | Refused | Why | Change it in |
 | --- | --- | --- |
@@ -297,7 +315,9 @@ whoever asks. Three rows apply to an agent key only, and say so.
 | Every other rule phase except six (origin rules, cache rules, cloud connector, snippets, managed rules, DDoS and any phase Cloudflare adds later) | "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard." Only redirects, URL rewrites, response headers, configuration rules, custom security rules and rate limiting rules can be replaced from the page (the API rate limit moved here from Terraform on 2026-11-26, Part 4) | The Cloudflare dashboard |
 | A custom security rule whose action is `skip` | It would let matching requests past the other security checks | The Cloudflare dashboard |
 | An empty list of rules | It would delete every rule in the phase, and deleting is done in the dashboard | The Cloudflare dashboard |
-| Agent key only: a list of rules that leaves out a rule the phase has now | An agent key may add rules and change existing ones, but every current rule's id must still be in its list. "An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself (it asks you to type the phase's name before a custom security rule or a rate limiting rule is removed) |
+| Agent key only: a list of rules that leaves out a rule the phase has now | An agent key may add rules and change existing ones, but every current rule's id must still be in its list. "An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself (it asks you to type the phase's name before a custom security rule or a rate limiting rule is removed; the last rule of a phase cannot be removed here, because an empty list is refused, so on the Free plan the one rate limiting rule is deleted in the Cloudflare dashboard, Part 4) |
+| Agent key only: switching a custom security or rate limiting rule off, or adding one that starts switched off | A rule switched off is a rule removed in effect. "An agent key may not switch a security or rate limiting rule off, or add one that starts switched off: a rule switched off is removed in effect. Switching a rule off is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself |
+| Agent key only: a custom response (`action_parameters.response`) on a custom security or rate limiting rule | It sets what a blocked caller is shown; only a paid plan offers it, so it is closed ahead of time | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself |
 | A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
 | A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
 | Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
@@ -327,6 +347,7 @@ the issue once you have checked the change was yours or Network Guy's.
 | --- | --- | --- |
 | **Not configured** on the Cloudflare page | The token or the zone id is missing; the page says which | The token: paste it on Integrations → Keys (Part 2, step 4). The zone id (`CF_ZONE_ID`): nothing to paste, Terraform sets it on the next `hcw-azure` apply (the `CF_ZONE_ID` note in Part 2) |
 | "An agent key may add or change rules but not remove one" | Network Guy sent a list of rules that left one out | Remove the rule yourself on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules), if it should go |
+| "An agent key may not switch a security or rate limiting rule off" or "An agent key may not set a custom response" | Network Guy tried to switch a custom security or rate limiting rule off, add one switched off, or set a custom response | Do it yourself on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules), if it should happen |
 | "Check this Cloudflare change" on Telegram | A change landed but its audit row failed, or a DNS edit came back with a protected name | See the two warnings under Part 3 |
 | A part of the page says the token cannot read it | The token lacks that permission | Edit the token in Cloudflare and add it (Part 2, step 2) |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
@@ -336,4 +357,4 @@ the issue once you have checked the change was yours or Network Guy's.
 | "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
 | The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
 | 403 "This key may not call that route" for Network Guy | The switch for that kind of change is off | Turn it on (Part 3, step 4) |
-| 429 "Too many requests" | The key's limit of 120 calls a minute | Wait a minute |
+| 429 "Too many requests" | Either the agent key's limit of 120 calls a minute, or Cloudflare's own rate limit on the API (Part 4): more than 200 requests in 10 seconds from one address to `/api/`, lifted after 10 seconds. The Cloudflare page calls the API too, so the limit can catch your own page | Wait a minute (the Cloudflare limit lifts after 10 seconds). If your own page keeps being limited, change the rule in the Cloudflare dashboard, because the page that would change it is the one being limited |

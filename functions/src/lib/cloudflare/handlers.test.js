@@ -23,7 +23,7 @@ import {
 import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES } from './client.js';
 import { EDITABLE_PHASES, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE } from './record.js';
-import { AGENT_REMOVAL_MESSAGE, STALE_MESSAGE } from './rules-routes.js';
+import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
@@ -1007,6 +1007,62 @@ describe('rules', () => {
       expect(res.body).toMatchObject({ code: 'CLOUDFLARE_WRONG_ZONE', error: WRONG_ZONE_MESSAGE });
       expect(WRITES(api)).toEqual([]);
       expect(store.upsertDoc).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('in a guarded phase an agent key may not switch a rule off or set a custom response', () => {
+    const ON = { id: 'rule-on', expression: 'true', action: 'block', enabled: true };
+    const OFF = { id: 'rule-off', expression: 'false', action: 'block', enabled: false };
+    const withRules = (phase, rules) => entrypoint(phase, { id: 'r6', phase, version: '3', rules });
+    const RESPONSE = { response: { status_code: 429, content: 'Slow down', content_type: 'text/plain' } };
+
+    it('guards the custom security rules and the rate limiting rules', () => {
+      expect(GUARDED_PHASES).toEqual(['http_request_firewall_custom', 'http_ratelimit']);
+    });
+
+    it.each(GUARDED_PHASES.flatMap((phase) => [
+      [phase, 'switches a rule that is on to enabled: false', [{ ...ON, enabled: false }, OFF]],
+      [phase, 'switches a rule that is on to a value that is not true', [{ ...ON, enabled: 'false' }, OFF]],
+      [phase, 'adds a new rule that starts switched off', [ON, OFF, { expression: 'true', action: 'block', enabled: false }]],
+      [phase, 'adds a rule under an id the phase does not hold, switched off', [ON, OFF, { id: 'rule-new', expression: 'true', action: 'block', enabled: false }]],
+    ]))('refuses in %s an agent key’s list that %s, with 403 and nothing written', async (phase, label, rules) => {
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON, OFF]), ...put(phase) } });
+      const res = parse(await handlers.putPhase(replace(phase, { rules }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_DISABLE_MESSAGE });
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+      expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+    });
+
+    it.each(GUARDED_PHASES)('lets an agent key keep a rule that is already off as it is, and add rules that are on, in %s', async (phase) => {
+      const { handlers, api } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON, OFF]), ...put(phase) } });
+      const rules = [ON, OFF, { expression: 'true', action: 'block' }, { expression: 'true', action: 'block', enabled: true }];
+      expect(parse(await handlers.putPhase(replace(phase, { rules }), {})).status).toBe(200);
+      expect(WRITES(api)).toHaveLength(1);
+    });
+
+    it.each(GUARDED_PHASES)('refuses an agent key’s custom response in %s before calling Cloudflare', async (phase) => {
+      const { handlers, api, store } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON]), ...put(phase) } });
+      const rules = [{ ...ON, action_parameters: RESPONSE }];
+      const res = parse(await handlers.putPhase(replace(phase, { rules }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_RESPONSE_MESSAGE });
+      expect(api.fetch).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    });
+
+    it.each(GUARDED_PHASES)('lets a super_admin person switch a rule off and set a custom response in %s', async (phase) => {
+      const { handlers, api } = setup({ routes: { ...withRules(phase, [ON]), ...put(phase) } });
+      const rules = [{ ...ON, enabled: false, action_parameters: RESPONSE }];
+      expect(parse(await handlers.putPhase(replace(phase, { rules }), {})).status).toBe(200);
+      expect(api.calls[2].body).toEqual({ rules });
+    });
+
+    it('leaves the other editable phases as they were: an agent key may switch a redirect off', async () => {
+      const redirect = { id: 'rule-on', expression: 'true', action: 'redirect', enabled: true };
+      const { handlers } = setup({ user: NETWORK_GUY, routes: { ...withRules(REDIRECT, [redirect]), ...put(REDIRECT) } });
+      expect(parse(await handlers.putPhase(replace(REDIRECT, { rules: [{ ...redirect, enabled: false }] }), {})).status).toBe(200);
     });
   });
 

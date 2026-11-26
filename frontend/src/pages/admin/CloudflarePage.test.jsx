@@ -511,19 +511,23 @@ describe('the Rules tab', () => {
     await waitFor(() => expect(api.replaceCloudflarePhase).toHaveBeenCalledTimes(1));
   });
 
-  it('asks for the phase name typed before removing the rate limit rule', async () => {
-    api.readCloudflarePhase.mockResolvedValue({
-      ruleset: {
-        name: 'Rate limits',
-        rules: [
-          {
-            id: 'limit-1',
-            expression: '(http.request.uri.path contains "/api/")',
-            action: 'block',
-          },
-          { id: 'limit-2', expression: 'false', action: 'log' },
-        ],
+  it('asks for the phase name typed before removing a rate limiting rule', async () => {
+    // Two rules, as a paid plan allows; the Free plan has one, and an empty list is refused.
+    const limit = (id, path, requests) => ({
+      id,
+      expression: `(lower(http.request.uri.path) contains "${path}")`,
+      action: 'block',
+      enabled: true,
+      ratelimit: {
+        characteristics: ['cf.colo.id', 'ip.src'],
+        period: 10,
+        requests_per_period: requests,
+        mitigation_timeout: 10,
       },
+    });
+    const kept = limit('limit-2', '/api/public/', 50);
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { name: 'Rate limits', rules: [limit('limit-1', '/api/', 200), kept] },
       version: '2',
     });
     api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
@@ -536,7 +540,7 @@ describe('the Rules tab', () => {
     const panel = await screen.findByTestId('phase-http_ratelimit');
     fireEvent.click(await within(panel).findByRole('button', { name: /Edit these rules/ }));
     fireEvent.change(within(panel).getByLabelText('Rules for http_ratelimit'), {
-      target: { value: '[{"id":"limit-2","expression":"false","action":"log"}]' },
+      target: { value: JSON.stringify([kept]) },
     });
     fireEvent.click(within(panel).getByRole('button', { name: 'Replace the rules' }));
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
@@ -552,7 +556,7 @@ describe('the Rules tab', () => {
     fireEvent.click(go);
     await waitFor(() =>
       expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_ratelimit', {
-        rules: [{ id: 'limit-2', expression: 'false', action: 'log' }],
+        rules: [kept],
         expectedVersion: '2',
       })
     );

@@ -32,6 +32,8 @@ const infra = terraformSource(join(ROOT, 'infra'));
 const frontend = readFileSync(join(ROOT, 'infra/frontend.tf'), 'utf8');
 const labDns = readFileSync(join(ROOT, 'infra-lab/dns.tf'), 'utf8');
 const labVariables = readFileSync(join(ROOT, 'infra-lab/variables.tf'), 'utf8');
+/** Both Terraform configurations that write to the zone: the site's (infra/) and the lab's (infra-lab/). */
+const zoneTerraform = [infra, terraformSource(join(ROOT, 'infra-lab'))].join('\n');
 
 /** A variable's string default, read from its block. */
 function defaultOf(source, name) {
@@ -91,8 +93,18 @@ describe('the protected DNS names', () => {
 });
 
 describe('the protected rule phases', () => {
-  // Every phase infra/ writes rules into, as Terraform names them.
-  const terraformPhases = [...new Set([...infra.matchAll(/^\s*phase\s*=\s*"([a-z_]+)"/gm)].map((match) => match[1]))].sort();
+  // Every phase infra/ and infra-lab/ write rules into, as Terraform names them.
+  const literalPhases = [...zoneTerraform.matchAll(/^\s*phase\s*=\s*"([a-z_]+)"/gm)].map((match) => match[1]);
+  const terraformPhases = [...new Set(literalPhases)].sort();
+
+  it('reads every ruleset’s phase as a plain name, so none can slip past the list', () => {
+    const rulesets = [...zoneTerraform.matchAll(/^resource "cloudflare_ruleset" "[^"]+"/gm)];
+    const phaseLines = [...zoneTerraform.matchAll(/^\s*phase\s*=/gm)];
+    expect(rulesets.length).toBeGreaterThanOrEqual(1);
+    // A phase written as a variable or an expression would be a ruleset with no literal phase line.
+    expect(literalPhases.length, 'a cloudflare_ruleset whose phase is not a plain "name"').toBe(rulesets.length);
+    expect(phaseLines.length, 'a phase = line whose value is not a plain "name"').toBe(literalPhases.length);
+  });
 
   it('protects exactly the phases Terraform writes rules into, each with its own reason', () => {
     expect(terraformPhases).toContain('http_request_late_transform');
