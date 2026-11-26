@@ -39,3 +39,21 @@ describe('the content reader', () => {
     expect(isLiveContent(null)).toBe(false);
   });
 });
+
+describe('the import picker', () => {
+  it('lists only what the import would accept, whatever shape a row has', async () => {
+    const { listImportSources } = await import('./evidence.js');
+    const rows = [
+      { id: 'live-1', title: 'Example live piece', Live: true, contentStatus: 'published' },
+      // Odd data: a status stored as a list reads as "drafting" to the public rule.
+      { id: 'odd-1', title: 'Example odd row', Live: true, contentStatus: ['drafting'] },
+    ];
+    const ctx = {
+      store: { queryDocs: async () => rows },
+      listKind: async () => [],
+    };
+    const res = await listImportSources(ctx, { params: { sourceModule: 'content' } });
+    const body = typeof res.body === 'string' ? JSON.parse(res.body) : res.jsonBody || res.body;
+    expect(body.items.map((item) => item.id)).toEqual(['live-1']);
+  });
+});

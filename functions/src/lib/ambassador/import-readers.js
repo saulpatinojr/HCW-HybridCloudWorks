@@ -42,7 +42,9 @@ const NO_METRICS = () => ({ reach: null, attendees: null, views: null, credits: 
 
 /** The live-content predicate public-reads.js uses, so an import offers only what visitors can see. */
 const LIVE_CONTENT_QUERY =
-  'SELECT TOP 500 c.id, c.title, c.Title, c.publishedAt, c.publishedDate, c.cp_sortDate, c.publishedUrl, c.publicUrl, c.slugPageUrl, c.curatedSubpagePath, c.cloudProvider, c.type FROM c ' +
+  'SELECT TOP 500 c.id, c.title, c.Title, c.publishedAt, c.publishedDate, c.cp_sortDate, c.publishedUrl, c.publicUrl, c.slugPageUrl, c.curatedSubpagePath, c.cloudProvider, c.type, ' +
+  // What isPublicDocument reads, so the picker can hold each row to it (evidence.js listImportSources).
+  'c.Live, c.Status, c.contentStatus, c.softDeletedAt, c.softDeleteExpiresAt FROM c ' +
   // What visitors can open is what can be recorded (#1897): the public
   // site's own clauses, not a copy of them.
   `WHERE ${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED} AND ${SQL_NOT_NEVER_PUBLIC}`;
