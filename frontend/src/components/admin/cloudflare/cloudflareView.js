@@ -134,6 +134,11 @@ export function changeWarning(answer) {
       'The record came back with a protected name: someone may have renamed it while you were editing. Check it in the Cloudflare dashboard.'
     );
   }
+  if (answer?.concurrentWrite === true) {
+    notes.push(
+      'Another change to this rule phase was saved just before yours, so yours may have replaced it. Reload the phase and check it.'
+    );
+  }
   if (answer?.audited === false) {
     notes.push(
       'The change was made in Cloudflare, but its audit row could not be written, so the audit log does not show it. A warning has been sent to the owner’s Telegram.'

@@ -23,7 +23,7 @@ import {
 import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES } from './client.js';
 import { EDITABLE_PHASES, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE } from './record.js';
-import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE } from './rules-routes.js';
+import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE, concurrentWriteNote } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
@@ -709,7 +709,11 @@ describe('rules', () => {
     },
   };
   const entrypoint = (phase, ruleset) => ({ [`GET ${PHASES}/${phase}/entrypoint`]: ok(ruleset) });
-  const put = (phase) => ({ [`PUT ${PHASES}/${phase}/entrypoint`]: (url, init) => ok({ id: 'r2', phase, version: '9', ...JSON.parse(init.body) }) });
+  // The saved rule set comes back with the next version unless a test names
+  // another (a version further on means a write landed in between).
+  const put = (phase, version) => ({
+    [`PUT ${PHASES}/${phase}/entrypoint`]: (url, init) => ok({ id: 'r2', phase, ...(version ? { version } : {}), ...JSON.parse(init.body) }),
+  });
   const replace = (phase, body) => request({ params: { phase }, body: { expectedVersion: '3', ...body } });
   const current = (phase, version = '3') => entrypoint(phase, { id: 'r2', phase, version, rules: [] });
 
@@ -886,13 +890,37 @@ describe('rules', () => {
 
   it('replaces an editable phase’s rules when the version still matches, and records it', async () => {
     const rules = [{ expression: 'true', action: 'block' }];
-    const { handlers, api, store } = setup({ routes: { ...current('http_request_firewall_custom'), ...put('http_request_firewall_custom') } });
+    const { handlers, api, store } = setup({ routes: { ...current('http_request_firewall_custom'), ...put('http_request_firewall_custom', '4') } });
     const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules, description: 'Custom' }), {}));
     expect(res.status).toBe(200);
     expect(methods(api)).toEqual(['GET ', 'GET /rulesets/phases/http_request_firewall_custom/entrypoint', 'PUT /rulesets/phases/http_request_firewall_custom/entrypoint']);
     expect(api.calls[2].body).toEqual({ rules, description: 'Custom' });
-    expect(res.body.ruleset.version).toBe('9');
+    expect(res.body.ruleset.version).toBe('4');
+    expect(res.body.concurrentWrite).toBe(false);
     expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: 'http_request_firewall_custom', count: 1 });
+  });
+
+  it.each([
+    ['a person', undefined],
+    ['an agent key', 'agent'],
+  ])('warns when another write landed between the check and the write, for %s', async (_who, kind) => {
+    const rules = [{ id: 'c1', expression: 'true', action: 'block', enabled: true }];
+    const routes = { ...entrypoint('http_request_firewall_custom', { id: 'r2', phase: 'http_request_firewall_custom', version: '3', rules: [{ id: 'c1', expression: 'false', action: 'block', enabled: true }] }), ...put('http_request_firewall_custom', '5') };
+    const { handlers, store, notifier } = setup({ ...(kind ? { user: NETWORK_GUY } : {}), routes });
+    const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules }), {}));
+    expect(res.status).toBe(200);
+    expect(res.body.concurrentWrite).toBe(true);
+    expect(store.upsertDoc.mock.calls[0][1].details).toMatchObject({ phase: 'http_request_firewall_custom', concurrentWrite: true });
+    expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    expect(notifier.notifyTelegram.mock.calls[0][0].message).toMatch(/may have replaced it/);
+  });
+
+  it('does not warn when the version moved on by one, or when Cloudflare gave no version', async () => {
+    expect(concurrentWriteNote({ version: '3' }, { version: '4' })).toBeNull();
+    expect(concurrentWriteNote({ version: '3' }, {})).toBeNull();
+    expect(concurrentWriteNote(null, { version: '1' })).toBeNull();
+    expect(concurrentWriteNote({ last_updated: '2026-11-26T00:00:00Z' }, { last_updated: '2026-11-27T00:00:00Z' })).toBeNull();
+    expect(concurrentWriteNote({ version: '3' }, { version: '5' })).toMatch(/may have replaced it/);
   });
 
   it('refuses with 409, writing nothing, when the phase changed since it was read', async () => {

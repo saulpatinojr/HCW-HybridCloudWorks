@@ -230,6 +230,22 @@ function rulesBody(phase, body) {
   return out;
 }
 
+/**
+ * Cloudflare numbers a rule set's versions one after another, and a write
+ * makes the next one. If the saved version is further on than the one just
+ * checked plus one, another write landed between the check and this write,
+ * and this write may have replaced it. Cloudflare's rule set update takes no
+ * condition, so this is caught afterwards and the owner is told. Answers the
+ * note for the owner, or null (also when either version is not a number).
+ */
+export function concurrentWriteNote(current, saved) {
+  const [was, now] = [versionOf(current), versionOf(saved)];
+  if (was === null || now === null || !/^\d+$/.test(was) || !/^\d+$/.test(now)) return null;
+  const [before, after] = [Number(was), Number(now)];
+  if (after <= before + 1) return null;
+  return 'Another change to this phase was saved between the check and this write, so this write may have replaced it. Check the phase on the Cloudflare page.';
+}
+
 /** PUT cms/cloudflare/rulesets/phases/{phase}. */
 export async function putPhase(call) {
   const { request, client, user } = call;
@@ -245,6 +261,8 @@ export async function putPhase(call) {
   refuseAgentDisable(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
-  const audited = await recordChange(call, { family: 'rules', phase, count }, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`);
-  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited });
+  const note = concurrentWriteNote(current, saved);
+  const details = { family: 'rules', phase, count, ...(note ? { concurrentWrite: true } : {}) };
+  const audited = await recordChange(call, details, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`, note ? [note] : []);
+  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited, concurrentWrite: Boolean(note) });
 }

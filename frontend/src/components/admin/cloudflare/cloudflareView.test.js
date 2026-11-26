@@ -367,4 +367,11 @@ describe('a saved change that needs checking', () => {
       /protected name.*audit row could not be written/
     );
   });
+
+  it('warns when a rule write landed just after another one (#1910)', () => {
+    expect(changeWarning({ audited: true, concurrentWrite: true })).toMatch(
+      /saved just before yours/
+    );
+    expect(changeWarning({ audited: true, concurrentWrite: false })).toBeNull();
+  });
 });

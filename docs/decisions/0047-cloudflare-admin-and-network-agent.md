@@ -108,7 +108,7 @@ decision widens that for one system, Cloudflare, in a narrow way.
      now a sixth editable phase and `http_request_late_transform` the only
      Terraform write; see the amendment below.)* An empty list is refused (it would delete
      every rule), a custom security rule may not `skip`, and a replacement
-     must carry the version it read, so it cannot overwrite a newer change.
+     must carry the version it read, and is refused if the phase changed since. Cloudflare's rule set update takes no condition, so a write that lands in the moment between that check and this write is caught afterwards: the saved version is then more than one past the checked one, and the owner is warned (#1910).
      An agent key may add rules and change existing ones but never remove
      one: its new list must keep the id of every rule the phase has now,
      or it is refused with 403 `CLOUDFLARE_OWNER_ONLY`. Removing a rule is
