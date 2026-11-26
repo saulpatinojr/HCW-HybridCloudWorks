@@ -35,37 +35,30 @@ export const PROTECTED_PHASES = Object.freeze([
   }),
 ]);
 
-/** The only rule phases that may be replaced from the page, each in a line. */
+/**
+ * The only rule phases that may be replaced from the page, each with its line.
+ * Kept as phase -> line (the server keeps a list of records); the mirror test
+ * holds the two equal, and EDITABLE_PHASES below gives the same records.
+ */
+const EDITABLE_PHASE_LINES = Object.freeze({
+  http_request_dynamic_redirect: 'Redirects: send a visitor from one address to another.',
+  http_request_transform:
+    'URL rewrites: change the path or query of a request before it reaches the site.',
+  http_response_headers_transform:
+    'Response headers: add, change or remove headers on what the site sends back.',
+  http_config_settings:
+    'Configuration rules: change some zone settings for the requests that match.',
+  http_request_firewall_custom:
+    'Custom security rules: block, challenge or log the requests that match (never skip).',
+  http_ratelimit:
+    'Rate limiting: limit how many requests one address can make, for example to the API.',
+});
+
+/** The editable phases as records ({ phase, description }), in the server's order. */
 export const EDITABLE_PHASES = Object.freeze(
-  [
-    {
-      phase: 'http_request_dynamic_redirect',
-      description: 'Redirects: send a visitor from one address to another.',
-    },
-    {
-      phase: 'http_request_transform',
-      description:
-        'URL rewrites: change the path or query of a request before it reaches the site.',
-    },
-    {
-      phase: 'http_response_headers_transform',
-      description: 'Response headers: add, change or remove headers on what the site sends back.',
-    },
-    {
-      phase: 'http_config_settings',
-      description: 'Configuration rules: change some zone settings for the requests that match.',
-    },
-    {
-      phase: 'http_request_firewall_custom',
-      description:
-        'Custom security rules: block, challenge or log the requests that match (never skip).',
-    },
-    {
-      phase: 'http_ratelimit',
-      description:
-        'Rate limiting: limit how many requests one address can make, for example to the API.',
-    },
-  ].map(Object.freeze)
+  Object.entries(EDITABLE_PHASE_LINES).map(([phase, description]) =>
+    Object.freeze({ phase, description })
+  )
 );
 
 /** Why every other phase is read-only. */
