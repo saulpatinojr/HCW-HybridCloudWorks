@@ -135,8 +135,9 @@ export const BRANDS = Object.freeze({
 /**
  * Services on the Integrations page that are not one vendor, so no single
  * badge is honest for them: the cloud price lists are three publishers at
- * once, the Hybrid Lab card is Coder on this site's own host behind a
- * Cloudflare check, and the migration add-on (ADR 0035) is this site's own
+ * once, the Hybrid Lab card is Coder on this site's own rented host (its
+ * Cloudflare check is on the Cloudflare card, which has the `cloudflare`
+ * badge, since #1905), and the migration add-on (ADR 0035) is this site's own
  * image on that host, and the agent keys are keys this site issues itself.
  * They get no badge, by decision rather than omission.
  */

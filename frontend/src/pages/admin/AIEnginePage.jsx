@@ -1,7 +1,7 @@
 /**
  * AI Engine — Admin Page  (/admin/ai-engine)
  *
- * Eight tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
+ * Six tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
  *   1. AI Services   — the Priority list (ADR 0034 §4), feature switches,
  *                      provider cards with status, enable toggle, the
  *                      catalogue's model list, Test
@@ -13,15 +13,13 @@
  *                      (components/admin/ai-engine/McpOAuth.jsx)
  *   4. Playground    — one provider or MCP tool, a prompt, the answer and cost
  *   5. Usage         — every recorded call, by provider and by feature
- *   6. Koda          — the content agent's API key, what it may do, and how
- *                      the Muse connector reaches the site (ADR 0037;
- *                      components/admin/ai-engine/KodaTab.jsx)
- *   6a. Claude       — one more agent key, on the same tab component over its
- *                      own record, switches and audit trail
- *                      (components/admin/ai-engine/agentKeys.js)
- *   7. Developer API — event organizers' keys for the Developer API: make,
+ *   6. Developer API — event organizers' keys for the Developer API: make,
  *                      re-scope, rotate, revoke, and what a key can reach
  *                      (ADR 0042; components/admin/ai-engine/DeveloperApiTab.jsx)
+ *
+ * The agent key tabs (Koda's, Claude Publisher's and the rest) moved to the
+ * Agents page in #1905. An old address such as `?tab=koda` is sent there,
+ * to the matching tab, before anything here loads (agentsPageRedirect).
  *
  * The model catalogue drawer (CatalogDrawer) opens from the first two tabs.
  * The "Site Services" tab that sat between them until ADR 0033 was a
@@ -33,7 +31,7 @@
  */
 
 import React, { useMemo, useState, lazy, Suspense } from 'react';
-import { useSearchParams } from 'react-router';
+import { Navigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Bot, Loader2, RefreshCw, AlertTriangle, X } from 'lucide-react';
@@ -43,7 +41,7 @@ import PageHeader from '@/components/admin/shared/PageHeader';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import TasksTab from '@/components/admin/ai-engine/TasksTab';
 import CatalogDrawer from '@/components/admin/ai-engine/CatalogDrawer';
-import { TABS, resolveTab } from '@/components/admin/ai-engine/tabs';
+import { TABS, agentsPageRedirect, resolveTab } from '@/components/admin/ai-engine/tabs';
 
 import ServicesTab, {
   describeLastTest,
@@ -54,8 +52,6 @@ import ServicesTab, {
 } from '@/components/admin/ai-engine/ServicesTab';
 import McpTab, { McpServerCard } from '@/components/admin/ai-engine/McpTab';
 import PlaygroundTab from '@/components/admin/ai-engine/PlaygroundTab';
-import KodaTab from '@/components/admin/ai-engine/KodaTab';
-import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
 import DeveloperApiTab from '@/components/admin/ai-engine/DeveloperApiTab';
 import { useAiEngineSeed, useModelCatalog } from './aiEngine/useAiEngineData';
 
@@ -78,7 +74,7 @@ const HELP = [
   'Where AI is used (on AI Services) switches a task off entirely; Tasks decides who serves it when it is on.',
   'MCP Servers are tool servers the Playground and the bots can call; keys stay in app settings named MCP_* and are never sent to the browser.',
   'Usage & Cost lists every recorded call. Since ADR 0033 every call through the router records one row, sourced to its task.',
-  'Koda is the content agent (run by Muse) that drafts and reviews posts through its own API key. The tab makes, rotates and revokes that key, switches what it may do, and lists every address it can call; the key works on the Drafts stage and the published reads only, never on publishing or settings.',
+  'The agent keys (Koda’s and the others) are on the Agents page: one tab per key, where it is made, rotated, revoked and switched.',
   'Developer API holds the keys event organizers use to manage their calls for speakers from their own code. Each organizer gets one key with only the scopes they need; a key is shown once when it is made or rotated, and revoking it cuts access on its next request. No key can publish anything: publishing stays in the admin.',
 ];
 
@@ -148,10 +144,23 @@ function SeedGate({ seed, onRetry, panel }) {
 }
 
 /**
- * The AI Engine page: seeds the configuration, reads the catalogue, and holds
- * the writes its tabs and the drawer share, so no tab keeps a list of its own.
+ * The AI Engine page. An address naming an agent key tab, which moved to the
+ * Agents page (#1905), is replaced there first, so the AI configuration is
+ * not read for a page the owner is not going to see.
  */
 export default function AIEnginePage() {
+  const [searchParams] = useSearchParams();
+  const moved = agentsPageRedirect(searchParams.get('tab'));
+  if (moved) return <Navigate to={moved} replace />;
+  return <AIEngineHub />;
+}
+
+/**
+ * The AI Engine's tabs: seeds the configuration, reads the catalogue, and
+ * holds the writes its tabs and the drawer share, so no tab keeps a list of
+ * its own.
+ */
+function AIEngineHub() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = resolveTab(searchParams.get('tab'));
   const { providers, servers, seed, retrySeed } = useAiEngineSeed();
@@ -202,15 +211,6 @@ export default function AIEnginePage() {
     ),
     mcp: () => <McpTab servers={servers} />,
     playground: () => <PlaygroundTab providers={providersWithModels} servers={servers} />,
-    koda: () => <KodaTab />,
-    // Every other agent key gets the same tab over its own record; `key`
-    // remounts it, so a key shown once on one tab never shows on another.
-    ...Object.fromEntries(
-      AGENT_KEY_TABS.filter((entry) => entry.id !== 'koda').map((entry) => [
-        entry.id,
-        () => <KodaTab key={entry.id} agent={entry} />,
-      ])
-    ),
     'developer-api': () => <DeveloperApiTab />,
     usage: () => (
       <Suspense

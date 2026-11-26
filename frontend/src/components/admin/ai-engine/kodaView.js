@@ -31,7 +31,20 @@ export function agentWords(agent = KODA_KEY_TAB) {
       : `Copy it now and paste it into ${field}. The site keeps only its hash, not the key: if it is lost, rotate it.`,
     description: agent.description || null,
     switchesOnWhenMade: agent.switchesOnWhenMade ?? true,
+    // Whether this key's job is drafts (Koda's and Claude Publisher's), so the
+    // tab talks about the Drafts page; a key for other work (Claude Network
+    // Guy's, the Cloudflare zone) gets sentences about its own switches.
+    writesDrafts: koda || startsWithDrafts(agent.switchesOnWhenMade),
   };
+}
+
+const startsWithDrafts = (made) =>
+  made === true || (Array.isArray(made) && made.some((id) => String(id).startsWith('drafts.')));
+
+/** "A", "A and B", "A, B and C": a list the way a sentence says it. */
+export function listWords(items) {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 /**
@@ -47,7 +60,7 @@ export function startingSwitches(words, catalogue = []) {
   const on = Array.isArray(made) ? made : [];
   if (!on.length) return 'All are off for a new key: turn on only what this key needs.';
   const labels = on.map((id) => catalogue.find((c) => c.id === id)?.label || id);
-  return `A new key starts with only ${labels.join(' and ')} on; everything else is off until you turn it on.`;
+  return `A new key starts with only ${listWords(labels)} on; everything else is off until you turn it on.`;
 }
 
 const KODA_WORDS = agentWords();

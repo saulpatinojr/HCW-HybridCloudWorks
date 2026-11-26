@@ -257,11 +257,11 @@ describe('KodaTab for another agent key', () => {
   it('reads its own key, says it creates drafts and what its switches start as, and never names the other key or its service', async () => {
     readKodaKey.mockResolvedValue(second({ ...NO_KEY, capabilities: MADE }));
     const { container } = renderSecond();
-    expect(await screen.findByText('Claude’s key')).toBeInTheDocument();
+    expect(await screen.findByText('Claude Publisher’s key')).toBeInTheDocument();
     expect(readKodaKey).toHaveBeenCalledWith('claude');
-    expect(screen.getByText(/Claude is a draft creator/)).toBeInTheDocument();
+    expect(screen.getByText(/Claude Publisher is a draft creator/)).toBeInTheDocument();
     expect(screen.getByText(/cannot publish, schedule or delete/)).toBeInTheDocument();
-    expect(screen.getByText('What Claude may do')).toBeInTheDocument();
+    expect(screen.getByText('What Claude Publisher may do')).toBeInTheDocument();
     expect(
       screen.getAllByText(
         /A new key starts with only Read drafts and Create and edit drafts on; everything else is off until you turn it on\./
@@ -309,12 +309,49 @@ describe('KodaTab for another agent key', () => {
     fireEvent.click(screen.getByRole('button', { name: /Rotate key/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /Rotate key/ }).at(-1));
     await waitFor(() => expect(generateKodaKey).toHaveBeenCalledWith('claude'));
-    const reveal = await screen.findByRole('region', { name: "Claude's new key" });
+    const reveal = await screen.findByRole('region', { name: "Claude Publisher's new key" });
     expect(reveal).toHaveTextContent(
-      'Copy it now and paste it into the secure field Claude asks for. The site keeps only its hash'
+      'Copy it now and paste it into the secure field Claude Publisher asks for. The site keeps only its hash'
     );
     fireEvent.click(screen.getAllByRole('button', { name: /Revoke key/ })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: /Revoke key/ }).at(-1));
     await waitFor(() => expect(revokeKodaKey).toHaveBeenCalledWith('claude'));
+  });
+});
+
+describe('KodaTab for a key whose job is not drafts', () => {
+  const NETWORK = agentKeyTab('claude-network');
+  const CF_CATALOGUE = [
+    ...CATALOGUE,
+    { id: 'admin.cloudflare', label: 'Read Cloudflare', description: 'Read the zone.' },
+    { id: 'admin.cloudflare.dns', label: 'Change DNS records', description: 'Add and edit.' },
+  ];
+
+  it('speaks about its own work, starts with only reading Cloudflare on, and never mentions the Drafts page', async () => {
+    readKodaKey.mockResolvedValue({
+      ...answer({ ...ACTIVE, capabilities: {} }),
+      agent: 'claude-network',
+      capabilities: CF_CATALOGUE,
+    });
+    const { container } = render(
+      <MemoryRouter>
+        <AdminRoleProvider value="super_admin">
+          <KodaTab agent={NETWORK} />
+        </AdminRoleProvider>
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('Claude Network Guy’s key')).toBeInTheDocument();
+    expect(readKodaKey).toHaveBeenCalledWith('claude-network');
+    expect(screen.getByRole('switch', { name: 'Read Cloudflare' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(screen.getByRole('switch', { name: 'Change DNS records' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    );
+    expect(screen.queryByRole('link', { name: 'Drafts page' })).toBeNull();
+    expect(container.textContent).not.toMatch(/Review board|Muse|Koda/);
+    expect(container.textContent).toMatch(/Deleting is not on this list/);
   });
 });

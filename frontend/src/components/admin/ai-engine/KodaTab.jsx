@@ -1,6 +1,7 @@
 /**
- * An agent key's tab on the AI Engine (ADR 0037): Koda's, and one more for
- * each key the site can hold (agentKeys.js). Every tab is this component,
+ * An agent key's tab on the Agents page (ADR 0037; it was on the AI Engine
+ * until #1905): Koda's, and one more for each key the site can hold
+ * (agentKeys.js). Every tab is this component,
  * over its own key's record, switches and audit trail; `agent` names the key
  * and Koda's is the default.
  *
@@ -9,8 +10,10 @@
  * that key is made, switched and revoked, and the only place its value is
  * ever shown: once, right after Generate, for the owner to paste into Muse's
  * secure connector page. After that the site holds a hash and shows a hint.
- * Another key's tab (Claude's) says the same with its own name and
- * description, and says which switches its key starts with.
+ * Another key's tab (Claude Publisher's, Claude Network Guy's) says the
+ * same with its own name and description, and says which switches its key
+ * starts with. A key whose job is not drafts (Claude Network Guy's) is not
+ * told about the Drafts page.
  *
  * Four cards:
  *   1. The key      state, Generate / Rotate, Revoke (super_admin), the
@@ -197,12 +200,21 @@ function KeyCard({ data, busy, onGenerate, onRevoke, secret, onDismissSecret, wo
           <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
           <span>
             Rotating or revoking cuts the old key on its very next request; there is no cache in
-            front of it. Every refused call is written to the audit log without the key. Drafts{' '}
-            {words.name} writes appear on the{' '}
-            <Link to="/admin/drafts" className="underline">
-              Drafts page
-            </Link>{' '}
-            with <code>{words.id} (agent)</code> as their author.
+            front of it. Every refused call is written to the audit log without the key.{' '}
+            {words.writesDrafts ? (
+              <>
+                Drafts {words.name} writes appear on the{' '}
+                <Link to="/admin/drafts" className="underline">
+                  Drafts page
+                </Link>{' '}
+                with <code>{words.id} (agent)</code> as their author.
+              </>
+            ) : (
+              <>
+                Every change {words.name} makes is written to the audit log with{' '}
+                <code>{words.id} (agent)</code> as the one who made it.
+              </>
+            )}
           </span>
         </p>
       </CardContent>
@@ -243,9 +255,10 @@ function CapabilitiesCard({ data, busyIds, onToggle, words }) {
       <CardHeader>
         <CardTitle className="text-lg">What {words.name} may do</CardTitle>
         <CardDescription>
-          Each switch is a group of endpoints. {startingSwitches(words, data.capabilities)} Deleting
-          and publishing are not on this list and have no endpoint: a draft {words.name} sends to
-          review is published by a person, on the Review board, as every other draft is.
+          Each switch is a group of endpoints. {startingSwitches(words, data.capabilities)}{' '}
+          {words.writesDrafts
+            ? `Deleting and publishing are not on this list and have no endpoint: a draft ${words.name} sends to review is published by a person, on the Review board, as every other draft is.`
+            : `Deleting is not on this list and has no endpoint, whatever is switched on.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
@@ -333,8 +346,10 @@ function ReachCard({ data, words }) {
       <CardHeader>
         <CardTitle className="text-lg">What {words.name} can reach</CardTitle>
         <CardDescription>
-          The agent API, as it reports itself. Paths are under the base URL. Drafts are the same
-          documents the Drafts page edits: the same fields, size cap, version check and audit rows.
+          The agent API, as it reports itself. Paths are under the base URL.{' '}
+          {words.writesDrafts
+            ? 'Drafts are the same documents the Drafts page edits: the same fields, size cap, version check and audit rows. '
+            : ''}
           The admin routes the key may also call are in the next card.
         </CardDescription>
       </CardHeader>
@@ -369,11 +384,11 @@ function AdminReachCard({ data, words }) {
         <CardTitle className="text-lg">What {words.name} may do in the admin</CardTitle>
         <CardDescription>
           With the same key, on the admin routes under <code>/api/</code>, {words.name} acts as{' '}
-          <code>{words.id} (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault,
-          and as you in the Second Brain). Each section is a switch above. Nothing can be deleted,
-          published, scheduled or unpublished; no secret or credential can be read, and no setting
-          can be changed (settings are read-only, where the editor needs them); a route that is not
-          listed answers 403 and is logged.
+          <code>{words.id} (agent)</code>.{' '}
+          {words.writesDrafts
+            ? 'It has an editor’s rights (a publisher’s in the Doc Vault, and as you in the Second Brain). Each section is a switch above. Nothing can be deleted, published, scheduled or unpublished; no secret or credential can be read, and no setting can be changed (settings are read-only, where the editor needs them); '
+            : 'Each section is a switch above, and it reaches only the routes listed under a section that is on. Nothing can be deleted, and no secret or credential can be read; '}
+          a route that is not listed answers 403 and is logged.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

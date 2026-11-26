@@ -26,6 +26,9 @@
 import React from 'react';
 import { Link } from 'react-router';
 import { tabHref } from './tabs';
+import { navItemById } from '@/config/adminNav';
+import { agentKeyTabHref } from '@/components/admin/agents/tabs';
+import { listWords } from '@/components/admin/ai-engine/kodaView';
 
 const LINK = 'underline underline-offset-2 hover:text-foreground';
 
@@ -277,19 +280,29 @@ export function MuseReaderNote() {
 export const AGENT_KEYS_RUNBOOK_URL =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/agent-content-api.md';
 
-/** An agent key's own tab on the AI Engine, where it is made, switched, rotated and revoked. */
-export const agentKeyTabHref = (id) => `/admin/ai-engine?tab=${encodeURIComponent(id)}`;
+/**
+ * An agent key's own tab on the Agents page, where it is made, switched,
+ * rotated and revoked (it was on the AI Engine until #1905).
+ */
+export { agentKeyTabHref };
+
+/** The Agents page's name, from the nav registry. */
+const AGENTS_LABEL = navItemById('agents').label;
 
 /**
  * One agent key the site issues itself (agentKeys.js lists them). The site
  * makes the key, shows it once, and keeps only a hash in its database; its
- * tab on the AI Engine is where it is made, switched, rotated and revoked.
+ * tab on the Agents page is where it is made, switched, rotated and revoked.
  * The register row is `agent-key-<id>`.
  *
- * @param {{ agent: { id: string, displayName: string, switchesOnWhenMade: boolean } }} props
+ * @param {{ agent: { id: string, displayName: string, switchesOnWhenMade: true|string[] } }} props
  */
 export function AgentKeyNote({ agent }) {
-  const tab = <Internal to={agentKeyTabHref(agent.id)}>AI Engine → {agent.displayName}</Internal>;
+  const tab = (
+    <Internal to={agentKeyTabHref(agent.id)}>
+      {AGENTS_LABEL} → {agent.displayName}
+    </Internal>
+  );
   return (
     <ListedCredential
       intro={
@@ -299,7 +312,7 @@ export function AgentKeyNote({ agent }) {
           It has its own record, switches and audit trail, apart from every other agent key.{' '}
           {agent.switchesOnWhenMade === true
             ? 'Its key started with every switch on.'
-            : `A new key starts with only ${(agent.switchesOnWhenMade || []).join(' and ') || 'nothing'} on; anything more is yours to turn on.`}
+            : `A new key starts with only ${listWords(agent.switchesOnWhenMade || []) || 'nothing'} on; anything more is yours to turn on.`}
         </>
       }
       facts={{

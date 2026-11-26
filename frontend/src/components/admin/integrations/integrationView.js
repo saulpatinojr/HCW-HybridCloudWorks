@@ -128,10 +128,13 @@ export function buildKeyGroups({
   // Which of those services can be asked whether the key works (ADR 0033):
   // a key with no timer-driven liveness check may still be checked by the
   // beaker on its service card, and the Keys row says which.
+  // A card whose test reads only some of its keys names them in
+  // `testedSecrets` (the Cloudflare card's test uses the admin token, not the
+  // origin secret or the Turnstile key), so those rows do not claim a check.
   const testedBy = new Map();
   for (const service of services) {
     if (!service.test) continue;
-    for (const name of service.secrets ?? []) {
+    for (const name of service.testedSecrets ?? service.secrets ?? []) {
       testedBy.set(name, [...(testedBy.get(name) ?? []), service.name]);
     }
   }

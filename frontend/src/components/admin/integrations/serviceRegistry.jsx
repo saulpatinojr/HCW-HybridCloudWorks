@@ -25,6 +25,7 @@ import {
   Bot,
   CalendarSearch,
   Cloud,
+  CloudCog,
   Coins,
   FlaskConical,
   Globe,
@@ -47,7 +48,13 @@ import { DEFAULT_PRICING_REGION, describeAge, describeCounts } from '@/lib/cloud
 import { countList, unwrapProxy } from '@/lib/proxyEnvelope';
 import { extractProfiles } from '@/lib/linkie';
 import { DEFAULT_SESSIONIZE_SPEAKER_ID } from '@/lib/adminSettings';
-import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
+import { AGENT_KEY_TABS, agentKeyTab } from '@/components/admin/ai-engine/agentKeys';
+import { navItemById } from '@/config/adminNav';
+
+/** The pages the Cloudflare and agent key cards name, from the nav registry. */
+const AGENTS_PAGE = navItemById('agents').label;
+const CLOUDFLARE_PAGE = navItemById('cloudflare').label;
+const NETWORK_AGENT = agentKeyTab('claude-network').displayName;
 
 // lucide-react v1.x dropped brand icons — inline YouTube glyph (same as SocialHubPage).
 const Youtube = ({ className }) => (
@@ -217,6 +224,30 @@ async function testFirecrawl() {
   return Number.isFinite(credits)
     ? `Connected — ${credits} credits remaining.`
     : 'Connected to Firecrawl.';
+}
+
+/**
+ * The Cloudflare card's Test: the `cloudflare` connection probe, which reads
+ * the site's zone on the server with the admin token (GET /zones/{zone}).
+ * It changes nothing and costs nothing, and the zone's name and status say
+ * the token reaches the right zone.
+ *
+ * @returns {Promise<string>} "Connected — the zone <name> is <status>." on
+ *   success; throws with the probe's sentence otherwise, as every service
+ *   test here does.
+ */
+async function testCloudflare() {
+  const body = unwrapProxy(
+    await postJSON('connectionProbe', { probe: 'cloudflare' }),
+    'Cloudflare'
+  );
+  // Cloudflare answers `{ success, result: { name, status, ... } }`; accept
+  // the zone itself too, in case the probe hands back `result` alone.
+  const zone = body?.result ?? body;
+  const name = typeof zone?.name === 'string' ? zone.name.trim() : '';
+  const status = typeof zone?.status === 'string' ? zone.status.trim() : '';
+  if (name && status) return `Connected — the zone ${name} is ${status}.`;
+  return name ? `Connected — the zone ${name}.` : 'Connected to Cloudflare.';
 }
 
 /**
@@ -487,7 +518,10 @@ export const agentKeyPanel = (id) => `agentKey:${id}`;
  * (Plaud's OAuth connect, in the Recording Hub). `keyGroups` splits a card's
  * keys into titled boxes, each of which may name a `panel` drawn inside it:
  * the Hybrid Lab card's Coder box carries the lab host's automatic renewal
- * (CoderAutomation). All are names, not components, so this file stays free
+ * (CoderAutomation). `testedSecrets` names the keys a card's Test actually
+ * reads, when that is fewer than all of them (the Cloudflare card's reads
+ * only the admin token), so the Keys tab does not say the others are checked
+ * by it. All are names, not components, so this file stays free
  * of React state and the registry test can read them as data.
  *
  * `cost` says what using the service costs, in words, on every card (owner
@@ -1085,36 +1119,103 @@ export const SERVICES = Object.freeze([
   {
     // Listed, not held: the agent keys this site makes itself, one box per
     // key (ai-engine/agentKeys.js). The site keeps a hash of each, never the
-    // key, so there is nothing to paste here and nothing to read back.
+    // key, so there is nothing to paste here and nothing to read back. Each
+    // key's tab is on the Agents page (#1905).
     id: 'agent-keys',
     group: 'platform',
     icon: Bot,
     name: 'Agent keys (issued by this site)',
-    description:
-      'Keys this site makes for outside agents to call it, among them Claude, which creates drafts. Each key has its own record, switches, tab and audit trail.',
+    description: `Keys this site makes for outside agents to call it, among them Claude Publisher, which creates drafts, and ${NETWORK_AGENT}, which looks after the Cloudflare zone. Each key has its own record, switches, tab and audit trail.`,
     url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/agent-content-api.md',
     test: null,
-    untestedReason:
-      'The site keeps only a fingerprint of each key, so it cannot test one. Each key’s tab on the AI Engine shows whether it is active and when it was last used.',
+    untestedReason: `The site keeps only a fingerprint of each key, so it cannot test one. Each key’s tab on the ${AGENTS_PAGE} page shows whether it is active and when it was last used.`,
     secrets: [],
     keyGroups: AGENT_KEY_TABS.map((agent) => ({
-      title: `${agent.displayName} key (made on its AI Engine tab)`,
+      title: `${agent.displayName} key (made on its ${AGENTS_PAGE} tab)`,
       panel: agentKeyPanel(agent.id),
     })),
     capabilities: [
       'Let an agent read, create and edit drafts and send them to review',
-      'Let an agent reach the admin routes its own switches open, never publishing, deleting, settings or secrets',
+      'Let an agent reach the admin routes its own switches open, never publishing, deleting or reading a secret',
     ],
     usedIn: [
-      'AI Engine (one tab per key)',
+      `${AGENTS_PAGE} (one tab per key)`,
       'Drafts',
+      CLOUDFLARE_PAGE,
       'The admin sections each key’s switches open',
     ],
     dataDirection:
       'Inbound: whoever holds a key calls this site with it. Nothing is sent out, and the key never leaves the tab that shows it once.',
     cost: 'Nothing: the site makes these keys itself, and no outside service bills for them.',
     securityNote:
-      'Each key is shown once when it is made and kept only as a SHA-256 hash in the site’s database. Each reaches only what its own switches allow, Claude’s key starts with only reading and writing drafts on, and a revoked key is refused on its next request.',
+      'Each key is shown once when it is made and kept only as a SHA-256 hash in the site’s database. Each reaches only what its own switches allow: Claude Publisher’s key starts with only reading and writing drafts on, Claude Network Guy’s with only reading Cloudflare, and a revoked key is refused on its next request.',
+  },
+
+  {
+    // One card for everything from Cloudflare (owner instruction 2026-11-22:
+    // a vendor's credentials in one place), #1905. The admin token is the
+    // site's and is tested; the origin secret, the analytics token and the
+    // Turnstile secret were already Key Vault keys (Turnstile's moved here
+    // from the Hybrid Lab card). The zone is administered on the Cloudflare
+    // page and by Claude Network Guy, both through the admin token.
+    id: 'cloudflare',
+    group: 'platform',
+    icon: CloudCog,
+    name: 'Cloudflare',
+    description:
+      'The network in front of the site: it answers for the site’s addresses (DNS), passes visitors on to the site, caches pages, and runs the human check on the lab.',
+    // Where the admin token is made: an account-owned token, limited to the
+    // one zone.
+    url: 'https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/',
+    test: testCloudflare,
+    secrets: [
+      'CLOUDFLARE-ADMIN-TOKEN',
+      'CF-ORIGIN-SECRET',
+      'CLOUDFLARE-ANALYTICS-TOKEN',
+      'TURNSTILE-SECRET-KEY',
+    ],
+    // The Test reads the zone with the admin token only; the other three are
+    // checked where they are used (a public form, the monthly count, the lab).
+    testedSecrets: ['CLOUDFLARE-ADMIN-TOKEN'],
+    keyGroups: [
+      {
+        title: `Admin token (the ${CLOUDFLARE_PAGE} page and ${NETWORK_AGENT} use it)`,
+        secrets: ['CLOUDFLARE-ADMIN-TOKEN'],
+      },
+      {
+        title: 'Origin secret (proves a visitor came through Cloudflare)',
+        secrets: ['CF-ORIGIN-SECRET'],
+      },
+      {
+        title: 'Analytics token (the monthly page-view count)',
+        secrets: ['CLOUDFLARE-ANALYTICS-TOKEN'],
+      },
+      { title: 'Turnstile (the human check on the lab)', secrets: ['TURNSTILE-SECRET-KEY'] },
+    ],
+    capabilities: [
+      'Read the zone’s settings, change one, and empty the cache',
+      'Read, add and edit DNS records (never delete one)',
+      'Read the rules, and replace the rules of a phase that is not locked',
+      'Prove a visitor reached the site through Cloudflare',
+      'Read the site’s monthly page-view count',
+      'Verify the human check on the lab',
+    ],
+    usedIn: [
+      CLOUDFLARE_PAGE,
+      `${AGENTS_PAGE} (${NETWORK_AGENT})`,
+      'Every public form (the origin check)',
+      'The monthly page-view count (a timer)',
+      'Labs',
+      'Landing Zone Builder',
+    ],
+    cost: 'Nothing today: the zone is on Cloudflare’s Free plan, and its API, the human check and the analytics read are free. A paid plan would be a subscription.',
+    costOnLedger: true,
+    rotateLabel: 'Rotate or replace a Cloudflare key',
+    rotateNote:
+      'Change the origin secret in Cloudflare at the same moment, or public forms are refused until both match.',
+    dataDirection: `Both ways: the site reads the zone’s settings, records and rules and sends the changes an admin or ${NETWORK_AGENT} makes; a human-check token goes to Cloudflare to verify; the page-view count comes back once a month.`,
+    securityNote:
+      'The admin token is an account-owned token limited to this one zone, read on the server only and never sent to a browser. It can change settings, DNS records and rules, but no route deletes anything, and the records and rules that keep the site running are locked. The origin secret and the Turnstile secret go only to Cloudflare, and the analytics token can read page views and nothing else.',
   },
 
   // ── Hybrid Lab (ADR 0033) ────────────────────────────────────────────────
@@ -1122,28 +1223,27 @@ export const SERVICES = Object.freeze([
     id: 'hybrid-lab',
     group: 'labs',
     icon: FlaskConical,
-    name: 'Hybrid Lab (Coder and Turnstile)',
+    name: 'Hybrid Lab (Coder)',
     description:
-      'The browser workspaces behind the labs page, and the check that lets a visitor send the lab a job.',
-    url: 'https://developers.cloudflare.com/turnstile/',
+      'The browser workspaces behind the labs page. The human check that lets a visitor send the lab a job is Cloudflare’s, and its key is on the Cloudflare card.',
+    url: 'https://coder.com/docs',
     // The public labs card's own read, cached server-side.
     test: testHybridLab,
-    secrets: ['CODER-URL', 'CODER-STATUS-TOKEN', 'TURNSTILE-SECRET-KEY'],
-    // Two services behind one card, so the keys say which is which: Coder's
-    // two values together, with what the lab host last reported about
-    // renewing the status token (2026-10-08), and Turnstile's apart.
+    // Coder's two values together, with what the lab host last reported
+    // about renewing the status token (2026-10-08). The Turnstile key moved
+    // to the Cloudflare card in #1905, so that vendor's keys are in one place.
+    secrets: ['CODER-URL', 'CODER-STATUS-TOKEN'],
     keyGroups: [
       { title: 'Coder', secrets: ['CODER-URL', 'CODER-STATUS-TOKEN'], panel: 'coderAutomation' },
-      { title: 'Turnstile', secrets: ['TURNSTILE-SECRET-KEY'] },
     ],
-    capabilities: ['List lab templates', 'Count running workspaces', 'Verify a browser check'],
+    capabilities: ['List lab templates', 'Count running workspaces'],
     usedIn: ['Labs', 'Public labs page', 'Landing Zone Builder'],
-    cost: 'No charge per use. The workspaces run on the lab host, which is rented from Hostinger, and the browser check is a free service.',
+    cost: 'No charge per use. The workspaces run on the lab host, which is rented from Hostinger.',
     costOnLedger: true,
     dataDirection:
-      'Inbound: workspace status comes from Coder, and the lab host hands over a renewed status token; a Turnstile token goes to Cloudflare to verify.',
+      'Inbound: workspace status comes from Coder, and the lab host hands over a renewed status token.',
     securityNote:
-      'The status token is read-only in Coder and never reaches a browser; a renewed one from the lab host is stored only after Coder shows it is a working, read-only key of the status user. The Turnstile secret goes to Cloudflare siteverify and nowhere else.',
+      'The status token is read-only in Coder and never reaches a browser; a renewed one from the lab host is stored only after Coder shows it is a working, read-only key of the status user.',
   },
   {
     // Listed, not held (2026-11-22): the AI Engine keeps this connection.

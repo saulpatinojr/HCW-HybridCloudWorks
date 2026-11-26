@@ -438,7 +438,7 @@ describe('the hub', () => {
     expect(within(card).getByText('3')).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: /Koda tab/ })).toHaveAttribute(
       'href',
-      '/admin/ai-engine?tab=koda'
+      '/admin/agents?tab=koda'
     );
     // Rotated on the date it was rotated, not on the date it was created.
     expect(within(card).getByText('Rotated')).toBeInTheDocument();
@@ -564,7 +564,7 @@ describe('the hub', () => {
     expect(within(claudeCard).queryByText('route-not-allowed')).not.toBeInTheDocument();
     expect(within(claudeCard).getByRole('link', { name: /Claude tab/ })).toHaveAttribute(
       'href',
-      '/admin/ai-engine?tab=claude'
+      '/admin/agents?tab=claude'
     );
   });
 
