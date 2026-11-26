@@ -235,11 +235,14 @@ function rulesBody(phase, body) {
  * makes the next one. If the saved version is further on than the one just
  * checked plus one, another write landed between the check and this write,
  * and this write may have replaced it. Cloudflare's rule set update takes no
- * condition, so this is caught afterwards and the owner is told. Answers the
- * note for the owner, or null (also when either version is not a number).
+ * condition, so this is caught afterwards and the owner is told. A phase with
+ * no rule set yet counts as version 0: the first write makes version 1
+ * (Cloudflare's create examples), so a saved version past 1 means two first
+ * writes raced. Answers the note for the owner, or null (also when a version
+ * is not a number).
  */
 export function concurrentWriteNote(current, saved) {
-  const [was, now] = [versionOf(current), versionOf(saved)];
+  const [was, now] = [current ? versionOf(current) : '0', versionOf(saved)];
   if (was === null || now === null || !/^\d+$/.test(was) || !/^\d+$/.test(now)) return null;
   const [before, after] = [Number(was), Number(now)];
   if (after <= before + 1) return null;

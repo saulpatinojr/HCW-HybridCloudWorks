@@ -919,8 +919,11 @@ describe('rules', () => {
     expect(concurrentWriteNote({ version: '3' }, { version: '4' })).toBeNull();
     expect(concurrentWriteNote({ version: '3' }, {})).toBeNull();
     expect(concurrentWriteNote(null, { version: '1' })).toBeNull();
+    expect(concurrentWriteNote(null, {})).toBeNull();
     expect(concurrentWriteNote({ last_updated: '2026-11-26T00:00:00Z' }, { last_updated: '2026-11-27T00:00:00Z' })).toBeNull();
     expect(concurrentWriteNote({ version: '3' }, { version: '5' })).toMatch(/may have replaced it/);
+    // A phase with no rule set yet: the first write makes version 1, so 2 means two first writes raced.
+    expect(concurrentWriteNote(null, { version: '2' })).toMatch(/may have replaced it/);
   });
 
   it('refuses with 409, writing nothing, when the phase changed since it was read', async () => {
