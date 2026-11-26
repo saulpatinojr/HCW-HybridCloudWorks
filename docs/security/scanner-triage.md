@@ -163,6 +163,7 @@ smells, the dashboard will follow with no change here.
 
 | File | Why its rows look alike |
 | --- | --- |
+| `frontend/src/components/admin/cloudflare/cloudflareLocks.js` | The browser's copy of the server's lists of Cloudflare rule phases (one record per phase, same fields each); it mirrors `functions/src/lib/cloudflare/protected.js` on purpose, and `cloudflareLocks.test.js` holds the two equal ([#1910](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1910)) |
 | `frontend/src/data/addons/catalogue.js` | One record per add-on, same fields each |
 | `frontend/src/data/ansible/education.js` | Ansible certification, learning-path and resource records (the resource rows match VMware's) |
 | `frontend/src/data/architectures.js` | Architecture write-ups, one record per design, same sections each |
@@ -193,6 +194,7 @@ smells, the dashboard will follow with no change here.
 | `frontend/src/pages/terraform/LandingPage.jsx` | Page-local card and quick-link lists |
 | `frontend/src/pages/terraform/ModulesPage.jsx` | Module card list handed to the shared listing template |
 | `functions/src/lib/ambassador/programs.js` | Seed records for the ambassador programmes, same fields each |
+| `functions/src/lib/cloudflare/protected.js` | The server's lists of protected DNS names and of protected and editable Cloudflare rule phases, one record per entry with the same fields; the browser mirrors the phase lists on purpose ([#1910](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1910)) |
 
 The page files above also hold markup. The block covers the whole file, so
 similar markup added to one of them later would not be reported there; a
