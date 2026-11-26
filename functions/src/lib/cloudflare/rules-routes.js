@@ -32,12 +32,11 @@
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
 import { recordChange, requireOurZone } from './record.js';
-import { REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
+import { REDACTED_VALUE, REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
 
 export const PHASE_PATTERN = /^[a-z0-9_]{1,64}$/;
 export const MAX_RULES = 100;
-/** What a secret-sounding header value reads as on the page. */
-export const REDACTED_VALUE = '[hidden: change this value in the Cloudflare dashboard]';
+export { REDACTED_VALUE };
 /** A name that sounds as if it holds a secret. */
 export const SECRET_NAME = /secret|token|auth|key/i;
 

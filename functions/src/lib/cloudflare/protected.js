@@ -102,6 +102,13 @@ export const EDITABLE_PHASES = Object.freeze(
 export const READ_ONLY_PHASE_REASON =
   "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard.";
 
+/**
+ * What a secret-sounding header value in an editable phase reads as when the
+ * server answers it (rules-routes.js). The browser mirrors it, so its editor
+ * refuses to open a list holding it, and the server refuses it sent back.
+ */
+export const REDACTED_VALUE = '[hidden: change this value in the Cloudflare dashboard]';
+
 /** The custom security rule action refused: it lets matching requests past the other checks. */
 export const REFUSED_FIREWALL_ACTION = 'skip';
 
