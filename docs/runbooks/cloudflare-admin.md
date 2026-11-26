@@ -142,6 +142,14 @@ comes from the `cloudflare_zone_id` variable Terraform already has, and is set
 by the next `hcw-azure` apply after this change merges. Until then the page
 says **not configured** even with the token pasted.
 
+When you read that run's plan, the plan check (`tfc-plan-check.yml`, which
+you start by hand) lists one line as unexpected on purpose:
+`app_settings.CF_ZONE_ID`, going from nothing to the zone's id. Its value is
+not written into the public repository, so the check cannot know it in
+advance. It is right when it equals the zone id the DNS records in the same
+plan already use. The new Key Vault reference `CLOUDFLARE_ADMIN_TOKEN` is
+declared and passes.
+
 ## Part 3. Claude Network Guy's key
 
 1. Open the **Claude Network Guy** tab on the
