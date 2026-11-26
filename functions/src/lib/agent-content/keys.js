@@ -16,8 +16,8 @@
  * and it is revoked by deleting one hash, with no cache in front of it.
  *
  * WHAT EACH KEY CAN REACH is a closed list of capabilities, each a switch on
- * the key's own tab. All are on when Koda's key is made; a key added later
- * starts with only the switches its row lists (agent-keys.js). None can be
+ * the key's own tab. Each key starts with only the switches its row lists
+ * (agent-keys.js), and a capability added later starts off. None can be
  * added here without code, because a capability is a route group the
  * handlers wire by name.
  */
@@ -106,6 +106,34 @@ export const CAPABILITIES = Object.freeze([
     description:
       'Read every Platform page: health, the integration status, the Cost page, Search Console and Platform Settings; read the alerts sent to your phone, the calendar alerts, job states and the review queue; run a connection test or a Search Console run; and acknowledge, resolve or reopen a workflow alert. No settings writes, keys or secrets, no change to the cost ledger, no sending an alert to your phone again, and no deleting.',
   },
+  // The Cloudflare sections (#1905). Reading is one switch; each kind of
+  // change is its own, so the owner opens only what a task needs. None of
+  // them reaches what Terraform manages or the site's own address, and none
+  // deletes (cloudflare/protected.js says what is refused and why).
+  {
+    id: 'admin.cloudflare',
+    label: 'Cloudflare: read',
+    description:
+      "Read the site's Cloudflare zone on the Cloudflare page: its status, every zone setting, the DNS records, the rules and whether the Cloudflare token works. No changes.",
+  },
+  {
+    id: 'admin.cloudflare.settings',
+    label: 'Cloudflare: change zone settings and purge the cache',
+    description:
+      "Change any of the zone's settings (SSL/TLS, HTTPS, security level, caching, speed and the rest) and purge the cache. Each change is recorded in the audit log and sent to your phone.",
+  },
+  {
+    id: 'admin.cloudflare.dns',
+    label: 'Cloudflare: add and edit DNS records',
+    description:
+      "Add a DNS record or edit one. Never the site's own address (the apex and www), a record Terraform manages, or the lab's records, and never a delete.",
+  },
+  {
+    id: 'admin.cloudflare.rules',
+    label: 'Cloudflare: edit rules',
+    description:
+      'Replace the rules of a rule phase (redirects, cache, configuration, custom security rules and the like). Never the phases Terraform manages (the origin rule and the rate limit), and never a delete.',
+  },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));
 
@@ -152,9 +180,10 @@ export function agentIdOfRecord(record) {
 }
 
 /**
- * What a new key gets: every capability on for Koda's, only the ones its row
- * lists for a key added later (agent-keys.js `switchesOnWhenMade`; Claude's
- * key starts with reading and writing drafts), and none for an id the list
+ * What a new key gets: the capabilities its row lists (agent-keys.js
+ * `switchesOnWhenMade`; Koda's lists the nine that existed before the
+ * Cloudflare switches, Claude Publisher's reading and writing drafts, Claude
+ * Network Guy's reading Cloudflare), and none for an id the list
  * does not have. There is no delete switch to turn on: the key
  * never deletes (owner instruction 2026-11-01: create, produce and review,
  * never delete), so the v1 delete route is gone.

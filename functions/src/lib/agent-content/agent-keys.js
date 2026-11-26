@@ -12,13 +12,18 @@
  *                       rows name, and the `?agent=` value of the admin route
  *   displayName         what the tab and the messages call it
  *   recordId            its key record in `admin_config`
- *   switchesOnWhenMade  which switches a new key starts with: `true` for
- *                       every one (Koda's key, as it always has), or the list
- *                       of capability ids that start on. Claude's key creates
- *                       drafts, so only reading and writing drafts start on;
- *                       the owner turns on anything more. It is also what a
- *                       switch the record never stored (a capability added
- *                       after the key was made) reads as.
+ *   switchesOnWhenMade  the list of capability ids a new key starts with
+ *                       on. It is also what a switch the record never stored
+ *                       (a capability added after the key was made) reads
+ *                       as, so a capability added later is off for every key
+ *                       until its row lists it or the owner turns it on.
+ *                       Koda's row lists the nine capabilities that existed
+ *                       before the Cloudflare switches, which were all on for
+ *                       it, so nothing Koda could do changes; the Cloudflare
+ *                       switches start off for Koda (#1905). Claude
+ *                       Publisher's key creates drafts, so only reading and
+ *                       writing drafts start on. Claude Network Guy's key
+ *                       starts with only reading Cloudflare on.
  *
  * It imports nothing, so the browser's mirror test can read it
  * (frontend/src/components/admin/ai-engine/agentKeys.test.js), the way
@@ -34,19 +39,45 @@
 export const AGENT_KEYS = Object.freeze(
   [
     {
+      // Every capability that existed when the Cloudflare switches were added
+      // (#1905). Until then this was `true` (every switch on), which would
+      // have opened the Cloudflare switches for Koda's stored record too,
+      // because a switch a record never stored reads as its row's default.
       id: 'koda',
       displayName: 'Koda',
       recordId: 'agent_content_key:koda',
-      switchesOnWhenMade: true,
+      switchesOnWhenMade: Object.freeze([
+        'drafts.read',
+        'drafts.write',
+        'drafts.review',
+        'published.read',
+        'admin.pipeline',
+        'admin.enhanced',
+        'admin.brain',
+        'admin.spotlight',
+        'admin.platform',
+      ]),
     },
     {
       // A draft creator: it reads, writes and edits drafts through the agent
       // API, and starts with nothing else on. Sending to review, the admin
       // sections and the published reads stay off until the owner turns them on.
+      // Shown as "Claude Publisher" since #1905; the id stays `claude`, so its
+      // key record, its audit rows and the drafts it wrote keep their names.
       id: 'claude',
-      displayName: 'Claude',
+      displayName: 'Claude Publisher',
       recordId: 'agent_content_key:claude',
       switchesOnWhenMade: Object.freeze(['drafts.read', 'drafts.write']),
+    },
+    {
+      // Administers the site's Cloudflare zone through the Cloudflare admin
+      // routes (cloudflare/, #1905). It starts able to read only; each kind of
+      // change (zone settings and cache, DNS records, rules) is its own switch
+      // the owner turns on. It never deletes, like every agent key.
+      id: 'claude-network',
+      displayName: 'Claude Network Guy',
+      recordId: 'agent_content_key:claude-network',
+      switchesOnWhenMade: Object.freeze(['admin.cloudflare']),
     },
   ].map(Object.freeze),
 );
