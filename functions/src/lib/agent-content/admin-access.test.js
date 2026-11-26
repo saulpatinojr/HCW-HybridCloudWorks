@@ -16,7 +16,8 @@ import {
   describePolicy,
   withAgentAccess,
 } from './admin-access.js';
-import { AGENT_USER, CAPABILITY_IDS, defaultCapabilities, generateKey } from './keys.js';
+import { AGENT_USER, CAPABILITY_IDS, agentUserOf, defaultCapabilities, generateKey } from './keys.js';
+import { agentKeyById } from './agent-keys.js';
 
 const SECRET = generateKey();
 const RECORD = { id: 'agent_content_key:koda', capabilities: defaultCapabilities() };
@@ -39,7 +40,7 @@ function request({ method = 'GET', path = 'cms/content', key = SECRET, body = un
   return req;
 }
 
-function setup({ record = RECORD, agentError = null, env = { BRAIN_OWNER_OID: 'owner-oid', BRAIN_OWNER_TENANT_ID: 'owner-tid' } } = {}) {
+function setup({ record = RECORD, user = AGENT_USER, agentError = null, env = { BRAIN_OWNER_OID: 'owner-oid', BRAIN_OWNER_TENANT_ID: 'owner-tid' } } = {}) {
   const roleGuard = {
     requireRole: vi.fn(async () => ({ user: { oid: 'human' }, role: 'editor', error: null })),
     requireUser: vi.fn(async () => ({ user: { oid: 'human' }, role: null, error: null })),
@@ -47,7 +48,7 @@ function setup({ record = RECORD, agentError = null, env = { BRAIN_OWNER_OID: 'o
   };
   const agentGuard = {
     authenticate: vi.fn(async () =>
-      agentError ? { record: null, user: null, error: agentError } : { record, user: AGENT_USER, error: null }
+      agentError ? { record: null, user: null, error: agentError } : { record, user, error: null }
     ),
   };
   const audits = [];
@@ -100,6 +101,28 @@ describe('the policy table', () => {
         expect(ADMIN_SECTION_IDS, `${row.method} ${row.route}`).toContain(section);
         expect(CAPABILITY_IDS).toContain(section);
       }
+    }
+  });
+
+  it('grants super_admin only to the Cloudflare changes, each behind its own Cloudflare switch (#1905)', () => {
+    const writes = POLICY.filter((row) => row.role === 'super_admin').map((row) => `${row.method} ${row.route} ${row.sections.join(',')}`);
+    expect(writes.sort()).toEqual(
+      [
+        'PATCH cms/cloudflare/settings/{settingId} admin.cloudflare.settings',
+        'POST cms/cloudflare/purge admin.cloudflare.settings',
+        'POST cms/cloudflare/dns admin.cloudflare.dns',
+        'PATCH cms/cloudflare/dns/{recordId} admin.cloudflare.dns',
+        'PUT cms/cloudflare/rulesets/phases/{phase} admin.cloudflare.rules',
+      ].sort()
+    );
+    // Every Cloudflare row is under a Cloudflare switch, and every Cloudflare switch opens only Cloudflare routes.
+    for (const row of POLICY) {
+      const cloudflareRoute = row.route.startsWith('cms/cloudflare/');
+      const cloudflareSection = row.sections.some((section) => section.startsWith('admin.cloudflare'));
+      expect(cloudflareRoute, `${row.method} ${row.route}`).toBe(cloudflareSection);
+      if (cloudflareRoute) expect(row.sections).toHaveLength(1);
+      if (cloudflareRoute && row.method === 'GET') expect(row.sections).toEqual(['admin.cloudflare']);
+      if (cloudflareRoute && row.method !== 'GET') expect(row.role).toBe('super_admin');
     }
   });
 
@@ -438,5 +461,57 @@ describe('describePolicy', () => {
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or published_blog or published_news or published_both or archived; data.Live must not be true; data.Status must not be Live or live or Published or published' });
     expect(pipeline.routes).toContainEqual({ method: 'GET', path: '/api/cms/content' });
     expect(sections.reduce((n, s) => n + s.routes.length, 0)).toBeGreaterThanOrEqual(POLICY.length);
+  });
+});
+
+describe('the Cloudflare switches (#1905)', () => {
+  const NETWORK = agentKeyById('claude-network');
+  const networkRecord = (capabilities) => ({ id: NETWORK.recordId, ...(capabilities ? { capabilities } : {}) });
+
+  it('lets a fresh Claude Network Guy key read the Cloudflare page and change nothing', async () => {
+    const { guard, audits } = setup({ record: networkRecord(), user: agentUserOf(NETWORK) });
+    for (const path of ['cms/cloudflare/status', 'cms/cloudflare/settings', 'cms/cloudflare/dns', 'cms/cloudflare/rulesets', 'cms/cloudflare/rulesets/phases/http_request_dynamic_redirect']) {
+      const read = await guard.requireRole(request({ path }), 'editor');
+      expect(read.error, path).toBeNull();
+      expect(read.user).toMatchObject({ agent: 'claude-network', preferred_username: 'claude-network (agent)' });
+    }
+    for (const [method, path] of [
+      ['PATCH', 'cms/cloudflare/settings/always_use_https'],
+      ['POST', 'cms/cloudflare/purge'],
+      ['POST', 'cms/cloudflare/dns'],
+      ['PATCH', 'cms/cloudflare/dns/00000000000000000000000000000001'],
+      ['PUT', 'cms/cloudflare/rulesets/phases/http_request_dynamic_redirect'],
+    ]) {
+      const write = await guard.requireRole(request({ method, path, body: {} }), 'super_admin');
+      expect(write.error.status, `${method} ${path}`).toBe(403);
+    }
+    expect(audits.map((row) => row.reason)).toEqual(Array(5).fill('section-off'));
+    expect(audits.every((row) => row.agent === 'claude-network')).toBe(true);
+    // Nothing else on the site opens for it.
+    const drafts = await guard.requireRole(request({ path: 'cms/drafts' }), 'editor');
+    expect(drafts.error.status).toBe(403);
+  });
+
+  it('lets a change through as super_admin once its own switch is on, and only that kind of change', async () => {
+    const record = networkRecord({ 'admin.cloudflare': true, 'admin.cloudflare.dns': true });
+    const { guard } = setup({ record, user: agentUserOf(NETWORK) });
+    const dns = await guard.requireRole(request({ method: 'POST', path: 'cms/cloudflare/dns', body: {} }), 'super_admin');
+    expect(dns.error).toBeNull();
+    expect(dns.role).toBe('super_admin');
+    const rules = await guard.requireRole(request({ method: 'PUT', path: 'cms/cloudflare/rulesets/phases/x', body: {} }), 'super_admin');
+    expect(rules.error.status).toBe(403);
+  });
+
+  it('keeps every Cloudflare switch off for Koda’s record unless the owner turns one on', async () => {
+    const { guard, audits } = setup();
+    const read = await guard.requireRole(request({ path: 'cms/cloudflare/status' }), 'editor');
+    expect(read.error.status).toBe(403);
+    expect(audits[0]).toMatchObject({ agent: 'koda', reason: 'section-off', section: 'admin.cloudflare' });
+  });
+
+  it('never matches a DELETE on a Cloudflare route', () => {
+    for (const path of ['cms/cloudflare/dns/00000000000000000000000000000001', 'cms/cloudflare/rulesets/phases/x', 'cms/cloudflare/settings/ssl']) {
+      expect(matchPolicy('DELETE', path)).toBeNull();
+    }
   });
 });

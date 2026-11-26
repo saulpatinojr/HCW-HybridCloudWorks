@@ -4,7 +4,7 @@
  *
  * Koda is the owner's content agent, run by an outside service (Muse). It
  * signs in to the site with ONE API key: a random secret the site shows the
- * owner once, on the AI Engine's Koda tab, and then keeps only as a SHA-256
+ * owner once, on the Agents page's Koda tab, and then keeps only as a SHA-256
  * hash in one `admin_config` document. The plaintext is never stored, logged
  * or shown again; a lost key is replaced, not recovered.
  *

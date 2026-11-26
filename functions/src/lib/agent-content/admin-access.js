@@ -44,7 +44,9 @@
  *   - The role each route requires is the role the policy grants: `editor`
  *     for nearly everything, `publisher` for the Doc Vault (whose reads
  *     already need it) and for acknowledging or resolving a workflow alert
- *     (whose handler needs it), and `viewer` for the health reads. A route whose
+ *     (whose handler needs it), `super_admin` for the Cloudflare changes
+ *     only (#1905, each behind its own switch), and `viewer` for the health
+ *     reads. A route whose
  *     handler asks for more than the grant is refused with 403.
  *
  * Every refusal of a presented key is an `admin_audit_logs` row of kind
@@ -115,6 +117,10 @@ const E = 'admin.enhanced';
 const B = 'admin.brain';
 const S = 'admin.spotlight';
 const H = 'admin.platform';
+const CF = 'admin.cloudflare';
+const CF_SETTINGS = 'admin.cloudflare.settings';
+const CF_DNS = 'admin.cloudflare.dns';
+const CF_RULES = 'admin.cloudflare.rules';
 
 /**
  * One row per method and route template. `sections` is the switch (or
@@ -295,6 +301,23 @@ export const POLICY = Object.freeze(
     // The handler asks for publisher; the action is held to the three above.
     ['POST', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
     ['PATCH', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
+
+    // Cloudflare (#1905): the Cloudflare page, for the site's one zone. One
+    // switch reads; each kind of change is its own switch. The changes act
+    // as super_admin, the role the routes ask of a person, because a change
+    // there reaches every visitor at once; the switches, the protected list
+    // (cloudflare/protected.js) and the missing delete are what hold a key
+    // in. Each change is an audit row and a message to the owner's phone.
+    ['GET', 'cms/cloudflare/status', CF],
+    ['GET', 'cms/cloudflare/settings', CF],
+    ['GET', 'cms/cloudflare/dns', CF],
+    ['GET', 'cms/cloudflare/rulesets', CF],
+    ['GET', 'cms/cloudflare/rulesets/phases/{phase}', CF],
+    ['PATCH', 'cms/cloudflare/settings/{settingId}', CF_SETTINGS, { role: 'super_admin' }],
+    ['POST', 'cms/cloudflare/purge', CF_SETTINGS, { role: 'super_admin' }],
+    ['POST', 'cms/cloudflare/dns', CF_DNS, { role: 'super_admin' }],
+    ['PATCH', 'cms/cloudflare/dns/{recordId}', CF_DNS, { role: 'super_admin' }],
+    ['PUT', 'cms/cloudflare/rulesets/phases/{phase}', CF_RULES, { role: 'super_admin' }],
   ].map(([method, route, sections, options = {}]) =>
     Object.freeze({
       method,

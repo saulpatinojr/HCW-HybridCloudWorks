@@ -385,7 +385,15 @@ describe('getOpsHealthSnapshot', () => {
         lastUsedAt: '2026-08-07T03:00:00.000Z',
         unavailable: false,
       },
-      sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+      // The four Cloudflare switches came after Koda's record was made, so
+      // they read off for it (#1905); only Brain was switched off by hand.
+      sectionsOff: [
+        { id: 'admin.brain', label: 'Second Brain' },
+        { id: 'admin.cloudflare', label: 'Cloudflare: read' },
+        { id: 'admin.cloudflare.settings', label: 'Cloudflare: change zone settings and purge the cache' },
+        { id: 'admin.cloudflare.dns', label: 'Cloudflare: add and edit DNS records' },
+        { id: 'admin.cloudflare.rules', label: 'Cloudflare: edit rules' },
+      ],
       denials: {
         since: new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString(),
         total: 4,
@@ -468,11 +476,12 @@ describe('getOpsHealthSnapshot', () => {
     const body = JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body);
     expect(body.agents.map((agent) => [agent.id, agent.label])).toEqual([
       ['koda', 'Koda'],
-      ['claude', 'Claude'],
+      ['claude', 'Claude Publisher'],
+      ['claude-network', 'Claude Network Guy'],
     ]);
     // `agent` stays Koda's block for every older reader.
     expect(body.agent).toEqual(body.agents[0]);
-    const [koda, claude] = body.agents;
+    const [koda, claude, network] = body.agents;
     expect(koda.denials.total).toBe(4);
     expect(claude.denials).toMatchObject({ total: 1, byReason: [{ reason: 'capability-off', count: 1 }] });
     expect(claude.key).toMatchObject({ present: true, active: true, createdAt: '2026-08-05T00:00:00.000Z' });
@@ -480,7 +489,10 @@ describe('getOpsHealthSnapshot', () => {
     expect(claude.sectionsOff.map((row) => row.id)).not.toContain('drafts.write');
     expect(claude.sectionsOff.map((row) => row.id)).toContain('admin.pipeline');
     const audits = store.queryDocs.mock.calls.filter(([container]) => container === 'admin_audit_logs');
-    expect(audits.map(([, , params]) => params.find((p) => p.name === '@agent').value).sort()).toEqual(['claude', 'koda']);
+    // Claude Network Guy has no record here: no key, and no switches reported off.
+    expect(network.key).toMatchObject({ present: false });
+    expect(network.sectionsOff).toEqual([]);
+    expect(audits.map(([, , params]) => params.find((p) => p.name === '@agent').value).sort()).toEqual(['claude', 'claude-network', 'koda']);
     expect(JSON.stringify(body)).not.toContain('claude-hash-never-shown');
     expect(JSON.stringify(body)).not.toContain('hcwk_cla');
   });

@@ -14,6 +14,7 @@ import {
   MUSE_READER_GRACE_DAYS,
   MUSE_READER_ROTATION_DAYS,
   CLAUDE_CODE_OAUTH_TOKEN_DAYS,
+  CLOUDFLARE_ADMIN_TOKEN_DAYS,
   CREDENTIAL_REGISTER,
   CREDENTIAL_STORES,
   KEY_VAULT_METADATA_NAMES,
@@ -200,9 +201,12 @@ describe('the issue’s list', () => {
         'lab-agent-certificate',
         'lab-vault-tls-certificate',
         'tfc-azure-muse-reader-secret',
+        // #1905: the Cloudflare page's token, made with a one-year expiry.
+        'kv-cloudflare-admin-token',
         // One per agent key the site can hold (agent-content/agent-keys.js).
         'agent-key-koda',
         'agent-key-claude',
+        'agent-key-claude-network',
       ].sort()
     );
   });
@@ -217,6 +221,10 @@ describe('the issue’s list', () => {
       expect(row.name).toContain(key.recordId);
       expect(row.name).toMatch(/hash/);
       expect(row.rotate).toContain(`${key.displayName} tab`);
+      // The key tabs moved to the Agents page (#1905).
+      expect(row.rotate).toContain('Agents page');
+      expect(row.issuer).toBe(`This site (Agents → ${key.displayName} tab)`);
+      expect(`${row.rotate} ${row.issuer}`).not.toContain('AI Engine');
       expect(isRecordable(row)).toBe(true);
     }
   });
@@ -230,6 +238,14 @@ describe('the issue’s list', () => {
     // The issuer's own expiry: a `claude setup-token` token lasts a year.
     expect(findCredential('gh-claude-code-oauth-token').lifetimeDays).toBe(CLAUDE_CODE_OAUTH_TOKEN_DAYS);
     expect(CLAUDE_CODE_OAUTH_TOKEN_DAYS).toBe(365);
+    // The Cloudflare admin token: the one-year expiry the owner sets when making it (#1905).
+    expect(findCredential('kv-cloudflare-admin-token')).toMatchObject({
+      lifetimeDays: CLOUDFLARE_ADMIN_TOKEN_DAYS,
+      renewal: 'hand',
+      store: 'key-vault',
+      issuer: 'Cloudflare account API tokens',
+    });
+    expect(CLOUDFLARE_ADMIN_TOKEN_DAYS).toBe(365);
     // Muse's Azure secret: the reminder is due at 180 days and the secret
     // itself works 30 more (infra/muse-reader.tf), so the number here is the
     // rotation date, never the 210 days it works for.

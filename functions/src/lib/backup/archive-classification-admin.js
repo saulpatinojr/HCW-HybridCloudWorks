@@ -64,6 +64,7 @@ export const ADMIN_CONFIG_LEAVE_OUT = Object.freeze({
     // one per key; a test holds this list to that one).
     'agent_content_key:koda': REASONS.secret,
     'agent_content_key:claude': REASONS.secret,
+    'agent_content_key:claude-network': REASONS.secret,
     // When each Key Vault secret was last written (admin-secrets.js): a picture of the vault on one day.
     secret_state: REASONS.workingState,
     // Coder's last answers to the status token (labs/coder-status.js).

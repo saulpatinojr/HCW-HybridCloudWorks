@@ -3,10 +3,11 @@
  *
  * The site can hold more than one agent key. Each one is a row here and has
  * its own key record (one `admin_config` document holding a hash of the key,
- * never the key), its own capability switches, its own tab on the AI Engine
- * page, its own per-minute limit and its own audit rows. A key is matched to
- * its row by the hash it presents (guard.js), and everything that asks "may
- * this key see that?" reads that key's own record, never another's.
+ * never the key), its own capability switches, its own tab on the Agents
+ * page (on the AI Engine page until #1905), its own per-minute limit and its
+ * own audit rows. A key is matched to its row by the hash it presents
+ * (guard.js), and everything that asks "may this key see that?" reads that
+ * key's own record, never another's.
  *
  *   id                  the agent id: what `user.agent` carries, what audit
  *                       rows name, and the `?agent=` value of the admin route
@@ -30,7 +31,7 @@
  * page-links/origin-pages.js is read.
  *
  * ADDING A KEY. One row here, its tab entry in the browser's mirror
- * (agentKeys.js beside the AI Engine tabs), and a literal record id in the
+ * (agentKeys.js, read by the Agents page's tabs), and a literal record id in the
  * backup's leave-out list (backup/archive-classification-admin.js). The
  * credential register and the Integrations card build their rows from this
  * list. docs/runbooks/agent-content-api.md, part 8, has the rest.

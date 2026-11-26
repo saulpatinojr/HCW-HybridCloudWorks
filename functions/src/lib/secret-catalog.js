@@ -467,6 +467,18 @@ export const SECRET_CATALOG = Object.freeze([
       "count for the Ambassador hub. Until it is set, no monthly audience figure is recorded.",
     probe: null,
   },
+  {
+    setting: "CLOUDFLARE_ADMIN_TOKEN",
+    secret: "CLOUDFLARE-ADMIN-TOKEN",
+    section: "platform",
+    label: "Cloudflare admin token",
+    help:
+      "Account-owned API token, limited to the site's one zone, from the Cloudflare dashboard " +
+      "(Manage Account, API Tokens). The Cloudflare page and Claude Network Guy use it to read and " +
+      "change zone settings, DNS records, rules and the cache. Give it an expiry of one year. " +
+      "Until it is set, the Cloudflare page says it is not set up and changes nothing.",
+    probe: null,
+  },
 
   // ── Hybrid Lab ───────────────────────────────────────────────────
   // An address rather than a credential, kept in the vault so the pair is
