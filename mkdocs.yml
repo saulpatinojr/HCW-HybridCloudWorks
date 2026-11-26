@@ -137,6 +137,7 @@ nav:
       - 0044 Signed releases: decisions/0044-signed-releases.md
       - 0045 Community Days events: decisions/0045-community-days-events.md
       - 0046 Yearly content archive: decisions/0046-content-archive.md
+      - 0047 Cloudflare admin and Claude Network Guy: decisions/0047-cloudflare-admin-and-network-agent.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -154,6 +155,7 @@ nav:
       - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
       - Private Second Brain: runbooks/second-brain.md
       - Agent Content API (Koda): runbooks/agent-content-api.md
+      - Cloudflare admin and Claude Network Guy: runbooks/cloudflare-admin.md
       - Developer API (organizer keys and calls for speakers): runbooks/developer-api.md
       - Muse's read-only Azure access: runbooks/muse-azure-reader.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
