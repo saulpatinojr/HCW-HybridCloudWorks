@@ -14,9 +14,9 @@ import ApplyTab, {
   CHANGED_ELSEWHERE,
   ESTIMATE_LABEL,
   KEYS_HREF,
-  MANUAL_NO_ESTIMATE,
   SWITCHED_OFF_CODE,
 } from './ApplyTab';
+import { MANUAL_NO_ESTIMATE } from './ManualRows';
 import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
 import { marksForMonth } from './applyCalendarModel';
 import { EVENTS_ROUTE, REFRESH_ROUTE } from './useApplyEvents';

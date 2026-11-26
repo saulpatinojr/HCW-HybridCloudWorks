@@ -29,8 +29,10 @@
  * THE OWNER'S OWN IDEAS ARE LISTED TOO (owner request 2026-11-25). A
  * speaking event the owner added by hand with the status Idea, and that the
  * directory does not already list by the same name, is a row here as well
- * (manualOpportunities.js). It comes from the hub's existing read of the
- * stored events, not from a second read on this tab. Its row has the same
+ * (manualOpportunities.js; the row is drawn by ManualRows.jsx). It comes
+ * from the hub's existing read of the stored events, not from a second
+ * read on this tab. Only events still to come are listed, and never a
+ * stored Sessionize record. Its row has the same
  * dates, days left and clash words; its notes are the entry's own
  * description, it has no estimate (the estimate reads the directory's copy
  * of an event), and Edit opens the entry's own form (the hub's shared
@@ -40,17 +42,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import {
-  AlertTriangle,
-  CalendarClock,
-  ExternalLink,
-  Plus,
-  KeyRound,
-  Loader2,
-  Pencil,
-  Sparkles,
-  X,
-} from 'lucide-react';
+import { CalendarClock, KeyRound, Loader2, Pencil, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,13 +53,13 @@ import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { tabHref as integrationsTabHref } from '@/components/admin/integrations/tabs';
 import { tabHref as aiEngineTabHref } from '@/components/admin/ai-engine/tabs';
 import ApplyCalendar from './ApplyCalendar';
-import EventForm from './EventForm';
 import { Dismissible, ReadsStatus, RefreshButton } from './TabParts';
 import { SectionHeading } from './EventTables';
 import { httpUrl } from './eventModel';
 import useApplyEvents from './useApplyEvents';
 import { manualOpportunities, withManualRows } from './manualOpportunities';
-import { ORIGIN_RECORD_PATHS } from '@/lib/pageLinks';
+import { CLOSE_TONES, Overlap, RowHeader } from './ApplyRowParts';
+import { AddEventButton, ManualEditor, ManualRow, manualEditAction } from './ManualRows';
 import {
   APPLY_STATUSES,
   COST_FIELDS,
@@ -297,106 +289,6 @@ function NoteEditor({ event, note, busy, onSave, onClose, onClear }) {
   );
 }
 
-/** "Clash" and "already speaking here", in words and with an icon. */
-function Overlap({ overlap }) {
-  if (!overlap) return null;
-  const { clashes, wouldMeet = [], speakingHere } = overlap;
-  if (clashes.length === 0 && wouldMeet.length === 0 && !speakingHere) return null;
-  return (
-    <div className="space-y-1 text-xs">
-      {wouldMeet.length > 0 && (
-        // Not a clash: the owner has not marked this event. Plain grey words,
-        // no warning sign, so a long list of unmarked events stays calm.
-        <p className="text-muted-foreground" data-testid="would-meet">
-          If you go, these dates meet{' '}
-          {wouldMeet.map((entry, index) => (
-            <span key={`${entry.kind}-${entry.name}`}>
-              {index > 0 ? '; ' : ''}
-              {entry.name} ({entry.detail})
-            </span>
-          ))}
-          .
-        </p>
-      )}
-      {overlap.speakingHere && (
-        <p className="text-emerald-700 dark:text-emerald-400">
-          You already have a talk at this event ({overlap.speakingHere}).
-        </p>
-      )}
-      {overlap.clashes.length > 0 && (
-        <div
-          role="note"
-          className="flex items-start gap-1.5 rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
-          data-testid="clash"
-        >
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <div>
-            <span className="font-semibold">Clash:</span> these dates meet{' '}
-            {overlap.clashes.map((clash, index) => (
-              <span key={`${clash.kind}-${clash.name}`}>
-                {index > 0 ? '; ' : ''}
-                {clash.name} ({clash.detail})
-              </span>
-            ))}
-            .
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const CLOSE_TONES = {
-  bad: 'text-rose-700 dark:text-rose-400',
-  warn: 'text-amber-700 dark:text-amber-400',
-  muted: 'text-muted-foreground',
-};
-const CANCELLED = {
-  id: 'cancelled',
-  label: 'Cancelled',
-  tone: 'bad',
-  help: 'The organizers cancelled this event.',
-};
-const POSTPONED = {
-  id: 'postponed',
-  label: 'Postponed',
-  tone: 'warn',
-  help: 'The organizers postponed this event; its dates may change.',
-};
-
-/** The title (a link to the event's page when there is one), tagline and badges. */
-function RowHeader({ event }) {
-  const page = httpUrl(event.url) || httpUrl(event.website);
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0">
-        <h3 className="text-sm font-semibold">
-          {page ? (
-            <a
-              href={page}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-              aria-label={`${event.title} (opens the event’s page in a new tab)`}
-            >
-              {event.title}
-              <ExternalLink className="ml-1 inline h-3 w-3" aria-hidden="true" />
-            </a>
-          ) : (
-            event.title
-          )}
-        </h3>
-        {event.tagline && <p className="text-xs text-muted-foreground">{event.tagline}</p>}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {event.cancelled && <StatusBadge status={CANCELLED} />}
-        {event.postponed && <StatusBadge status={POSTPONED} />}
-        <StatusBadge status={event.manual ? MANUAL_BADGE : applyStatusInfo(event.note?.status)} />
-      </div>
-    </div>
-  );
-}
-
 /** The owner's cost boxes that hold a number, and their total, in words. */
 function costsLine(note) {
   const total = costTotal(note?.costs);
@@ -506,7 +398,7 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
   const busy = apply.busyIds.has(event.id);
   return (
     <li className="space-y-2 rounded-xl border border-border p-4" data-event={event.id}>
-      <RowHeader event={event} />
+      <RowHeader event={event} badge={applyStatusInfo(note?.status)} />
       <RowFacts event={event} today={today} />
       <Overlap overlap={overlap} />
       {editing ? (
@@ -528,77 +420,6 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
           onEstimate={() => apply.estimate(event.id)}
         />
       )}
-    </li>
-  );
-}
-
-/** Where Edit on a manual row links when the tab has no editor: the entry's form on the hub. */
-export const manualEditHref = (row) => ORIGIN_RECORD_PATHS.speaking({ id: row.docId });
-export const MANUAL_BADGE = {
-  id: 'manual',
-  label: 'Added by you',
-  tone: 'muted',
-  help: 'A speaking event you entered on the Speaking hub, with the status Idea.',
-};
-export const MANUAL_NO_ESTIMATE =
-  'Not available for an event you added yourself: the estimate reads the directory’s copy of an event.';
-
-/** Edit on a manual row: the hub's own form for the entry, or a link to it. */
-function ManualEdit({ event, onEdit }) {
-  const label = `Edit ${event.title}`;
-  if (onEdit) {
-    return (
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 text-xs"
-        onClick={onEdit}
-        aria-label={label}
-      >
-        <Pencil className="mr-1 h-3 w-3" /> Edit event
-      </Button>
-    );
-  }
-  return (
-    <Button asChild size="sm" variant="outline" className="h-7 text-xs">
-      <Link to={manualEditHref(event)} aria-label={label}>
-        <Pencil className="mr-1 h-3 w-3" /> Edit event
-      </Link>
-    </Button>
-  );
-}
-
-/**
- * A speaking event the owner added by hand (status Idea). The same dates,
- * days left and clash words as a directory row; its notes and its form are
- * the stored entry's own, so Edit opens that entry rather than this tab's
- * status and costs (those belong to directory events).
- */
-function ManualRow({ event, overlap, today, onEdit }) {
-  const close = callCloseInfo(event.callCloses, today);
-  return (
-    <li className="space-y-2 rounded-xl border border-border p-4" data-event={event.id}>
-      <RowHeader event={event} />
-      <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-[8rem_1fr]">
-        <dt className="text-muted-foreground">Where</dt>
-        <dd>{locationLine(event)}</dd>
-        <dt className="text-muted-foreground">When</dt>
-        <dd>{formatRange(eventRange(event))}</dd>
-        <dt className="text-muted-foreground">Call for speakers</dt>
-        <dd className={CLOSE_TONES[close.tone]}>{close.label}</dd>
-        {event.entryNotes && (
-          <>
-            <dt className="text-muted-foreground">Your notes</dt>
-            <dd className="whitespace-pre-wrap break-words">{event.entryNotes}</dd>
-          </>
-        )}
-        <dt className="text-muted-foreground">Estimate</dt>
-        <dd className="text-muted-foreground">{MANUAL_NO_ESTIMATE}</dd>
-      </dl>
-      <Overlap overlap={overlap} />
-      <div className="flex flex-wrap gap-2">
-        <ManualEdit event={event} onEdit={onEdit} />
-      </div>
     </li>
   );
 }
@@ -828,20 +649,6 @@ function Intro({ fetchedAt }) {
 const talksNotReady = (data) =>
   !(data.stored.loaded && (data.sessionize.loaded || Boolean(data.sessionize.error)));
 
-/** The stored entry behind a manual row, for the editor. */
-const entryFor = (data, row) =>
-  (data.rows?.manualEntries ?? []).find((entry) => (entry._docId ?? entry.id) === row.docId);
-
-/** "Add an event", and the hub's form when it is open on this tab. */
-function ManualEditor({ editor }) {
-  return (
-    <>
-      {editor.error && <Dismissible onDismiss={editor.clearError}>{editor.error}</Dismissible>}
-      {editor.isOpen && <EventForm editor={editor} />}
-    </>
-  );
-}
-
 export default function ApplyTab({ data, editor = null }) {
   const { authReady } = useAuthReady();
   const apply = useApplyEvents(authReady);
@@ -870,6 +677,7 @@ export default function ApplyTab({ data, editor = null }) {
   const marks = marksForMonth(shownMonth, { events, saved: list.saved, talks });
   const shown = filterEvents(events, { search, status });
   const canEstimate = list.topics.count > 0 || list.topics.hasBio;
+  const editManual = manualEditAction(editor, data.rows?.manualEntries);
   const askClear = (target) =>
     setPendingClear({ id: target.id, title: target.title, note: target.note });
 
@@ -890,18 +698,10 @@ export default function ApplyTab({ data, editor = null }) {
           <RefreshButton onClick={apply.refreshNow} busy={read.pending} disabled={!list.keySet}>
             Refresh
           </RefreshButton>
-          {editor && (
-            <Button
-              size="sm"
-              onClick={editor.openNewIdea}
-              title="An event you found yourself: saved on the Speaking hub with the status Idea"
-            >
-              <Plus className="mr-1 h-4 w-4" /> Add an event
-            </Button>
-          )}
+          <AddEventButton editor={editor} />
         </div>
       </div>
-      {editor && <ManualEditor editor={editor} />}
+      <ManualEditor editor={editor} />
 
       {apply.writeError && (
         <Dismissible onDismiss={apply.clearWriteError}>
@@ -942,7 +742,7 @@ export default function ApplyTab({ data, editor = null }) {
                         event={event}
                         overlap={overlaps.get(event.id)}
                         today={today}
-                        onEdit={editor ? () => editor.openEditManual(entryFor(data, event)) : null}
+                        onEdit={editManual(event)}
                       />
                     ) : (
                       <EventRow
