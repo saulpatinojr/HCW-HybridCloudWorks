@@ -55,6 +55,14 @@ export const EXPECTED_UNRESOLVED = new Map([
     "CLOUDFLARE_ANALYTICS_TOKEN",
     "Cloudflare read-only analytics token, unseeded until the owner mints it and seeds CLOUDFLARE-ANALYTICS-TOKEN on Integrations -> Keys",
   ],
+  // The Cloudflare admin token (#1905) waits on the owner the same way: the
+  // reference lands with its Terraform run, and the Cloudflare page says it
+  // is not set up (and changes nothing) until CLOUDFLARE-ADMIN-TOKEN is
+  // pasted on Integrations -> Keys. Take it off when the owner seeds it.
+  [
+    "CLOUDFLARE_ADMIN_TOKEN",
+    "Cloudflare admin token for the Cloudflare page, unseeded until the owner makes it (one zone, one-year expiry) and seeds CLOUDFLARE-ADMIN-TOKEN on Integrations -> Keys",
+  ],
   // The visitor session broker's Coder token (#1403) waits on the owner too:
   // the reference lands with its Terraform run, and until the owner has minted
   // the token in Coder and pasted it as CODER-BROKER-TOKEN on Integrations ->

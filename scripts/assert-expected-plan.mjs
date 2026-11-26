@@ -842,6 +842,23 @@ export const DECLARED = [
   // declarations are gone. From here on a plan that changes either setting,
   // in either direction, is read as unexpected and shown to the owner.
 
+  // #1905: the Cloudflare page's admin token, a new Key Vault reference on
+  // the Function App, unresolved until the owner pastes
+  // CLOUDFLARE-ADMIN-TOKEN on the Keys tab. Delete this entry once the run
+  // has applied. CF_ZONE_ID arrives in the same run (undefined -> the zone
+  // id) and is deliberately NOT declared: its value is the owner's
+  // cloudflare_zone_id, which this public file does not hold, so it shows as
+  // UNEXPECTED and is read by hand (it must match the zone id the DNS
+  // records already use).
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CLOUDFLARE_ADMIN_TOKEN",
+    before: undefined,
+    after:
+      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ADMIN-TOKEN)",
+    reason: "#1905: the Cloudflare admin token's Key Vault reference for the Cloudflare page",
+  },
+
   // The app-exceptions alert stops counting the storage errors that follow
   // every Terraform apply (T-511), and a second rule watches for those errors
   // lasting an hour. The plan shows two changed attributes on the existing

@@ -1119,6 +1119,20 @@ describe('DECLARED', () => {
     expect(result.unexpected.some((line) => line.includes('app_settings.COMMUNITY_DAYS_API_KEY'))).toBe(true);
   });
 
+  it('declares the Cloudflare admin token’s Key Vault reference and reads the zone id by hand (#1905)', () => {
+    const added = fixture();
+    added.app.after.app_settings.CLOUDFLARE_ADMIN_TOKEN =
+      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ADMIN-TOKEN)';
+    expect(checkPlan(added.plan).ok).toBe(true);
+    expect(infraSource).toContain('"CLOUDFLARE_ADMIN_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ADMIN-TOKEN)"');
+    // The zone id is the owner's value, so its arrival is shown, not declared.
+    const zone = fixture();
+    zone.app.after.app_settings.CF_ZONE_ID = '00000000000000000000000000000001';
+    const result = checkPlan(zone.plan);
+    expect(result.ok).toBe(false);
+    expect(result.unexpected.some((line) => line.includes('app_settings.CF_ZONE_ID'))).toBe(true);
+  });
+
   it('reads the owner’s own GSC values as unexpected, so they are checked by hand (#1612)', () => {
     const { plan, app } = fixture();
     app.before.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';

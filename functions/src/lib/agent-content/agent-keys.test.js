@@ -34,10 +34,30 @@ const CLAUDE = agentKeyById('claude');
 const KODA_SECRET = generateKey();
 const CLAUDE_SECRET = generateKey();
 const allSwitches = (on) => Object.fromEntries(CAPABILITY_IDS.map((id) => [id, on]));
-/** What Claude's key starts with: reading and writing drafts, nothing else. */
+/** What Claude Publisher's key starts with: reading and writing drafts, nothing else. */
 const DRAFTS_ONLY = Object.fromEntries(
   CAPABILITY_IDS.map((id) => [id, id === 'drafts.read' || id === 'drafts.write'])
 );
+/**
+ * Koda's nine: every capability that existed before the Cloudflare switches
+ * (#1905). They still read on for a Koda record that never stored them; the
+ * four Cloudflare switches read off.
+ */
+const KODA_NINE = [
+  'drafts.read',
+  'drafts.write',
+  'drafts.review',
+  'published.read',
+  'admin.pipeline',
+  'admin.enhanced',
+  'admin.brain',
+  'admin.spotlight',
+  'admin.platform',
+];
+const KODA_DEFAULTS = Object.fromEntries(CAPABILITY_IDS.map((id) => [id, KODA_NINE.includes(id)]));
+/** What Claude Network Guy's key starts with: reading Cloudflare, nothing else. */
+const NETWORK_ONLY = Object.fromEntries(CAPABILITY_IDS.map((id) => [id, id === 'admin.cloudflare']));
+const NETWORK = agentKeyById('claude-network');
 
 const kodaRecord = (capabilities = allSwitches(true)) => ({
   ...buildKeyRecord({ secret: KODA_SECRET, actor: 'owner@hcw.dev', now: () => new Date(T0 - 60_000) }),
@@ -119,17 +139,25 @@ beforeEach(() => {
 });
 
 describe('the list of agent keys', () => {
-  it('keeps Koda first and unchanged, and adds a second key with its own record that starts with only reading and writing drafts on', () => {
-    expect(AGENT_KEY_IDS).toEqual(['koda', 'claude']);
-    expect(AGENT_KEYS[0]).toEqual({ id: 'koda', displayName: 'Koda', recordId: KEY_RECORD_ID, switchesOnWhenMade: true });
+  it('keeps Koda first with the nine switches it always had, a second key that starts with only reading and writing drafts on, and a third that starts with only reading Cloudflare', () => {
+    expect(AGENT_KEY_IDS).toEqual(['koda', 'claude', 'claude-network']);
+    expect(AGENT_KEYS[0]).toEqual({ id: 'koda', displayName: 'Koda', recordId: KEY_RECORD_ID, switchesOnWhenMade: KODA_NINE });
     expect(AGENT_ID).toBe('koda');
     expect(KEY_RECORD_ID).toBe('agent_content_key:koda');
+    // Shown as Claude Publisher since #1905; its id and record keep their names.
     expect(CLAUDE).toEqual({
       id: 'claude',
-      displayName: 'Claude',
+      displayName: 'Claude Publisher',
       recordId: 'agent_content_key:claude',
       switchesOnWhenMade: ['drafts.read', 'drafts.write'],
     });
+    expect(NETWORK).toEqual({
+      id: 'claude-network',
+      displayName: 'Claude Network Guy',
+      recordId: 'agent_content_key:claude-network',
+      switchesOnWhenMade: ['admin.cloudflare'],
+    });
+    expect(Object.isFrozen(NETWORK)).toBe(true);
     expect(new Set(AGENT_KEYS.map((key) => key.recordId)).size).toBe(AGENT_KEYS.length);
     expect(Object.isFrozen(AGENT_KEYS)).toBe(true);
     expect(Object.isFrozen(CLAUDE)).toBe(true);
@@ -158,9 +186,17 @@ describe('the list of agent keys', () => {
       oid: 'agent:claude',
       sub: 'agent:claude',
       preferred_username: 'claude (agent)',
-      name: 'Claude',
+      name: 'Claude Publisher',
       email: null,
       agent: 'claude',
+    });
+    expect(agentUserOf(NETWORK)).toEqual({
+      oid: 'agent:claude-network',
+      sub: 'agent:claude-network',
+      preferred_username: 'claude-network (agent)',
+      name: 'Claude Network Guy',
+      email: null,
+      agent: 'claude-network',
     });
   });
 
@@ -172,10 +208,12 @@ describe('the list of agent keys', () => {
 });
 
 describe('each key’s switches are its own', () => {
-  it('starts a new second key with only reading and writing drafts on, and Koda’s with every switch on', () => {
-    expect(defaultCapabilities()).toEqual(allSwitches(true));
-    expect(defaultCapabilities('koda')).toEqual(allSwitches(true));
+  it('starts a new second key with only reading and writing drafts on, Claude Network Guy’s with only reading Cloudflare, and Koda’s with its nine on and the Cloudflare switches off', () => {
+    expect(defaultCapabilities()).toEqual(KODA_DEFAULTS);
+    expect(defaultCapabilities('koda')).toEqual(KODA_DEFAULTS);
     expect(defaultCapabilities('claude')).toEqual(DRAFTS_ONLY);
+    expect(defaultCapabilities('claude-network')).toEqual(NETWORK_ONLY);
+    expect(buildKeyRecord({ secret: generateKey(), actor: 'owner@hcw.dev', agentId: 'claude-network' }).capabilities).toEqual(NETWORK_ONLY);
     expect(defaultCapabilities('not-a-key')).toEqual(allSwitches(false));
     const made = buildKeyRecord({ secret: CLAUDE_SECRET, actor: 'owner@hcw.dev', agentId: 'claude' });
     expect(made.id).toBe('agent_content_key:claude');
@@ -185,14 +223,20 @@ describe('each key’s switches are its own', () => {
     expect(JSON.stringify(made)).not.toContain(CLAUDE_SECRET);
   });
 
-  it('reads a switch the second key’s record never stored as its starting value, and Koda’s as on', () => {
+  it('reads a switch a record never stored as its key’s starting value: Koda’s nine on and the Cloudflare switches off', () => {
     const { capabilities: _k, ...kodaBare } = kodaRecord();
     const { capabilities: _a, ...claudeBare } = claudeRecord();
-    expect(enabledCapabilities(kodaBare)).toEqual(CAPABILITY_IDS);
+    expect(enabledCapabilities(kodaBare)).toEqual(KODA_NINE);
     expect(enabledCapabilities(claudeBare)).toEqual(['drafts.read', 'drafts.write']);
+    expect(enabledCapabilities({ id: 'agent_content_key:claude-network' })).toEqual(['admin.cloudflare']);
     expect(enabledCapabilities({ id: 'agent_content_key:other', capabilities: {} })).toEqual([]);
+    // A Koda record stored before #1905 holds its nine switches and none of
+    // the Cloudflare ones: those read off, so nothing Koda could do changes.
+    const storedBefore = { id: KEY_RECORD_ID, capabilities: Object.fromEntries(KODA_NINE.map((id) => [id, true])) };
+    expect(enabledCapabilities(storedBefore)).toEqual(KODA_NINE);
     expect(presentKeyRecord(null, 'claude').capabilities).toEqual(DRAFTS_ONLY);
-    expect(presentKeyRecord(null).capabilities).toEqual(allSwitches(true));
+    expect(presentKeyRecord(null, 'claude-network').capabilities).toEqual(NETWORK_ONLY);
+    expect(presentKeyRecord(null).capabilities).toEqual(KODA_DEFAULTS);
   });
 
   it('keeps a rotation from changing what the second key may do', () => {
@@ -267,7 +311,9 @@ describe('the key guard', () => {
     expect((await guard.requireCapability(request(CLAUDE_SECRET), 'drafts.write')).error).toBeNull();
     const claudeRead = await guard.requireCapability(request(CLAUDE_SECRET), 'drafts.read');
     expect(claudeRead.error.status).toBe(403);
-    expect(JSON.parse(claudeRead.error.body).error).toMatch(/^Claude's key does not allow this: .* on the AI Engine's Claude tab\.$/);
+    expect(JSON.parse(claudeRead.error.body).error).toMatch(
+      /^Claude Publisher's key does not allow this: .* on the Agents page's Claude Publisher tab\.$/
+    );
     expect((await guard.requireCapability(request(KODA_SECRET), 'drafts.read')).error).toBeNull();
     const kodaWrite = await guard.requireCapability(request(KODA_SECRET), 'drafts.write');
     expect(kodaWrite.error.status).toBe(403);
@@ -352,7 +398,7 @@ describe('the admin routes behind each key’s tab', () => {
     const res = await handlersOver(memoryStore(kodaRecord())).getKey(call('GET', '?agent=claude'));
     const answer = JSON.parse(res.body);
     expect(res.status).toBe(200);
-    expect(answer).toMatchObject({ agent: 'claude', displayName: 'Claude', switchesOnWhenMade: ['drafts.read', 'drafts.write'] });
+    expect(answer).toMatchObject({ agent: 'claude', displayName: 'Claude Publisher', switchesOnWhenMade: ['drafts.read', 'drafts.write'] });
     expect(answer.key).toEqual({ present: false, active: false, capabilities: DRAFTS_ONLY });
     expect(answer.adminAccess.every((section) => section.on === false)).toBe(true);
   });

@@ -469,7 +469,10 @@ describe('the status route', () => {
     expect(res.status).toBe(200);
     expect(res.body.agent).toBe('koda');
     expect(res.body.keyHint).toBe(RECORD.keyHint);
-    expect(res.body.capabilities).toEqual(CAPABILITY_IDS.filter((id) => id !== 'drafts.review'));
+    // Koda's new record holds its nine switches on and the Cloudflare ones off (#1905).
+    expect(res.body.capabilities).toEqual(
+      CAPABILITY_IDS.filter((id) => id !== 'drafts.review' && !id.startsWith('admin.cloudflare'))
+    );
     expect(res.body.limits.requestsPerMinute).toBe(120);
     expect(res.body.basePath).toBe('/api/agent-content/v1');
     expect(res.body.endpoints).toHaveLength(ENDPOINTS.length);

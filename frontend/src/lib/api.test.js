@@ -140,3 +140,31 @@ describe('sendJSON', () => {
     expect(Object.keys(init.headers).sort()).toEqual(['Authorization', 'Content-Type']);
   });
 });
+
+describe('the Cloudflare page’s timeouts (#1905)', () => {
+  it('waits longer than the default for the calls that make several Cloudflare requests', async () => {
+    const { timeoutForFunction } = await import('@/lib/api');
+    expect(timeoutForFunction('cms/cloudflare/status')).toBe(35000);
+    expect(timeoutForFunction('cms/cloudflare/purge')).toBe(35000);
+    expect(timeoutForFunction('cms/cloudflare/dns')).toBe(50000);
+    expect(timeoutForFunction('cms/cloudflare/settings/always_use_https')).toBe(50000);
+    expect(timeoutForFunction(`cms/cloudflare/dns/${'a'.repeat(32)}`)).toBe(50000);
+    expect(timeoutForFunction('cms/cloudflare/rulesets/phases/http_request_transform')).toBe(50000);
+    // The list reads keep the default.
+    expect(timeoutForFunction('cms/cloudflare/settings')).toBe(20000);
+    expect(timeoutForFunction('cms/cloudflare/rulesets')).toBe(20000);
+  });
+
+  it('does not retry a Cloudflare write that failed', async () => {
+    const { sendJSON } = await import('@/lib/api');
+    fetch.mockImplementation(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'busy' }),
+    }));
+    await expect(
+      sendJSON('cms/cloudflare/settings/brotli', 'PATCH', { value: 'on' })
+    ).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

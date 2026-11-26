@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Bot } from 'lucide-react';
 import { contentAgentVerdict } from './probeEvaluators';
-import { KODA } from './probeKit';
+import { AGENT_KEY_TAB, KODA } from './probeKit';
 
 import {
   CardRow,
@@ -94,15 +94,12 @@ function RefusalReasons({ denials }) {
 }
 
 /**
- * The key's own AI Engine tab: Koda's link as it always was, and the same
- * shape for any other agent key the snapshot names.
+ * The key's own tab on the Agents page: Koda's for a block that names no
+ * key, and the same shape for any other agent key the snapshot names.
  */
 function keyTab(agent) {
   if (!agent?.id || agent.id === 'koda') return KODA;
-  return {
-    to: `/admin/ai-engine?tab=${encodeURIComponent(agent.id)}`,
-    label: `${agent.label || agent.id} tab`,
-  };
+  return AGENT_KEY_TAB(agent);
 }
 
 /**

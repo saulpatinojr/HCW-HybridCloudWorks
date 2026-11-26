@@ -45,7 +45,9 @@ import {
   BadgeCheck,
   BookOpen,
   Bot,
+  BotMessageSquare,
   Calendar,
+  CloudCog,
   Code2,
   FilePen,
   FlaskConical,
@@ -187,10 +189,8 @@ export function roleLabel(role) {
  *                                 cms/forge/assist (…/workspace.js)
  *   AI Engine          editor     cms/config/{collection} (admin-integrations/config-collections.js), cms/ai-features,
  *                                 cms/ai-routing (admin-integrations/ai-features.js, ai-routing.js); the MCP OAuth
- *                                 routes are super_admin (ai/mcp-oauth-handlers.js); the Koda tab reads
- *                                 cms/agent-content/key at editor and its writes (generate, switch, revoke) are
- *                                 super_admin (agent-content/admin-handlers.js, ADR 0037)
- *                                 the Developer API tab reads cms/developer-api/keys at editor and its
+ *                                 routes are super_admin (ai/mcp-oauth-handlers.js); the agent key tabs moved to
+ *                                 the Agents page (#1905); the Developer API tab reads cms/developer-api/keys at editor and its
  *                                 writes (make, rotate, re-scope, revoke) are super_admin
  *                                 (developer-api/admin-handlers.js, ADR 0042)
  *   Image Prompts      editor     cms/image-prompts (cms/image-prompts/handlers.js)
@@ -213,6 +213,10 @@ export function roleLabel(role) {
  *                                 Telegram; cms/alerts/resend is editor, gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
+ *   Agents             editor     cms/agent-content/key (agent-content/admin-handlers.js), one tab per agent key; its
+ *                                 writes (generate, switch, revoke) are super_admin, gated (ADR 0037, #1905)
+ *   Cloudflare         editor     cms/cloudflare/status, settings, dns, rulesets (cloudflare-http.js, #1905); every
+ *                                 write (a setting, a purge, a DNS record, a rule phase) is super_admin, gated
  *   Cost               editor     cms/cost/summary, cms/cost/services, cms/cost/settings (cost/handlers.js, ADR 0039)
  *   Search Console     editor     cms/search-console and cms/search-console/run (search-console/handlers.js, #1612)
  *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
@@ -462,6 +466,22 @@ const ITEMS = [
     Plug,
     'Integrations',
     'Every external service, its keys, its connection test, where it is used, and a directory explaining each one.',
+    { minRole: 'editor' },
+  ],
+  [
+    'platform',
+    '/admin/agents',
+    BotMessageSquare,
+    'Agents',
+    'The agent keys outside agents call the site with: what each agent does, what its switches allow, and where its key is made, rotated and revoked.',
+    { minRole: 'editor' },
+  ],
+  [
+    'platform',
+    '/admin/cloudflare',
+    CloudCog,
+    'Cloudflare',
+    'The site’s Cloudflare zone: its settings, DNS records, rules and cache, with the parts that keep the site running locked.',
     { minRole: 'editor' },
   ],
   [

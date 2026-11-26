@@ -7,6 +7,8 @@
 import { getSessionizeSpeakerId } from '@/lib/adminSettings';
 import { classifyFailure, describeAge, toSystemStatus } from '@/lib/status';
 import { serviceById } from '@/components/admin/integrations/serviceRegistry';
+import { agentKeyTabHref } from '@/components/admin/agents/tabs';
+import { KODA_KEY_TAB } from '@/components/admin/ai-engine/agentKeys';
 
 export const HUBS = Object.freeze({
   pipeline: 'Pipeline',
@@ -30,8 +32,16 @@ export const SETTINGS = (tab) => ({
   label: 'Platform Settings',
 });
 export const AI_ENGINE = { to: '/admin/ai-engine', label: 'AI Engine' };
-/** The Koda tab on the AI Engine: the key, its switches and the route list (ADR 0037, 0038). */
-export const KODA = { to: '/admin/ai-engine?tab=koda', label: 'Koda tab' };
+/**
+ * An agent key's own tab on the Agents page (it was on the AI Engine until
+ * #1905): the key, its switches and the route list (ADR 0037, 0038).
+ */
+export const AGENT_KEY_TAB = (agent) => ({
+  to: agentKeyTabHref(agent.id),
+  label: `${agent.label || agent.displayName || agent.id} tab`,
+});
+/** Koda's tab, the one the Content agent probe links. */
+export const KODA = AGENT_KEY_TAB(KODA_KEY_TAB);
 export const LABS = { to: '/admin/labs?tab=agents', label: 'Labs' };
 export const NEWSLETTER = { to: '/admin/newsletter-hub?tab=settings', label: 'Newsletter Hub' };
 export const QUEUE = { to: '/admin/review-queue', label: 'Review Queue' };

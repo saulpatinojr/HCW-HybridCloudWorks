@@ -75,6 +75,7 @@ const EXPECTED_SHIM_FILES = [
   "change-feed.js",
   "cloud-tools-http.js",
   "cloud-tools-jobs.js",
+  "cloudflare-http.js",
   "cms-http.js",
   "code-quality-http.js",
   "community-days-http.js",

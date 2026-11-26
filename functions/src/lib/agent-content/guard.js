@@ -246,7 +246,7 @@ async function requireCapability(deps, request, capability) {
       error: deny(
         403,
         'FORBIDDEN',
-        `${name}'s key does not allow this: "${labelOf(capability)}" is switched off on the AI Engine's ${name} tab.`,
+        `${name}'s key does not allow this: "${labelOf(capability)}" is switched off on the Agents page's ${name} tab.`,
       ),
     };
   }

@@ -6,8 +6,9 @@ key. This page is how to make that key, connect Muse, prove it works, and take
 it away again. The reasons behind the design are in
 [ADR 0037](../decisions/0037-agent-content-api.md).
 
-Everything here happens on the AI Engine's **Koda** tab:
-<https://hybridcloudworks.com/admin/ai-engine?tab=koda>. You need the
+Everything here happens on the Agents page's **Koda** tab:
+<https://hybridcloudworks.com/admin/agents?tab=koda>. (Until 2026-11-26 the
+key tabs were on the AI Engine page; the old links still land here.) You need the
 `super_admin` role to make, change or revoke the key; an editor can see the
 tab but the buttons say they are not theirs.
 
@@ -21,7 +22,7 @@ Until a key exists, every call to the API is refused and nothing is on.
 
 ## 1. Make the key and connect Muse
 
-1. Open <https://hybridcloudworks.com/admin/ai-engine?tab=koda>. The first
+1. Open <https://hybridcloudworks.com/admin/agents?tab=koda>. The first
    card says **No key yet**.
 2. Press **Generate key**. An amber box appears with the key, beginning
    `hcwk_`. This is the only time it is shown. Press **Copy key**.
@@ -232,20 +233,21 @@ To take a section away, turn its switch off on the tab; to give Koda a route
 that is not listed, or to let it publish, change the table in
 `functions/src/lib/agent-content/admin-access.js` through a pull request.
 
-## 8. Claude's key: a second agent key
+## 8. Claude Publisher's key: a second agent key
 
 The site can hold more than one agent key. Each has its own record (one
 `admin_config` document holding a hash of the key, never the key), its own
-switches, its own tab on the AI Engine, its own limit of 120 calls a minute
+switches, its own tab on the Agents page, its own limit of 120 calls a minute
 and its own audit rows. The list of keys is
 [`functions/src/lib/agent-content/agent-keys.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/agent-content/agent-keys.js).
 Koda's key is the first and works exactly as the parts above say.
 
-The second key is **Claude**'s. Claude is a draft creator: it writes and edits
+The second key is **Claude Publisher**'s (shown as "Claude" until
+2026-11-26; its id is still `claude`). Claude Publisher is a draft creator: it writes and edits
 drafts on the Drafts page through the agent API. It cannot publish, schedule
 or delete, whatever its switches say, because no route it can reach does.
 
-Its tab is <https://hybridcloudworks.com/admin/ai-engine?tab=claude>. It is the
+Its tab is <https://hybridcloudworks.com/admin/agents?tab=claude>. It is the
 same tab as Koda's, over Claude's own record, so parts 1, 3, 4 and 5 work the
 same way there, with these differences:
 
@@ -288,6 +290,37 @@ Each key has its own row on the
 (`agent-key-koda`, `agent-key-claude`) with the 180-day reminder, and its own
 box on the **Agent keys** card under
 [Integrations → Services → Site platform](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform).
+
+## 9. Claude Network Guy's key: a third agent key
+
+The third key is **Claude Network Guy**'s (id `claude-network`). It
+administers the site's Cloudflare zone through the Cloudflare admin routes
+(`/api/cms/cloudflare/`), not the Drafts routes. Its tab is
+<https://hybridcloudworks.com/admin/agents?tab=claude-network>, the same tab
+as the others over its own record, so parts 1, 3, 4 and 5 work the same way
+there.
+
+- **Only reading starts on.** A new key has **Cloudflare: read** on and
+  every other switch off. Each kind of change is its own switch: **change
+  zone settings and purge the cache**, **add and edit DNS records**, and
+  **edit rules**. Turn on only what a task needs.
+- **What it can never do, whatever its switches say:** delete anything,
+  remove a rule from a phase (it may add and change rules only), change the
+  site's own address (the apex and `www`), or change a DNS record or rule
+  phase Terraform manages. The list and the reasons are in the
+  [Cloudflare admin runbook](cloudflare-admin.md#what-is-refused-and-why).
+- **Every change it makes** writes an audit row and sends a Telegram message
+  naming the setting, record or rule phase.
+- **The first test call** is `GET …/api/cms/cloudflare/status`; a good
+  answer has `"configured": true` once the site's Cloudflare token is set.
+- **The four Cloudflare switches start off for Koda and Claude Publisher
+  too.** They are on the shared list, so they appear on every key's tab, but
+  a key whose record never stored them reads them as off. Koda's key, which
+  used to read any unstored switch as on, now starts with the nine switches
+  that existed before (ADR 0047).
+
+Making the site's Cloudflare token and giving the key to a Claude session
+are in the [Cloudflare admin runbook](cloudflare-admin.md), parts 2 and 3.
 
 ## What the API expects from Koda, in brief
 

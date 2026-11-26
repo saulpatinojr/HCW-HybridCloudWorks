@@ -57,6 +57,9 @@ describe('the navigation registry', () => {
       'Platform Settings',
       'Health',
       'Integrations',
+      // #1905: the agent keys and the Cloudflare zone, beside Integrations.
+      'Agents',
+      'Cloudflare',
       'Cost',
       'Search Console',
     ]);

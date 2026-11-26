@@ -438,7 +438,7 @@ describe('the hub', () => {
     expect(within(card).getByText('3')).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: /Koda tab/ })).toHaveAttribute(
       'href',
-      '/admin/ai-engine?tab=koda'
+      '/admin/agents?tab=koda'
     );
     // Rotated on the date it was rotated, not on the date it was created.
     expect(within(card).getByText('Rotated')).toBeInTheDocument();
@@ -544,7 +544,7 @@ describe('the hub', () => {
     const claude = {
       ...SNAPSHOT.agent,
       id: 'claude',
-      label: 'Claude',
+      label: 'Claude Publisher',
       sectionsOff: [],
       denials: {
         ...SNAPSHOT.agent.denials,
@@ -556,15 +556,15 @@ describe('the hub', () => {
       name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agents: [SNAPSHOT.agent, claude] } : {}
     );
     renderAt();
-    expect(await screen.findByText('Content agent (Claude)')).toBeInTheDocument();
+    expect(await screen.findByText('Content agent (Claude Publisher)')).toBeInTheDocument();
     const [kodaCard, claudeCard] = screen.getAllByTestId('content-agent-card');
     expect(within(kodaCard).getByText('route-not-allowed')).toBeInTheDocument();
     expect(within(kodaCard).queryByText('capability-off')).not.toBeInTheDocument();
     expect(within(claudeCard).getByText('capability-off')).toBeInTheDocument();
     expect(within(claudeCard).queryByText('route-not-allowed')).not.toBeInTheDocument();
-    expect(within(claudeCard).getByRole('link', { name: /Claude tab/ })).toHaveAttribute(
+    expect(within(claudeCard).getByRole('link', { name: /Claude Publisher tab/ })).toHaveAttribute(
       'href',
-      '/admin/ai-engine?tab=claude'
+      '/admin/agents?tab=claude'
     );
   });
 

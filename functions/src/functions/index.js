@@ -15,6 +15,7 @@ import "./ai-model-catalog-http.js";
 import "./mcp-http.js";
 import "./integrations-http.js";
 import "./connection-probe-http.js";
+import "./cloudflare-http.js";
 import "./admin-uploads-http.js";
 import "./admin-snapshots-http.js";
 import "./cms-http.js";

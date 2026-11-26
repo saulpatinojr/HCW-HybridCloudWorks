@@ -4,7 +4,7 @@
  *
  * Koda is the owner's content agent, run by an outside service (Muse). It
  * signs in to the site with ONE API key: a random secret the site shows the
- * owner once, on the AI Engine's Koda tab, and then keeps only as a SHA-256
+ * owner once, on the Agents page's Koda tab, and then keeps only as a SHA-256
  * hash in one `admin_config` document. The plaintext is never stored, logged
  * or shown again; a lost key is replaced, not recovered.
  *
@@ -16,8 +16,8 @@
  * and it is revoked by deleting one hash, with no cache in front of it.
  *
  * WHAT EACH KEY CAN REACH is a closed list of capabilities, each a switch on
- * the key's own tab. All are on when Koda's key is made; a key added later
- * starts with only the switches its row lists (agent-keys.js). None can be
+ * the key's own tab. Each key starts with only the switches its row lists
+ * (agent-keys.js), and a capability added later starts off. None can be
  * added here without code, because a capability is a route group the
  * handlers wire by name.
  */
@@ -106,6 +106,35 @@ export const CAPABILITIES = Object.freeze([
     description:
       'Read every Platform page: health, the integration status, the Cost page, Search Console and Platform Settings; read the alerts sent to your phone, the calendar alerts, job states and the review queue; run a connection test or a Search Console run; and acknowledge, resolve or reopen a workflow alert. No settings writes, keys or secrets, no change to the cost ledger, no sending an alert to your phone again, and no deleting.',
   },
+  // The Cloudflare sections (#1905). Reading is one switch; each kind of
+  // change is its own, so the owner opens only what a task needs. None of
+  // them reaches what Terraform manages or the site's own address, and none
+  // deletes (cloudflare/protected.js says what is refused and why). The
+  // texts below promise no more than cloudflare/handlers.test.js proves.
+  {
+    id: 'admin.cloudflare',
+    label: 'Cloudflare: read',
+    description:
+      "Read the site's Cloudflare zone on the Cloudflare page: its status, every zone setting, the DNS records, the rulesets and whether the Cloudflare token works. Rules in a phase that cannot be edited from the page are shown without what they carry, and secret-looking header values are hidden. No changes.",
+  },
+  {
+    id: 'admin.cloudflare.settings',
+    label: 'Cloudflare: change zone settings and purge the cache',
+    description:
+      'Change a zone setting (security level, caching, speed and the like) and purge the cache. Never the SSL mode, the minimum TLS version, Always Use HTTPS, HSTS or the certificate Cloudflare shows the site: only you change those, on the Cloudflare page. Each change is recorded in the audit log with its old and new value, and sent to your phone.',
+  },
+  {
+    id: 'admin.cloudflare.dns',
+    label: 'Cloudflare: add and edit DNS records',
+    description:
+      "Add or edit A, AAAA, CNAME, MX and TXT records. Never the site's own address (the apex and www), a record Terraform manages, the lab's records, a certificate check, or a wildcard over any of them, and never a delete. Each change is recorded and sent to your phone.",
+  },
+  {
+    id: 'admin.cloudflare.rules',
+    label: 'Cloudflare: edit rules',
+    description:
+      'Add rules and change existing ones in five kinds of phase: redirects, URL rewrites, response headers, configuration rules and custom security rules (never one that skips the other checks). It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. Every other phase is read-only. These rules can still redirect or change requests to the API, so turn this on only for a task that needs it.',
+  },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));
 
@@ -152,9 +181,10 @@ export function agentIdOfRecord(record) {
 }
 
 /**
- * What a new key gets: every capability on for Koda's, only the ones its row
- * lists for a key added later (agent-keys.js `switchesOnWhenMade`; Claude's
- * key starts with reading and writing drafts), and none for an id the list
+ * What a new key gets: the capabilities its row lists (agent-keys.js
+ * `switchesOnWhenMade`; Koda's lists the nine that existed before the
+ * Cloudflare switches, Claude Publisher's reading and writing drafts, Claude
+ * Network Guy's reading Cloudflare), and none for an id the list
  * does not have. There is no delete switch to turn on: the key
  * never deletes (owner instruction 2026-11-01: create, produce and review,
  * never delete), so the v1 delete route is gone.

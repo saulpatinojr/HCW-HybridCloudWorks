@@ -134,6 +134,16 @@ export const CODER_ROTATION_CREDENTIAL_DAYS = 365;
 export const CLAUDE_CODE_OAUTH_TOKEN_DAYS = 365;
 
 /**
+ * The Cloudflare admin token's lifetime (#1905): the owner sets a one-year
+ * expiry when making it, under "Token expiration" on Cloudflare's page for
+ * creating a token
+ * (https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
+ * Cloudflare sets no expiry of its own, so this is the owner's choice, and
+ * after it the Cloudflare page stops working until a new token is pasted.
+ */
+export const CLOUDFLARE_ADMIN_TOKEN_DAYS = 365;
+
+/**
  * When Muse's Azure secret is due for rotation: `muse_reader_secret_days`
  * in infra/muse-reader.tf, which that file sets to the hand-rotation rule
  * above. Each secret keeps working for `MUSE_READER_GRACE_DAYS` more, so
@@ -348,6 +358,16 @@ const KEY_VAULT_METADATA = Object.freeze({
     consumer: "Ambassador hub monthly audience figure (page views)",
     rotate:
       "Mint a new read-only token (Account Analytics: Read) under My Profile → API Tokens in the Cloudflare dashboard, paste it on Integrations → Keys, then revoke the old one.",
+  },
+  // The Cloudflare page's token (#1905): account-owned, limited to the one
+  // zone, made with a one-year expiry, so its reminder is dated by that.
+  "CLOUDFLARE-ADMIN-TOKEN": {
+    issuer: "Cloudflare account API tokens",
+    consumer:
+      "The Cloudflare page and Claude Network Guy: read and change the zone's settings, DNS records, rules and cache",
+    lifetimeDays: CLOUDFLARE_ADMIN_TOKEN_DAYS,
+    rotate:
+      "Make a new account-owned token for the one zone (Manage Account → API Tokens in the Cloudflare dashboard, same permissions, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",
   },
 });
 
@@ -794,7 +814,8 @@ const OTHER_ENTRIES = [
 /**
  * One row per agent key the site can hold (agent-content/agent-keys.js),
  * built from that list so a key added there has its row and its reminder
- * here without a second edit. The site makes the key on its tab, shows it
+ * here without a second edit. The site makes the key on its tab on the
+ * Agents page (moved there from the AI Engine page in #1905), shows it
  * once and keeps only a hash in its record; nothing renews it, and no issuer
  * sets an expiry, so it takes the owner's hand-rotation rule.
  */
@@ -804,10 +825,10 @@ function agentKeyEntries() {
     name: `${key.recordId} (a hash of the key, never the key)`,
     store: "site-agent-keys",
     consumer: `${key.displayName}, through the agent API and the admin routes its own switches open`,
-    issuer: `This site (AI Engine → ${key.displayName} tab)`,
+    issuer: `This site (Agents → ${key.displayName} tab)`,
     renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
-    rotate: `Press Rotate key on the AI Engine's ${key.displayName} tab, paste the new key (shown once) where the old one was kept, then record the date here. The old key stops working on its next request.`,
+    rotate: `Press Rotate key on the Agents page's ${key.displayName} tab, paste the new key (shown once) where the old one was kept, then record the date here. The old key stops working on its next request.`,
   }));
 }
 

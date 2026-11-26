@@ -429,20 +429,29 @@ describe('the Hybrid Lab card: everything Coder in one box (2026-10-08)', () => 
     return box;
   };
 
-  it('puts both Coder keys and the automatic renewal under Coder, and Turnstile in a box of its own', async () => {
+  it('puts both Coder keys and the automatic renewal under Coder, and leaves Turnstile to the Cloudflare card', async () => {
     getJSON.mockImplementation(answering({ report: report(), warningDays: 30 }));
     render(<Harness group="labs" />);
 
     const coder = await coderBox();
     await waitFor(() => expect(within(coder).getByText('CODER-STATUS-TOKEN')).toBeTruthy());
     expect(within(coder).getByText('CODER-URL')).toBeTruthy();
-    expect(within(coder).queryByText('TURNSTILE-SECRET-KEY')).toBeNull();
     expect(within(coder).getByTestId('coder-automation')).toBeTruthy();
-
-    const turnstile = screen.getByRole('region', { name: 'Turnstile' });
-    expect(within(turnstile).getByText('TURNSTILE-SECRET-KEY')).toBeTruthy();
-    expect(within(turnstile).queryByTestId('coder-automation')).toBeNull();
+    // #1905: the Turnstile key is Cloudflare's, so it is on that card (Site
+    // platform), not here and not loose in this group.
+    expect(screen.queryByText('TURNSTILE-SECRET-KEY')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Turnstile' })).toBeNull();
     expect(getJSON).toHaveBeenCalledWith('cms/labs/coder-automation');
+  });
+
+  it('shows the Turnstile key in its own box on the Cloudflare card (#1905)', async () => {
+    getJSON.mockImplementation(answering({ report: report(), warningDays: 30 }));
+    render(<Harness group="platform" />);
+    const turnstile = await waitFor(() =>
+      screen.getByRole('region', { name: 'Turnstile (the human check on the lab)' })
+    );
+    // The box's title is the Cloudflare card's own (serviceRegistry.jsx).
+    await waitFor(() => expect(within(turnstile).getByText('TURNSTILE-SECRET-KEY')).toBeTruthy());
   });
 
   it('lists the renewal, the rotation credential, the template and the last check, healthy', async () => {
@@ -517,7 +526,7 @@ describe('the Hybrid Lab card: everything Coder in one box (2026-10-08)', () => 
     expect(box.querySelector('[data-status]')).toBeNull();
     const coder = await coderBox();
     await waitFor(() => expect(within(coder).getByText('CODER-STATUS-TOKEN')).toBeTruthy());
-    const card = cardFor('Hybrid Lab (Coder and Turnstile)');
+    const card = cardFor('Hybrid Lab (Coder)');
     fireEvent.click(within(card).getByRole('button', { name: /Rotate or replace the key/ }));
     expect(onOpenKeys).toHaveBeenCalled();
   });

@@ -201,6 +201,8 @@ const AdminForgeStudioPage = lazyPage(() => import('@/pages/admin/ForgeStudioPag
 const AdminLinkiePage = lazyPage(() => import('@/pages/admin/LinkiePage'));
 const AdminMailingListPage = lazyPage(() => import('@/pages/admin/MailingListPage'));
 const AdminIntegrationsPage = lazyPage(() => import('@/pages/admin/IntegrationsPage'));
+const AdminAgentsPage = lazyPage(() => import('@/pages/admin/AgentsPage'));
+const AdminCloudflarePage = lazyPage(() => import('@/pages/admin/CloudflarePage'));
 const AdminCostPage = lazyPage(() => import('@/pages/admin/CostPage'));
 const AdminSearchConsolePage = lazyPage(() => import('@/pages/admin/SearchConsolePage'));
 const AdminLabsPage = lazyPage(() => import('@/pages/admin/LabsPage'));
@@ -547,6 +549,8 @@ function App() {
                 <Route path="platform-settings" element={<AdminPlatformSettingsPage />} />
                 <Route path="health" element={<AdminHealthPage />} />
                 <Route path="integrations" element={<AdminIntegrationsPage />} />
+                <Route path="agents" element={<AdminAgentsPage />} />
+                <Route path="cloudflare" element={<AdminCloudflarePage />} />
                 <Route path="cost" element={<AdminCostPage />} />
                 <Route path="search-console" element={<AdminSearchConsolePage />} />
                 <Route path="social-hub" element={<AdminSocialHubPage />} />
