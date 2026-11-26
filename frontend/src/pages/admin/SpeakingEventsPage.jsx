@@ -106,7 +106,17 @@ export default function SpeakingEventsPage() {
     },
     [activeTab, setSearchParams, talkId]
   );
+  const clearTalkLink = useCallback(
+    () =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete(LINK_PARAMS.talk);
+        return next;
+      }),
+    [setSearchParams]
+  );
   useLinkedTalk({
+    clearLink: clearTalkLink,
     talkId,
     listable: canListRows(sessionize, stored),
     rows,

@@ -532,7 +532,9 @@ above does.
 1. **The Page exists in the nav registry** (`adminNav.js`), so its name,
    icon and route are known everywhere.
 2. **It can be opened at one record** through a named `LINK_PARAMS`
-   parameter, read with `linkedId` or `useLinkedItem`.
+   parameter, read with `linkedId` or `useLinkedItem`, or with the router's
+   search parameters when the link opens an editor, which then drops the
+   parameter when it closes (so a reload does not open it again).
 3. **If it needs content written:** it is in `ORIGIN_PAGES` with a `check`
    that refuses a missing or deleted record, an `ideaOrigin` the taxonomy
    ships and the `agentSection` switch that guards it for an agent key, and in

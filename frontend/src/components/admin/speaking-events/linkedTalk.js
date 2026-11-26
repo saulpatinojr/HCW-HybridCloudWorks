@@ -37,7 +37,9 @@ const OPENERS = {
 
 /**
  * Open the linked talk once, when the rows can be listed. A link that names
- * no row opens nothing; the tab the address names stays as it is.
+ * no row opens nothing; the tab the address names stays as it is. Once the
+ * editor the link opened closes (Cancel, Save or Delete), `clearLink` drops
+ * the parameter, so a reload does not open the talk again.
  *
  * @param {{
  *   talkId: string|null,
@@ -45,16 +47,29 @@ const OPENERS = {
  *   rows: { mergedEvents: object[], manualEntries: object[] },
  *   editor: { openEnrich: Function, openEditManual: Function },
  *   showTab: (tab: string) => void,
+ *   clearLink: () => void,
  * }} input
  */
-export default function useLinkedTalk({ talkId, listable, rows, editor, showTab }) {
+export default function useLinkedTalk({ talkId, listable, rows, editor, showTab, clearLink }) {
   const handled = useRef(null);
+  // 'opening' until the editor shows the linked talk, then 'open' until it closes.
+  const linkState = useRef('idle');
   useEffect(() => {
     if (!talkId || !listable || handled.current === talkId) return;
     handled.current = talkId;
     const found = findLinkedTalk(rows, talkId);
     if (!found) return;
     OPENERS[found.kind](editor, found.row);
+    linkState.current = 'opening';
     showTab(found.tab);
   }, [talkId, listable, rows, editor, showTab]);
+
+  const { editingId } = editor;
+  useEffect(() => {
+    if (linkState.current === 'opening' && editingId) linkState.current = 'open';
+    else if (linkState.current === 'open' && !editingId) {
+      linkState.current = 'idle';
+      clearLink();
+    }
+  }, [editingId, clearLink]);
 }

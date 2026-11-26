@@ -232,6 +232,22 @@ describe('a talk in the Pipeline (#1886)', () => {
     );
   });
 
+  it('drops the talk parameter once the linked editor closes', async () => {
+    searchParams = 'tab=past&talk=event-102';
+    getJSON.mockImplementation(async (route) => {
+      if (route === 'cms/speakerevents') return STORED;
+      if (route.startsWith('cms/content?')) return { success: true, items: [] };
+      throw new Error(`unexpected route ${route}`);
+    });
+    render(<SpeakingEventsPage />);
+    await screen.findByTestId('record-pipeline');
+    expect(setSearchParams).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(setSearchParams).toHaveBeenCalled());
+    const [update] = setSearchParams.mock.calls.at(-1);
+    expect(update(new URLSearchParams('tab=past&talk=event-102')).toString()).toBe('tab=past');
+  });
+
   it('starts a draft for a manual talk, with the talk as its origin', async () => {
     postJSON.mockResolvedValue({ ok: true, draft: { id: 'draft-1' } });
     render(<SpeakingEventsPage />);
