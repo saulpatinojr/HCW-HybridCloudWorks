@@ -43,7 +43,12 @@ export const NO_NEXT_STEP = Object.freeze({
 });
 
 /** The published statuses the public site admits (functions/src/lib/public-read-rules.js PUBLIC_STATUSES). */
-const PUBLIC_STATUSES = new Set(['published', 'published_blog', 'published_news', 'published_both']);
+const PUBLIC_STATUSES = new Set([
+  'published',
+  'published_blog',
+  'published_news',
+  'published_both',
+]);
 
 /**
  * Whether a piece is live: the public site's own rule
