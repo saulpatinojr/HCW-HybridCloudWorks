@@ -48,7 +48,8 @@
     "cloudflare": {
       "source": {
         "source": "github",
-        "repo": "cloudflare/skills"
+        "repo": "cloudflare/skills",
+        "ref": "ff191de7d903788eceaf516a514ae7d3b56b924a"
       }
     }
   },

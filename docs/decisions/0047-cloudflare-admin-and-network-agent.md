@@ -53,7 +53,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
 1. **Claude Code loads Cloudflare's official plugin** for every session on
    this repository, through `.claude/settings.json`
    (`extraKnownMarketplaces` with `cloudflare/skills`, and
-   `enabledPlugins` `cloudflare@cloudflare`). It brings Cloudflare's
+   `enabledPlugins` `cloudflare@cloudflare`), pinned to one reviewed
+   commit through the marketplace's `ref`, as the repository pins its
+   workflow actions. It brings Cloudflare's
    guidance skills and its remote MCP server (`https://mcp.cloudflare.com/mcp`),
    which signs in with the owner's Cloudflare account through a browser the
    first time it is used, so it works on the owner's computer and not in a

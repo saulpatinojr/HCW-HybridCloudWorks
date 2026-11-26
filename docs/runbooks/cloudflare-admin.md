@@ -42,6 +42,13 @@ Cloudflare's official plugin, following Cloudflare's
 The plugin's connection signs in through a browser, which a cloud session
 cannot open, so this part is done once on your own computer.
 
+The plugin is pinned to one reviewed commit of Cloudflare's repository (the
+`ref` in `.claude/settings.json`), so a change Cloudflare publishes reaches
+sessions only through a pull request that moves the pin. A pin of this kind
+needs Claude Code 2.1.324 or later; `claude --version` shows yours, and
+`claude update` brings it up to date
+([marketplace sources](https://code.claude.com/docs/en/plugins/marketplace-reference.md)).
+
 1. In PowerShell, in your copy of this repository, bring it up to date once
    the pull request has merged:
 
