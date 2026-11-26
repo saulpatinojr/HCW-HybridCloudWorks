@@ -18,7 +18,6 @@ import { createHash } from "node:crypto";
 import { PRODUCTION_ORIGINS } from "../auth/cors.js";
 import { dateOnly } from "../reminders/calendar.js";
 import {
-  MAX_LEAD_DAYS,
   MAX_NOTES_LENGTH,
   MAX_TITLE_LENGTH,
   PROVIDED_ROWS,
@@ -67,7 +66,7 @@ export function wantedAmbassadorRows(items) {
       id: ambassadorRowId(item.key),
       title: clip(item.title.trim(), MAX_TITLE_LENGTH),
       dueDate: item.due,
-      leadDays: Math.min(item.leadDays, MAX_LEAD_DAYS),
+      leadDays: item.leadDays,
       notes: clip(
         [item.detail, KEPT].filter(Boolean).join("\n\n"),
         MAX_NOTES_LENGTH,
@@ -95,6 +94,13 @@ export async function syncAmbassadorReminders({
       readReminderDoc(store),
       readAmbassadorAttention(store, dateOnly(now().getTime())),
     ]);
+    if (attention.missing) {
+      // A list that could not be read says nothing about what is due.
+      log.warn?.(
+        "[ambassadorReminders] the Ambassador store could not be read; reminders left as they are",
+      );
+      return { skip: "missing" };
+    }
     if (attention.truncated) {
       // Rows built from a cut list would remove reminders that should stay.
       log.warn?.(

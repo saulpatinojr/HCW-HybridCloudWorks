@@ -5,7 +5,9 @@
  * pure step, so either alone is enough.
  *
  * A missing `ambassador` container (not provisioned yet) reads as empty, the
- * way every Dashboard source treats it.
+ * way every Dashboard source treats it, and is reported as `missing`: the
+ * Telegram sync must not read "nothing to remind" from a list it could not
+ * read, or it would remove every Ambassador row (review of #1894).
  */
 import { CONTAINER } from "./model.js";
 import { OPEN_APPLICATION_STATUSES, ambassadorAttention } from "./attention.js";
@@ -20,11 +22,14 @@ export const ATTENTION_READ_LIMIT = 500;
 const NOT_DELETED =
   "(NOT IS_DEFINED(c.softDeletedAt) OR IS_NULL(c.softDeletedAt))";
 
+/** A sentinel for "the container is not there", kept apart from an empty list. */
+const MISSING = Symbol("missing");
+
 async function rows(store, query, parameters) {
   try {
     return (await store.queryDocs(CONTAINER, query, parameters)) || [];
   } catch (error) {
-    if (isContainerMissing(error)) return [];
+    if (isContainerMissing(error)) return MISSING;
     throw error;
   }
 }
@@ -32,11 +37,11 @@ async function rows(store, query, parameters) {
 /**
  * @param {{ queryDocs: Function }} store
  * @param {string} today YYYY-MM-DD (UTC)
- * @returns {Promise<{ items: ReturnType<typeof ambassadorAttention>, truncated: boolean }>}
+ * @returns {Promise<{ items: ReturnType<typeof ambassadorAttention>, truncated: boolean, missing: boolean }>}
  */
 export async function readAmbassadorAttention(store, today) {
   const limit = ATTENTION_READ_LIMIT;
-  const [programs, applications, evidence] = await Promise.all([
+  const read = await Promise.all([
     rows(
       store,
       `SELECT TOP ${limit} c.id, c.name, c.enabled, c.membershipStatus, c.upkeep, c.reminders, c.softDeletedAt FROM c WHERE c.docType = 'program' AND ${NOT_DELETED} ORDER BY c._ts DESC`,
@@ -54,7 +59,12 @@ export async function readAmbassadorAttention(store, today) {
       [{ name: "@since", value: `${today.slice(0, 4)}-01-01` }],
     ),
   ]);
+  const missing = read.includes(MISSING);
+  const [programs, applications, evidence] = read.map((list) =>
+    list === MISSING ? [] : list,
+  );
   return {
+    missing,
     items: ambassadorAttention({ programs, applications, evidence, today }),
     truncated:
       programs.length >= limit ||

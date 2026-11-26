@@ -158,6 +158,21 @@ describe("syncAmbassadorReminders", () => {
     expect(store.doc.reminders).toEqual([]);
   });
 
+  it("writes nothing, and keeps the rows, when the Ambassador store is missing", async () => {
+    const own = { id: "my-own-row", title: "Own", dueDate: "2026-12-01" };
+    const kept = { id: ambassadorRowId("x"), title: "Kept", dueDate: "2026-12-10" };
+    const store = storeWith({ reminders: [own, kept] });
+    store.queryDocs.mockImplementation(async () => {
+      throw Object.assign(new Error("not found"), { code: 404 });
+    });
+    const warn = vi.fn();
+    expect(
+      await syncAmbassadorReminders({ store, now: () => NOW, log: { warn } }),
+    ).toEqual({ synced: false, reason: "missing" });
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+    expect(store.doc.reminders).toEqual([own, kept]);
+  });
+
   it("writes nothing when a list was cut at its read limit", async () => {
     const store = storeWith({ ambassador: [EXAMPLE] });
     store.queryDocs.mockImplementation(async (container, query) =>

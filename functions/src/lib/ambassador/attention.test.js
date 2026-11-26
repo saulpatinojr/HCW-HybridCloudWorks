@@ -2,6 +2,7 @@
  * What Ambassador needs from the owner, and by when (#1886, phase 2): the
  * one list the Dashboard and the Telegram reminders both read.
  */
+import { MAX_LEAD_DAYS } from "../reminders/settings.js";
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_LEAD_DAYS,
@@ -153,6 +154,26 @@ describe("deadlines on applications", () => {
     expect(byKey(items)["b:submissionDeadline"].leadDays).toBe(
       DEFAULT_LEAD_DAYS.deadline,
     );
+  });
+
+  it("holds a lead time to the reminders sheet's limit, so the Dashboard and Telegram agree", () => {
+    const far = {
+      ...SECOND,
+      reminders: { daysBeforeDeadline: 500, daysBeforeRenewal: 400 },
+    };
+    const items = ambassadorAttention({
+      programs: [far],
+      applications: [
+        {
+          id: "b",
+          programId: far.id,
+          status: "ready",
+          submissionDeadline: "2027-01-31",
+        },
+      ],
+      today: TODAY,
+    });
+    expect(byKey(items)["b:submissionDeadline"].leadDays).toBe(MAX_LEAD_DAYS);
   });
 
   it("skips a deleted application, a date that no longer matters for its status, and a non-date", () => {

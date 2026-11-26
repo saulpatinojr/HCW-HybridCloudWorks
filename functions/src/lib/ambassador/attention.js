@@ -24,6 +24,7 @@
  * caller cannot forget to.
  */
 import { upkeepProgress, daysUntil } from "./upkeep.js";
+import { MAX_LEAD_DAYS } from "../reminders/settings.js";
 import {
   ambassadorHref,
   ambassadorProgramHref,
@@ -66,8 +67,10 @@ const leadDays = (program, kind) => {
     kind === "deadline"
       ? program?.reminders?.daysBeforeDeadline
       : program?.reminders?.daysBeforeRenewal;
+  // Held to the reminders sheet's own limit here, once, so the Dashboard and
+  // Telegram start an item on the same day (review of #1894).
   return Number.isInteger(stored) && stored >= 0
-    ? stored
+    ? Math.min(stored, MAX_LEAD_DAYS)
     : DEFAULT_LEAD_DAYS[kind];
 };
 
