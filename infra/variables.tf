@@ -1174,6 +1174,15 @@ variable "functions_origin_lock_enabled" {
 # in frontend.tf, #1903). false removes the rule in one apply, the rollback if
 # it ever blocks a legitimate caller. It needs Zone WAF Write on the token;
 # see the permission paragraph beside cloudflare_origin_secret.
+#
+# The plan check (tfc-plan-check.yml) reports that rollback's one delete,
+# cloudflare_ruleset.api_rate_limit[0], as UNEXPECTED, on purpose: a delete
+# is declared only for the run that makes it, never in advance, so a delete
+# nobody asked for can never pass quietly. Flipping this variable in the
+# workspace has no pull request, so the person rolling back reads that one
+# line as the expected result; a rollback made by pull request adds the
+# delete to DECLARED in scripts/assert-expected-plan.mjs, as any intended
+# change does.
 variable "api_rate_limit_enabled" {
   description = "Rate-limit every /api/ path at Cloudflare (200 requests per 10 seconds per address, counted per Cloudflare data centre). Needs Zone WAF Write on cloudflare_api_token"
   type        = bool
