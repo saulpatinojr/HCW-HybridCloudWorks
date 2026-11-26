@@ -72,6 +72,21 @@ import { PROBE_TIMEOUT_MS, redactSecrets, runProbe, unreachableAnswer } from './
 export { PROBE_FAILURE_FIELDS, PROBE_TIMEOUT_MS, probeFailure, redactSecrets } from './probe-answer.js';
 import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING, PROBE_URL as COMMUNITY_DAYS_PROBE_URL, sentenceForStatus as communityDaysSentence } from '../community-days/api.js';
 
+/**
+ * The Cloudflare probe's address and settings (#1905). Written here rather
+ * than imported from cloudflare/client.js, so this module (which a frontend
+ * test reaches) does not pull in the Cloudflare client; connection-probe.test.js
+ * holds the two copies equal.
+ */
+export const CLOUDFLARE_PROBE = Object.freeze({
+  apiBase: 'https://api.cloudflare.com/client/v4',
+  tokenSetting: 'CLOUDFLARE_ADMIN_TOKEN',
+  zoneSetting: 'CF_ZONE_ID',
+});
+const CLOUDFLARE_API_BASE = CLOUDFLARE_PROBE.apiBase;
+const CLOUDFLARE_TOKEN_SETTING = CLOUDFLARE_PROBE.tokenSetting;
+const CLOUDFLARE_ZONE_SETTING = CLOUDFLARE_PROBE.zoneSetting;
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -485,6 +500,47 @@ export const PROBES = Object.freeze({
       'No key yet: the Community Days key has not been pasted on the Keys tab. Community Days must approve API access first; then paste the key there and press Test again',
     failureSentence: (status) => ([401, 403, 429].includes(status) ? communityDaysSentence(status) : null),
     summarize: (data) => ({ total: Number.isInteger(data?.total) ? data.total : null }),
+  }),
+
+  /**
+   * `GET /zones/{CF_ZONE_ID}` — the site's zone, read with the Cloudflare
+   * admin token the Cloudflare page uses (#1905). Read-only and free. A
+   * pass says the token is live and can read this one zone; it does not
+   * say which kinds of change the token may make (the Cloudflare page's
+   * Overview tab reads each one). The zone id is a plain setting from
+   * Terraform, not a secret, and goes in the path; the token goes in the
+   * header. A success relays the zone's name, status and plan only.
+   *
+   * No key verdict: Cloudflare answers 403 both for a wrong token and for
+   * a good token without Zone Read on this zone, so a red light would not
+   * say which to fix.
+   */
+  cloudflare: createProbe({
+    name: 'cloudflare',
+    service: 'Cloudflare',
+    settings: [CLOUDFLARE_TOKEN_SETTING, CLOUDFLARE_ZONE_SETTING],
+    buildRequest: ({ values }) => ({
+      url: `${CLOUDFLARE_API_BASE}/zones/${assertUrlSafe(values[CLOUDFLARE_ZONE_SETTING])}`,
+      headers: {
+        Authorization: `Bearer ${values[CLOUDFLARE_TOKEN_SETTING]}`,
+        Accept: 'application/json',
+      },
+    }),
+    notConfigured:
+      'No token yet: the Cloudflare admin token has not been pasted on the Keys tab (CLOUDFLARE-ADMIN-TOKEN). Make it in the Cloudflare dashboard for this one zone, paste it there and press Test again',
+    failureSentence: (status) => {
+      if (status === 400) return 'Cloudflare did not accept the zone id (CF_ZONE_ID, set by Terraform). Check the cloudflare_zone_id workspace variable';
+      if (status === 401 || status === 403) {
+        return 'Cloudflare refused the token: it is wrong, expired, or cannot read this zone. Make a new one with Zone Read on this zone and paste it on the Keys tab';
+      }
+      if (status === 404) return 'Cloudflare has no zone with that id (CF_ZONE_ID, set by Terraform)';
+      return null;
+    },
+    summarize: (data) => ({
+      name: typeof data?.result?.name === 'string' ? data.result.name : null,
+      status: typeof data?.result?.status === 'string' ? data.result.status : null,
+      plan: typeof data?.result?.plan?.name === 'string' ? data.result.plan.name : null,
+    }),
   }),
 });
 

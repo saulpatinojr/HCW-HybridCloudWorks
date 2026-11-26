@@ -504,6 +504,16 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # then the reference resolves to nothing and the timer records nothing.
     "CLOUDFLARE_ANALYTICS_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ANALYTICS-TOKEN)"
 
+    # The Cloudflare page and Claude Network Guy (#1905): a THIRD Cloudflare
+    # token, account-owned and limited to this one zone, that reads and
+    # changes zone settings, DNS records, rules and the cache through the
+    # admin routes in functions/src/lib/cloudflare/. Not the workspace's
+    # cloudflare_api_token: the app never holds Terraform's own token. The
+    # owner makes it with a one-year expiry and pastes it on the Keys tab;
+    # until then the reference resolves to nothing and the page says it is
+    # not set up.
+    "CLOUDFLARE_ADMIN_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ADMIN-TOKEN)"
+
     # The Web Analytics site the read is scoped to, taken STRAIGHT FROM THE
     # RESOURCE in frontend.tf and never typed by the owner: a copied site tag
     # drifts the day the site is recreated, and the resource knows its own
@@ -527,6 +537,13 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # unset, which the timer reads as "not configured" (one log line, nothing
     # written) rather than as a missing setting.
     "CF_ACCOUNT_ID" = var.cloudflare_account_id == null ? "" : var.cloudflare_account_id
+
+    # The zone the Cloudflare page administers (#1905), the same value every
+    # cloudflare_dns_record in frontend.tf takes. An identifier, not a
+    # secret: it is in every API path for the zone and opens nothing on its
+    # own, so a plain setting beside CF_ACCOUNT_ID. The variable is required,
+    # so this is never empty.
+    "CF_ZONE_ID" = var.cloudflare_zone_id
 
     # The admin Search Console page's Google sign-in (#1612,
     # functions/src/lib/search-console/google-auth.js): workload identity

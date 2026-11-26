@@ -46,6 +46,8 @@ const ENV = {
   REPLICATE_API_KEY: 'not-a-real-replicate-key-EXAMPLE-VALUE-FOR-TESTS',
   FIRECRAWL_API_KEY: 'not-a-real-firecrawl-key-EXAMPLE-VALUE-FOR-TESTS',
   COMMUNITY_DAYS_API_KEY: 'cdo_test_not-a-real-community-days-key-EXAMPLE',
+  CLOUDFLARE_ADMIN_TOKEN: 'not-a-real-cloudflare-admin-token-EXAMPLE-VALUE',
+  CF_ZONE_ID: '00000000000000000000000000000001',
 };
 
 const readKey = (env, name) => (typeof env?.[name] === 'string' ? env[name].trim() : '');
@@ -130,6 +132,7 @@ describe('the probe table', () => {
       'replicate',
       'firecrawl',
       'communityDays',
+      'cloudflare',
     ]);
     for (const name of PROBE_NAMES) {
       const probe = PROBES[name];
@@ -685,5 +688,59 @@ describe('the Community Days probe (#1823)', () => {
     expect(bodyOf(res).ok).toBe(false);
     expect(res.body).not.toContain(CDAYS_KEY);
     expect(JSON.stringify([context.error.mock.calls, context.warn.mock.calls, context.log.mock.calls])).not.toContain(CDAYS_KEY);
+  });
+});
+
+describe('the Cloudflare probe (#1905)', () => {
+  it('uses the same address and settings as the Cloudflare page’s client', async () => {
+    const client = await import('../cloudflare/client.js');
+    const { CLOUDFLARE_PROBE } = await import('./connection-probe.js');
+    expect(CLOUDFLARE_PROBE).toEqual({
+      apiBase: client.CLOUDFLARE_API_BASE,
+      tokenSetting: client.TOKEN_SETTING,
+      zoneSetting: client.ZONE_SETTING,
+    });
+  });
+
+  const CF_TOKEN = ENV.CLOUDFLARE_ADMIN_TOKEN;
+  const run = (fetchImpl, env = ENV) =>
+    createConnectionProbe({ guard: allow, env, readKey, fetch: fetchImpl })(req({ probe: 'cloudflare' }), ctx());
+
+  it('reads the one zone with the admin token in a header, and relays only its name, status and plan', async () => {
+    const { url, headers } = PROBES.cloudflare.buildRequest({ values: ENV });
+    expect(url).toBe('https://api.cloudflare.com/client/v4/zones/00000000000000000000000000000001');
+    expect(url).not.toContain(CF_TOKEN);
+    expect(headers).toEqual({ Authorization: `Bearer ${CF_TOKEN}`, Accept: 'application/json' });
+    expect(PROBES.cloudflare.settings).toEqual(['CLOUDFLARE_ADMIN_TOKEN', 'CF_ZONE_ID']);
+    expect(PROBES.cloudflare.reportsKeyVerdict).toBe(false);
+
+    const fetchImpl = respond({
+      text: '{"success":true,"result":{"id":"00000000000000000000000000000001","name":"example.com","status":"active","plan":{"name":"Free Website"},"owner":{"email":"someone@example.com"}}}',
+    });
+    const res = await run(fetchImpl);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('GET');
+    expect(bodyOf(res)).toEqual({ ok: true, status: 200, data: { name: 'example.com', status: 'active', plan: 'Free Website' } });
+    expect(res.body).not.toContain(CF_TOKEN);
+  });
+
+  it('says "no token yet" when the token is not set, and calls nothing', async () => {
+    const fetchImpl = vi.fn();
+    const body = bodyOf(await run(fetchImpl, { ...ENV, CLOUDFLARE_ADMIN_TOKEN: '' }));
+    expect(body).toMatchObject({ ok: false, code: 'INTEGRATION_NOT_CONFIGURED' });
+    expect(body.error).toMatch(/^No token yet: .*Keys tab/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, /did not accept the zone id/],
+    [401, /refused the token/],
+    [403, /refused the token/],
+    [404, /no zone with that id/],
+  ])('gives HTTP %i its own sentence, with none of the far end’s words', async (status, sentence) => {
+    const res = await run(respond({ ok: false, status, text: `{"errors":[{"message":"far-end words ${CF_TOKEN}"}]}` }));
+    const body = bodyOf(res);
+    expect(body.error).toMatch(sentence);
+    expect(res.body).not.toMatch(/far-end words/);
+    expect(res.body).not.toContain(CF_TOKEN);
   });
 });

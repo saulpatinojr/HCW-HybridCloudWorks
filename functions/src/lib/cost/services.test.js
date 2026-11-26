@@ -192,7 +192,7 @@ describe('suggestions', () => {
     expect(SUGGESTED_VENDORS.map((s) => s.name)).toContain('ElevenLabs');
     expect(SUGGESTED_VENDORS.map((s) => s.name)).not.toContain('AWS');
     // Paid subscriptions with no key in the catalogue are suggested too.
-    for (const name of ['Claude subscription', 'GitHub Copilot', 'Hostinger (lab host)']) {
+    for (const name of ['Claude subscription', 'GitHub Copilot', 'Hostinger (lab host)', 'Cloudflare']) {
       expect(SUGGESTED_VENDORS.map((s) => s.name)).toContain(name);
     }
     expect(new Set(SUGGESTED_VENDORS.map((s) => s.vendor.toLowerCase())).size).toBe(SUGGESTED_VENDORS.length);

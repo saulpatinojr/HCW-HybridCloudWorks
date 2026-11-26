@@ -248,15 +248,20 @@ export function summarizeServices(items, { upcomingDays = UPCOMING_DAYS } = {}) 
  * Subscriptions the estate pays for that hold no key in the catalogue, so the
  * catalogue alone would never suggest them (2026-11-22): the Claude
  * subscription the `@claude` workflow runs on, GitHub Copilot, whose code
- * review reads every pull request, and Hostinger, which rents out the lab
- * host. Each has a card on Integrations → Services that points here for its
- * plan and price.
+ * review reads every pull request, Hostinger, which rents out the lab
+ * host, and Cloudflare, the zone's host (#1905; its keys are in the Site
+ * platform section, which is not suggested by itself). Each has a card on
+ * Integrations → Services that points here for its plan and price.
  */
 export const SUGGESTED_SUBSCRIPTIONS = Object.freeze(
   [
     { name: 'Claude subscription', vendor: 'Claude', category: 'ai', link: '' },
     { name: 'GitHub Copilot', vendor: 'GitHub Copilot', category: 'developer', link: '' },
     { name: 'Hostinger (lab host)', vendor: 'Hostinger', category: 'infrastructure', link: '' },
+    // Cloudflare's keys are all in the Site platform section, which is not
+    // suggested by itself, so the vendor whose card links here (#1905) is
+    // named here: its plan (Free today) is the owner's to record.
+    { name: 'Cloudflare', vendor: 'Cloudflare', category: 'infrastructure', link: '' },
   ].map(Object.freeze)
 );
 
