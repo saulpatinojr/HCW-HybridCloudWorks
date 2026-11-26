@@ -1,7 +1,7 @@
 # Future Events: manual entries alongside the Community Days feed
 
 Date: 2026-11-25
-Status: spec for implementation (owner request, 2026-11-25; scope updated same day)
+Status: Implemented 2026-11-26 (#1898)
 
 ## Context
 
@@ -13,12 +13,12 @@ API feed of events to apply to.
 
 Manual opportunities that do not come from Community Days are recorded as
 speaker events (`speakerevents`) with `status: "idea"` and a `cfpDeadline`.
-Example, created 2026-11-25: `vslive-ailive-mshq-2027` — VSLive! & AiLive!
-@ Microsoft HQ 2027 (2027-08-02, Redmond, WA; proposals due 2026-12-14;
-https://sessionize.com/VSLAILMSHQ27/). It is in `speakerevents` but never
-appears in Future Events, because the tab only reads the Community Days feed.
+For example, a made-up entry `example-conf-2027`, "Example Conf 2027"
+(2027-08-02; proposals due 2026-12-14; https://example.org/cfp), would be
+in `speakerevents` but never appear in Future Events, because the tab only
+reads the Community Days feed.
 
-The owner will soon be adding these manual entries himself. Manual entry is
+The owner will soon be adding these manual entries from the admin pages. Manual entry is
 therefore a first-class feature to enable now, alongside the API method —
 not just a display concern for entries created through the API.
 
@@ -39,7 +39,8 @@ Community Days rows, so one list holds every event worth applying to:
   on the Upcoming tab.
 - Give manual rows the same treatment as feed rows where it makes sense:
   CFP deadline and days left, clash marks against the owner's own talks
-  (applyModel rules), notes, and the estimate button.
+  (applyModel rules), notes, and the estimate button. (Built without the
+  estimate: see "Same row treatment" under "What was built" for why.)
 - Keep the Community Days read path and its guard patterns
   ([ADR 0033](../decisions/0033-contentforge-alignment.md),
   [ADR 0045](../decisions/0045-community-days-events.md)) intact. Decide server-side merge (extend the
@@ -63,8 +64,9 @@ Community Days rows, so one list holds every event worth applying to:
 
 - The owner can add a manual opportunity from the admin UI and it appears
   in Future Events next to the Community Days rows.
-- The existing `vslive-ailive-mshq-2027` entry appears in Future Events
-  with its Dec 14, 2026 deadline and days-left.
+- An Idea entry with a Dec 14, 2026 proposals deadline (the made-up
+  `example-conf-2027` above) appears in Future Events with that deadline
+  and its days left.
 - Existing tab behavior (notes, estimates, refresh, clash marks) unchanged
   for feed rows; test suites green.
 
@@ -115,8 +117,10 @@ a route that caches and paces an outside service, for no gain.
   role: the same editor role as the rest of the Speaking hub.
 - **Order.** Directory rows keep the server's order (soonest first); each
   manual row is slotted in before the first directory row that starts later.
-- **Without the Community Days key** the tab still lists the owner's ideas,
-  under the usual "key is not set" notice.
+- **Without the Community Days key, or when its read fails,** the tab still
+  lists the owner's ideas. The "key is not set" notice and the read's error
+  both name the Community Days directory, so neither says there are no
+  events at all while the owner's own rows show below them.
 
 Code, in `frontend/src/components/admin/speaking-events/`:
 [`manualOpportunities.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/manualOpportunities.js)
@@ -128,5 +132,5 @@ Code, in `frontend/src/components/admin/speaking-events/`:
 [`ApplyTab.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/ApplyTab.jsx)
 (the tab). Tests: `manualOpportunities.test.js`, `ManualRows.test.jsx` and
 the "the owner's own ideas" block of `ApplyTab.test.jsx`, which also holds
-the acceptance line: the recorded `vslive-ailive-mshq-2027` entry shows
+the acceptance line: the made-up `example-conf-2027` entry shows
 next to the directory row with "Closes Dec 14, 2026" and its days left.
