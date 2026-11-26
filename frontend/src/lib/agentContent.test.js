@@ -19,6 +19,7 @@ vi.mock('@/lib/functionsBase', () => ({
 
 const {
   KODA_KEY_ROUTE,
+  agentKeyRoute,
   generateKodaKey,
   kodaApiAddress,
   readKodaKey,
@@ -45,6 +46,23 @@ describe('the calls', () => {
     await revokeKodaKey();
     expect(sendJSON).toHaveBeenCalledWith(KODA_KEY_ROUTE, 'DELETE');
     expect(KODA_KEY_ROUTE).toBe('cms/agent-content/key');
+  });
+
+  it('name another agent key on every call, while Koda’s calls name none', async () => {
+    const route = `${KODA_KEY_ROUTE}?agent=claude`;
+    expect(agentKeyRoute()).toBe(KODA_KEY_ROUTE);
+    expect(agentKeyRoute('koda')).toBe(KODA_KEY_ROUTE);
+    expect(agentKeyRoute('claude')).toBe(route);
+    await readKodaKey('claude');
+    await generateKodaKey('claude');
+    await setKodaCapabilities({ 'drafts.write': true }, 'claude');
+    await revokeKodaKey('claude');
+    expect(getJSON).toHaveBeenCalledWith(route);
+    expect(postJSON).toHaveBeenCalledWith(route, {});
+    expect(sendJSON).toHaveBeenCalledWith(route, 'PATCH', {
+      capabilities: { 'drafts.write': true },
+    });
+    expect(sendJSON).toHaveBeenCalledWith(route, 'DELETE');
   });
 });
 

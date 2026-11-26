@@ -704,6 +704,24 @@ input. If one ever appears in a store, it is the wrong fix for a failing
 login: the connection's **Failures** table in Docker Home says why an
 exchange was refused.
 
+## 4.11b Agent keys — made on the site, held outside it
+
+Each agent key the site can hold is made on its own AI Engine tab and shown
+once; the site keeps only a hash of it in Cosmos `admin_config`. No store in
+this page holds one, and nothing has to be set for the site to start: a key
+that does not exist simply refuses every call. The list of keys is
+[`functions/src/lib/agent-content/agent-keys.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/agent-content/agent-keys.js);
+how to make, rotate and revoke one is in the
+[Agent Content API runbook](../runbooks/agent-content-api.md).
+
+| Input | Where it is made | State | Purpose |
+| --- | --- | --- | --- |
+| Koda's key (`agent_content_key:koda`) | [AI Engine → Koda](https://hybridcloudworks.com/admin/ai-engine?tab=koda) | Owner's; the tab says whether one is active | Koda's calls to the agent API and the admin routes its switches open |
+| Claude's key (`agent_content_key:claude`) | [AI Engine → Claude](https://hybridcloudworks.com/admin/ai-engine?tab=claude) | **NOT SET** until the owner presses Generate key | Claude creates drafts: it reads, writes and edits drafts through the agent API; a new key starts with only `drafts.read` and `drafts.write` on |
+
+Both are hand-rotated on the 180-day rule, with a reminder from the
+credential register rows `agent-key-koda` and `agent-key-claude`.
+
 ## 4.12 Private Second Brain
 
 Configure these through the existing Terraform workspace and identity process;

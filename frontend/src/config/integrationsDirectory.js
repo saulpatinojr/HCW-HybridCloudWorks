@@ -244,6 +244,14 @@ export const DIRECTORY = Object.freeze([
     docsUrl: 'https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#reader',
   },
   {
+    id: 'agent-keys',
+    category: 'automation',
+    summary: 'Keys this site issues to outside agents, one record and tab per key.',
+    powers:
+      'Agents that read and write drafts, and reach only the admin routes each key’s own switches open.',
+    docsUrl: null,
+  },
+  {
     id: 'hybrid-lab',
     category: 'cloud',
     summary: 'Browser workspaces on the lab host, behind a human check.',

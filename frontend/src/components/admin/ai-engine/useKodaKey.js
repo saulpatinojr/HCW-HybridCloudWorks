@@ -1,7 +1,8 @@
 /**
- * The Koda tab's read and writes (ADR 0037), over the shared race-safe
- * loader: one `cms/agent-content/key` read, re-read after every write so the
- * card shows what the API holds, never what the browser assumed.
+ * An agent key tab's read and writes (ADR 0037), over the shared race-safe
+ * loader: one `cms/agent-content/key` read for that key, re-read after every
+ * write so the card shows what the API holds, never what the browser assumed.
+ * `agent` is the key's id; Koda's calls carry none, as they always have.
  *
  * The generated secret is NOT part of the loaded data: the writes return the
  * API's answer to the caller, and the tab keeps the secret in its own state
@@ -13,7 +14,7 @@
  * the tab shows it and says the card could not be re-read, rather than
  * telling the owner nothing changed and losing the key.
  */
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import useGuardedLoad from '@/components/admin/shared/useGuardedLoad';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import {
@@ -33,9 +34,11 @@ export const EMPTY = Object.freeze({
 
 const describeError = (error) => error?.message || 'The agent key could not be read.';
 
-export default function useKodaKey() {
+export default function useKodaKey(agent = 'koda') {
   const { authReady } = useAuthReady();
-  const load = useCallback(() => readKodaKey(), []);
+  // Koda's calls name no agent, so the route and the arguments are as before.
+  const named = useMemo(() => (agent === 'koda' ? [] : [agent]), [agent]);
+  const load = useCallback(() => readKodaKey(...named), [named]);
   const { data, loaded, error, refresh } = useGuardedLoad(load, {
     enabled: authReady,
     empty: EMPTY,
@@ -43,25 +46,25 @@ export default function useKodaKey() {
   });
 
   const generate = useCallback(async () => {
-    const answer = await generateKodaKey();
+    const answer = await generateKodaKey(...named);
     const refreshed = await refresh();
     return { answer, refreshed };
-  }, [refresh]);
+  }, [refresh, named]);
 
   const setCapability = useCallback(
     async (id, on) => {
-      const answer = await setKodaCapabilities({ [id]: on });
+      const answer = await setKodaCapabilities({ [id]: on }, ...named);
       const refreshed = await refresh();
       return { answer, refreshed };
     },
-    [refresh]
+    [refresh, named]
   );
 
   const revoke = useCallback(async () => {
-    const answer = await revokeKodaKey();
+    const answer = await revokeKodaKey(...named);
     const refreshed = await refresh();
     return { answer, refreshed };
-  }, [refresh]);
+  }, [refresh, named]);
 
   return { data: data || EMPTY, loaded, error, refresh, generate, setCapability, revoke };
 }

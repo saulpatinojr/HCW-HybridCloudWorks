@@ -60,8 +60,10 @@ export const ADMIN_CONFIG_KEEP = Object.freeze({
 /** Left out of `admin_config`, with the reason. */
 export const ADMIN_CONFIG_LEAVE_OUT = Object.freeze({
   ids: Object.freeze({
-    // The content agent's key record: a hash of the key (agent-content/keys.js).
+    // The agent keys' records: a hash of each key (agent-content/agent-keys.js,
+    // one per key; a test holds this list to that one).
     'agent_content_key:koda': REASONS.secret,
+    'agent_content_key:claude': REASONS.secret,
     // When each Key Vault secret was last written (admin-secrets.js): a picture of the vault on one day.
     secret_state: REASONS.workingState,
     // Coder's last answers to the status token (labs/coder-status.js).

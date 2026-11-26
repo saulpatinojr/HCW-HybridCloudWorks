@@ -29,6 +29,7 @@ vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true 
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 
 const { default: KodaTab } = await import('./KodaTab.jsx');
+const { agentKeyTab } = await import('./agentKeys');
 
 const CATALOGUE = [
   { id: 'drafts.read', label: 'Read drafts', description: 'List and open.' },
@@ -232,5 +233,88 @@ describe('KodaTab', () => {
     expect(await screen.findByText('Koda’s key could not be read')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Try again|Retry/ }));
     expect(await screen.findByText('No key yet')).toBeInTheDocument();
+  });
+});
+
+describe('KodaTab for another agent key', () => {
+  const SECOND = agentKeyTab('claude');
+  const OFF = { 'drafts.read': false, 'drafts.write': false, 'drafts.review': false };
+  const MADE = { 'drafts.read': true, 'drafts.write': true, 'drafts.review': false };
+  const second = (key) => ({
+    ...answer(key),
+    agent: 'claude',
+    switchesOnWhenMade: ['drafts.read', 'drafts.write'],
+  });
+  const renderSecond = () =>
+    render(
+      <MemoryRouter>
+        <AdminRoleProvider value="super_admin">
+          <KodaTab agent={SECOND} />
+        </AdminRoleProvider>
+      </MemoryRouter>
+    );
+
+  it('reads its own key, says it creates drafts and what its switches start as, and never names the other key or its service', async () => {
+    readKodaKey.mockResolvedValue(second({ ...NO_KEY, capabilities: MADE }));
+    const { container } = renderSecond();
+    expect(await screen.findByText('Claude’s key')).toBeInTheDocument();
+    expect(readKodaKey).toHaveBeenCalledWith('claude');
+    expect(screen.getByText(/Claude is a draft creator/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot publish, schedule or delete/)).toBeInTheDocument();
+    expect(screen.getByText('What Claude may do')).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        /A new key starts with only Read drafts and Create and edit drafts on; everything else is off until you turn it on\./
+      ).length
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole('switch', { name: 'Read drafts' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(screen.getByRole('switch', { name: 'Send to review and back' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    );
+    expect(container.textContent).not.toMatch(/Muse|Koda/);
+  });
+
+  it('reads a switch its answer does not carry as its starting value', async () => {
+    readKodaKey.mockResolvedValue(second({ ...ACTIVE, capabilities: {} }));
+    renderSecond();
+    expect(await screen.findByRole('switch', { name: 'Read drafts' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(screen.getByRole('switch', { name: 'Send to review and back' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    );
+  });
+
+  it('switches, rotates and revokes its own key only', async () => {
+    readKodaKey.mockResolvedValue(second({ ...ACTIVE, capabilities: OFF }));
+    generateKodaKey.mockResolvedValue({
+      ...second({ ...ACTIVE, capabilities: OFF }),
+      secret: SECRET,
+    });
+    setKodaCapabilities.mockResolvedValue(
+      second({ ...ACTIVE, capabilities: { ...OFF, 'drafts.write': true } })
+    );
+    revokeKodaKey.mockResolvedValue(second({ ...ACTIVE, active: false }));
+    renderSecond();
+    fireEvent.click(await screen.findByRole('switch', { name: 'Create and edit drafts' }));
+    await waitFor(() =>
+      expect(setKodaCapabilities).toHaveBeenCalledWith({ 'drafts.write': true }, 'claude')
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Rotate key/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Rotate key/ }).at(-1));
+    await waitFor(() => expect(generateKodaKey).toHaveBeenCalledWith('claude'));
+    const reveal = await screen.findByRole('region', { name: "Claude's new key" });
+    expect(reveal).toHaveTextContent(
+      'Copy it now and paste it into the secure field Claude asks for. The site keeps only its hash'
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: /Revoke key/ })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /Revoke key/ }).at(-1));
+    await waitFor(() => expect(revokeKodaKey).toHaveBeenCalledWith('claude'));
   });
 });

@@ -272,7 +272,7 @@ describe('PUT cms/credentials', () => {
     );
     // One row for each of the twelve: this one dated, the rest asking for a date.
     const rows = store.get('admin_config', 'reminders').reminders;
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(14);
     expect(rows.find((r) => r.id === 'credential-lab-agent-certificate')).toMatchObject({
       dueDate: '2027-03-28',
       title: expect.stringMatching(/^Rotate /),

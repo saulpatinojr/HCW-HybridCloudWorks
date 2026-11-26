@@ -11,6 +11,10 @@
  * of every handler, so the key is instead accepted by the admin role guard
  * itself, through `withAgentAccess`, and only for the routes in `POLICY`.
  *
+ * The same table serves every agent key the site holds (agent-keys.js):
+ * each key's own record decides which of its sections are open, and the key
+ * acts as its own agent (`<id> (agent)`). Koda's key is the first.
+ *
  * The rules, all enforced here and tested in admin-access.test.js:
  *
  *   - A DELETE is never allowed, whatever the route. A POST or PUT that
@@ -50,7 +54,7 @@
  * policy spells it (the template, or `unlisted`), and never the key, the
  * body or the concrete path, whose segments can be document ids.
  */
-import { CAPABILITIES } from './keys.js';
+import { CAPABILITIES, capabilitySwitches, defaultCapabilities } from './keys.js';
 import { createKeyAwareGuard } from './admin-key-guard.js';
 
 export { agentUserFor, checkBodyRule } from './admin-key-guard.js';
@@ -364,21 +368,29 @@ export function sectionsFor(row, path = '') {
   return sections;
 }
 
+/**
+ * A key record's switches, filled with the defaults of the key it belongs
+ * to (keys.js capabilitySwitches): a switch Koda's record never stored is
+ * on, one a later key's record never stored is off. With no record, the
+ * switches a new key of `agentId` would get (Koda's when absent).
+ */
+const switchesOf = (record, agentId) => (record ? capabilitySwitches(record) : defaultCapabilities(agentId));
+
 /** Which of the sections that open this row for this path the record has on, or null when none is. */
 export function openSection(row, record, path = '') {
-  const switches = record?.capabilities || {};
-  return sectionsFor(row, path).find((section) => switches[section] !== false) || null;
+  const switches = switchesOf(record);
+  return sectionsFor(row, path).find((section) => switches[section] === true) || null;
 }
 
-/** The policy as the status route and the Koda tab show it: one line per row, grouped by section. */
-export function describePolicy(record = null) {
-  const switches = record?.capabilities || {};
+/** The policy as the status route and each agent key's tab show it: one line per row, grouped by section. */
+export function describePolicy(record = null, agentId = undefined) {
+  const switches = switchesOf(record, agentId);
   return ADMIN_SECTION_IDS.map((section) => {
     const capability = CAPABILITIES.find((entry) => entry.id === section);
     return {
       id: section,
       label: capability?.label || section,
-      on: switches[section] !== false,
+      on: switches[section] === true,
       routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => {
         const limits = [
           ...(row.body ? row.body.map(bodyLimitText) : []),

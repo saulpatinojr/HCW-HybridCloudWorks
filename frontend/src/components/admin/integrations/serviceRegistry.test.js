@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { SERVICES, SERVICE_GROUPS } from './serviceRegistry';
+import { SERVICES, SERVICE_GROUPS, agentKeyPanel } from './serviceRegistry';
+import { AGENT_KEY_TABS } from '@/components/admin/ai-engine/agentKeys';
 
 const postJSON = vi.fn();
 const getJSON = vi.fn();
@@ -67,6 +68,8 @@ describe('the service registry', () => {
       'GitHub Copilot code review',
       // 2026-11-24: Muse's read-only secret and Terraform's keyless sign-in.
       'Microsoft Azure and Entra ID',
+      // The agent keys this site issues itself, one box per key.
+      'Agent keys (issued by this site)',
       'Hybrid Lab (Coder and Turnstile)',
       'Hostinger',
       // ADR 0035: the first tool add-on, read through the status proxy.
@@ -189,6 +192,7 @@ describe('the service registry', () => {
       'copilotReview',
       'museReader',
       'terraformRunIdentity',
+      ...AGENT_KEY_TABS.map((agent) => agentKeyPanel(agent.id)),
     ];
     for (const service of SERVICES.filter((s) => s.keyGroups)) {
       const grouped = service.keyGroups.flatMap((group) => group.secrets ?? []);
@@ -203,6 +207,24 @@ describe('the service registry', () => {
         if (group.panel) expect(KNOWN_PANELS).toContain(group.panel);
       }
     }
+  });
+
+  it('lists every agent key the site issues as its own box on one platform card, holding nothing and testing nothing', () => {
+    const card = SERVICES.find((service) => service.id === 'agent-keys');
+    expect(card.group).toBe('platform');
+    expect(card.secrets).toEqual([]);
+    expect(card.test).toBeNull();
+    expect(card.untestedReason).toMatch(/cannot test/);
+    expect(card.keyGroups.map((group) => group.panel)).toEqual(
+      AGENT_KEY_TABS.map((agent) => agentKeyPanel(agent.id))
+    );
+    expect(card.keyGroups.map((group) => group.title)).toEqual([
+      'Koda key (made on its AI Engine tab)',
+      'Claude key (made on its AI Engine tab)',
+    ]);
+    expect(card.cost).toMatch(/^Nothing/);
+    expect(card.costOnLedger).toBeUndefined();
+    expect(card.securityNote).toMatch(/hash/);
   });
 
   it('gives every service a URL, since that is the one thing they all have', () => {

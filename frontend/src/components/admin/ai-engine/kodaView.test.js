@@ -4,7 +4,15 @@
  * which may ever carry a secret.
  */
 import { describe, it, expect } from 'vitest';
-import { capabilityRows, connectorValues, endpointGroups, keyState, whenText } from './kodaView';
+import {
+  agentWords,
+  capabilityRows,
+  connectorValues,
+  endpointGroups,
+  keyState,
+  startingSwitches,
+  whenText,
+} from './kodaView';
 
 const CATALOGUE = [
   { id: 'drafts.read', label: 'Read drafts', description: 'List and open.' },
@@ -110,5 +118,51 @@ describe('connectorValues', () => {
     );
     expect(rows[4].value).toBe('120 requests a minute');
     expect(JSON.stringify(rows)).not.toMatch(/hcwk_[A-Za-z0-9_-]{20,}/);
+  });
+});
+
+describe('another agent key’s words', () => {
+  it('keeps Koda’s words, and gives another key its own name and no outside service', () => {
+    expect(agentWords()).toMatchObject({
+      id: 'koda',
+      name: 'Koda',
+      client: 'Muse',
+      switchesOnWhenMade: true,
+    });
+    const words = agentWords({
+      id: 'claude',
+      displayName: 'Claude',
+      switchesOnWhenMade: ['drafts.read', 'drafts.write'],
+    });
+    expect(words).toMatchObject({
+      id: 'claude',
+      name: 'Claude',
+      secureField: 'the secure field Claude asks for',
+      switchesOnWhenMade: ['drafts.read', 'drafts.write'],
+    });
+    expect(words.revealText).toMatch(/keeps only its hash/);
+    expect(keyState({ present: false }, words).sentence).toBe(
+      'Claude cannot reach the site until a key is generated here and pasted into the secure field Claude asks for.'
+    );
+    expect(startingSwitches(words, CATALOGUE)).toBe(
+      'A new key starts with only Read drafts and Create and edit drafts on; everything else is off until you turn it on.'
+    );
+    expect(startingSwitches(agentWords())).toBe('All are on for a new key.');
+    expect(JSON.stringify(connectorValues({ host: 'h', url: 'u' }, 120, words))).not.toMatch(
+      /Muse/
+    );
+  });
+
+  it('reads a missing switch as the key’s starting value, and a stored one as stored', () => {
+    expect(capabilityRows(CATALOGUE, {}, ['drafts.read']).map((row) => row.on)).toEqual([
+      true,
+      false,
+    ]);
+    expect(
+      capabilityRows(CATALOGUE, { 'drafts.read': false, 'drafts.write': true }, [
+        'drafts.read',
+      ]).map((row) => row.on)
+    ).toEqual([false, true]);
+    expect(capabilityRows(CATALOGUE, {}).map((row) => row.on)).toEqual([true, true]);
   });
 });

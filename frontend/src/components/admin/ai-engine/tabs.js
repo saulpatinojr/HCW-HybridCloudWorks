@@ -32,6 +32,10 @@ export const TABS = Object.freeze([
   // do, and how the Muse connector reaches the site. The one place the key is
   // made, switched and revoked.
   { id: 'koda', label: 'Koda' },
+  // Claude's agent key (agentKeys.js): the same tab as Koda's, over its own
+  // record, switches and audit trail. Claude creates drafts; a new key starts
+  // with only reading and writing drafts on.
+  { id: 'claude', label: 'Claude' },
   // The Developer API's organizer keys (ADR 0042): make, re-scope, rotate and
   // revoke one key per event organizer, and what each key can reach.
   { id: 'developer-api', label: 'Developer API' },

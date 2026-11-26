@@ -61,6 +61,7 @@
  */
 
 import { SECRET_CATALOG } from "../secret-catalog.js";
+import { AGENT_KEYS } from "../agent-content/agent-keys.js";
 
 /**
  * Where a credential lives, in the order the tab lists them. `label` is what
@@ -70,6 +71,7 @@ export const CREDENTIAL_STORES = Object.freeze(
   [
     { id: "key-vault", label: "Key Vault kv-site-prod-cus-01" },
     { id: "cosmos", label: "Cosmos mcp_servers" },
+    { id: "site-agent-keys", label: "Cosmos admin_config (agent keys, hash only)" },
     { id: "github-actions", label: "GitHub Actions secret" },
     { id: "github-agents", label: "GitHub Agents secret" },
     {
@@ -789,6 +791,26 @@ const OTHER_ENTRIES = [
   },
 ];
 
+/**
+ * One row per agent key the site can hold (agent-content/agent-keys.js),
+ * built from that list so a key added there has its row and its reminder
+ * here without a second edit. The site makes the key on its tab, shows it
+ * once and keeps only a hash in its record; nothing renews it, and no issuer
+ * sets an expiry, so it takes the owner's hand-rotation rule.
+ */
+function agentKeyEntries() {
+  return AGENT_KEYS.map((key) => ({
+    id: `agent-key-${key.id}`,
+    name: `${key.recordId} (a hash of the key, never the key)`,
+    store: "site-agent-keys",
+    consumer: `${key.displayName}, through the agent API and the admin routes its own switches open`,
+    issuer: `This site (AI Engine → ${key.displayName} tab)`,
+    renewal: "hand",
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate: `Press Rotate key on the AI Engine's ${key.displayName} tab, paste the new key (shown once) where the old one was kept, then record the date here. The old key stops working on its next request.`,
+  }));
+}
+
 const deepFreeze = (entry) =>
   Object.freeze({
     ...entry,
@@ -799,6 +821,7 @@ const deepFreeze = (entry) =>
 export const CREDENTIAL_REGISTER = Object.freeze(
   [
     ...keyVaultEntries(),
+    ...agentKeyEntries(),
     ...OTHER_ENTRIES.map((entry) => ({ rotate: null, ...entry })),
   ].map(deepFreeze),
 );

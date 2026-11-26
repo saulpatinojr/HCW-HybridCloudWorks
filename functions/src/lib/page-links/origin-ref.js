@@ -35,8 +35,9 @@ import { ORIGIN_PAGES, ORIGIN_PAGE_IDS, trimmedLabel } from "./origin-pages.js";
 import { ADMIN_CONFIG_PARTITION } from "../cosmos-client.js";
 import {
   AGENT_ID,
-  KEY_RECORD_ID,
+  agentKeyById,
   enabledCapabilities,
+  isAgentUser,
 } from "../agent-content/keys.js";
 
 /** Record ids on the Pages below: uuids with a prefix, or fixed seed ids. */
@@ -90,41 +91,48 @@ export function parseOriginRef(input) {
 export class OriginRefForbiddenError extends AuthoredError {}
 
 /**
- * Whether the agent key has the switch that lets it read this Page. A person
- * (any caller that is not the agent) is not asked: the route's own role
- * check already covers them, and the Pages on the list need no more than
- * the editor role that Drafts needs.
+ * Whether an agent key has the switch that lets it read this Page, read
+ * from that key's own record. A person (any caller that is not an agent
+ * key) is not asked: the route's own role check already covers them, and
+ * the Pages on the list need no more than the editor role that Drafts needs.
  */
 async function agentMayRead(store, user, page) {
-  if (user?.agent !== AGENT_ID) return true;
-  return (await agentSwitchesOn(store)).includes(page.agentSection);
+  if (!isAgentUser(user)) return true;
+  return (await agentSwitchesOn(store, user.agent)).includes(page.agentSection);
 }
 
 /**
- * The switches on the agent key's record, or none at all when the record
- * cannot be found: a missing record fails closed here (review of #1891),
- * rather than taking the all-on defaults an older record is read with.
+ * The switches on one agent key's record (Koda's when `agentId` is absent),
+ * or none at all when the record cannot be found or the id is not an agent
+ * key: a missing record fails closed here (review of #1891), rather than
+ * taking the all-on defaults an older record is read with. A document whose
+ * own id is not that key's record id is no record of it.
  */
-export async function agentSwitchesOn(store) {
+export async function agentSwitchesOn(store, agentId = AGENT_ID) {
+  const key = agentKeyById(agentId);
+  if (!key) return [];
   const record = await store.readDoc(
     "admin_config",
-    KEY_RECORD_ID,
+    key.recordId,
     ADMIN_CONFIG_PARTITION,
   );
-  return record ? enabledCapabilities(record) : [];
+  if (!record) return [];
+  if (typeof record.id === "string" && record.id !== key.recordId) return [];
+  return enabledCapabilities(record);
 }
 
 /**
  * The Pages whose references this caller may not see: none for a person,
- * and for the agent key every Page whose switch is off on it (review of #1890).
+ * and for an agent key every Page whose switch is off on that key's own
+ * record (review of #1890).
  * A reference carries a record's name, so it is shown only to a caller that
  * could read that Page anyway. Read once per request.
  *
  * @returns {Promise<string[]>} nav ids
  */
 export async function hiddenOriginPages(store, user) {
-  if (user?.agent !== AGENT_ID) return [];
-  const on = await agentSwitchesOn(store);
+  if (!isAgentUser(user)) return [];
+  const on = await agentSwitchesOn(store, user.agent);
   return ORIGIN_PAGE_IDS.filter(
     (id) => !on.includes(ORIGIN_PAGES[id].agentSection),
   );

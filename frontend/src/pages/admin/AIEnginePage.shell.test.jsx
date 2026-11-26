@@ -244,7 +244,7 @@ beforeEach(() => {
 });
 
 describe('AIEnginePage shell', () => {
-  it('shows the seven tabs with Tasks where Site Services was, Koda then Developer API last, and no Site Services or Routing at all', async () => {
+  it('shows the eight tabs with Tasks where Site Services was, Koda and the second agent key, then Developer API last, and no Site Services or Routing at all', async () => {
     renderPage();
     expect(await screen.findByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
@@ -254,6 +254,7 @@ describe('AIEnginePage shell', () => {
       'Playground',
       'Usage & Cost',
       'Koda',
+      'Claude',
       'Developer API',
     ]);
     expect(screen.queryByText(/Site Services/)).toBeNull();

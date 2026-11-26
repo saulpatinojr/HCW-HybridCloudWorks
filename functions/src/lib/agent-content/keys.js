@@ -16,19 +16,27 @@
  * and it is revoked by deleting one hash, with no cache in front of it.
  *
  * WHAT THE KEY CAN REACH is a closed list of capabilities, each a switch on
- * the Koda tab. All are on when a key is made; none can be added here without
+ * the Koda tab. All are on when Koda's key is made (a key added later starts
+ * with only the switches its row lists: agent-keys.js); none can be added here without
  * code, because a capability is a route group the handlers wire by name.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { AuthoredError } from '../http/error-response.js';
 import { presentedKey } from '../presented-key.js';
+import { DEFAULT_AGENT_KEY, agentKeyById, agentKeyByRecordId } from './agent-keys.js';
 
-/** The one agent this API serves. A second agent is a second record and a second tab. */
-export const AGENT_ID = 'koda';
-export const AGENT_DISPLAY_NAME = 'Koda';
+export { AGENT_KEYS, AGENT_KEY_IDS, agentKeyById, agentKeyByRecordId, isAgentUser } from './agent-keys.js';
+
+/**
+ * Koda's key, the first in the list (agent-keys.js). These three names are
+ * kept as Koda's so every caller that meant "the agent key" before the site
+ * could hold more than one still means Koda's.
+ */
+export const AGENT_ID = DEFAULT_AGENT_KEY.id;
+export const AGENT_DISPLAY_NAME = DEFAULT_AGENT_KEY.displayName;
 /** The key record: one document, in the admin_config partition. */
-export const KEY_RECORD_ID = 'agent_content_key:koda';
+export const KEY_RECORD_ID = DEFAULT_AGENT_KEY.recordId;
 /** Keys start with this so a pasted value is recognisable, and a wrong paste is refused before any read. */
 export const KEY_PREFIX = 'hcwk_';
 /** 32 random bytes: 43 base64url characters after the prefix. */
@@ -100,26 +108,62 @@ export const CAPABILITIES = Object.freeze([
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));
 
-/** The identity the Drafts routes record for Koda's writes (createdBy, updatedBy, audit rows). */
-export const AGENT_USER = Object.freeze({
-  oid: 'agent:koda',
-  sub: 'agent:koda',
-  preferred_username: 'koda (agent)',
-  name: AGENT_DISPLAY_NAME,
-  email: null,
-  agent: AGENT_ID,
-});
+/**
+ * The identity an agent key's writes are recorded under (createdBy,
+ * updatedBy, audit rows): `agent:<id>` and `<id> (agent)`, from its row.
+ *
+ * @param {{ id: string, displayName: string }} entry a row of AGENT_KEYS
+ */
+export function agentUserOf(entry) {
+  return Object.freeze({
+    oid: `agent:${entry.id}`,
+    sub: `agent:${entry.id}`,
+    preferred_username: `${entry.id} (agent)`,
+    name: entry.displayName,
+    email: null,
+    agent: entry.id,
+  });
+}
+
+/** Koda's identity. */
+export const AGENT_USER = agentUserOf(DEFAULT_AGENT_KEY);
 
 /** Thrown for input the owner can correct; the handler answers 400 with the message. */
 export class AgentContentInputError extends AuthoredError {}
 
 /**
- * What a new key gets: every capability on. There is no delete switch to
- * turn on: the key never deletes (owner instruction 2026-11-01: create,
- * produce and review, never delete), so the v1 delete route is gone.
+ * The row a caller means: the one named, or Koda's when none is named, so
+ * every older caller reads as before. An id that names no row has none
+ * (null), and its switches are all off.
  */
-export function defaultCapabilities() {
-  return Object.fromEntries(CAPABILITY_IDS.map((id) => [id, true]));
+const rowFor = (agentId) => (agentId === undefined ? DEFAULT_AGENT_KEY : agentKeyById(agentId));
+
+/**
+ * The agent a key record belongs to: by its document id, else by the agent
+ * it names. A record with neither is Koda's, as every record was before the
+ * site could hold more than one key; one that names an id the list does not
+ * have belongs to none, so its switches read as off.
+ */
+export function agentIdOfRecord(record) {
+  if (typeof record?.id === 'string') return agentKeyByRecordId(record.id)?.id ?? null;
+  if (typeof record?.agent === 'string') return agentKeyById(record.agent)?.id ?? null;
+  return AGENT_ID;
+}
+
+/**
+ * What a new key gets: every capability on for Koda's, only the ones its row
+ * lists for a key added later (agent-keys.js `switchesOnWhenMade`; Claude's
+ * key starts with reading and writing drafts), and none for an id the list
+ * does not have. There is no delete switch to turn on: the key
+ * never deletes (owner instruction 2026-11-01: create, produce and review,
+ * never delete), so the v1 delete route is gone.
+ *
+ * @param {string} [agentId] Koda's when absent
+ */
+export function defaultCapabilities(agentId) {
+  const made = rowFor(agentId)?.switchesOnWhenMade;
+  const on = (id) => made === true || (Array.isArray(made) && made.includes(id));
+  return Object.fromEntries(CAPABILITY_IDS.map((id) => [id, on(id)]));
 }
 
 /**
@@ -128,14 +172,16 @@ export function defaultCapabilities() {
  *
  * @param {unknown} input
  * @param {Record<string, boolean>} [base]
+ * @param {string} [agentId] whose defaults fill a switch neither names; Koda's when absent
  * @returns {Record<string, boolean>}
  */
-export function normalizeCapabilities(input, base = defaultCapabilities()) {
-  if (input === undefined || input === null) return { ...defaultCapabilities(), ...base };
+export function normalizeCapabilities(input, base = undefined, agentId = undefined) {
+  base ??= defaultCapabilities(agentId);
+  if (input === undefined || input === null) return { ...defaultCapabilities(agentId), ...base };
   if (typeof input !== 'object' || Array.isArray(input)) {
     throw new AgentContentInputError('capabilities must be an object of switches.');
   }
-  const next = { ...defaultCapabilities(), ...base };
+  const next = { ...defaultCapabilities(agentId), ...base };
   for (const [id, value] of Object.entries(input)) {
     if (!CAPABILITY_IDS.includes(id)) {
       throw new AgentContentInputError(`Not a capability: ${id}`);
@@ -148,10 +194,29 @@ export function normalizeCapabilities(input, base = defaultCapabilities()) {
   return next;
 }
 
+/**
+ * A record's switches, with the defaults of the key it belongs to filling
+ * any switch it never stored: on for Koda's, and for a key added later only
+ * the ones its row starts on.
+ */
+export function capabilitySwitches(record = {}) {
+  const defaults = defaultCapabilities(agentIdOfRecord(record));
+  const stored = record?.capabilities || {};
+  // A stored true or false wins; anything else (absent, or not a boolean)
+  // takes the key's default, as Koda's record has always been read.
+  const extra = Object.fromEntries(
+    Object.entries(stored).filter(([id]) => !Object.hasOwn(defaults, id)),
+  );
+  const known = Object.fromEntries(
+    CAPABILITY_IDS.map((id) => [id, typeof stored[id] === 'boolean' ? stored[id] : defaults[id]]),
+  );
+  return { ...known, ...extra };
+}
+
 /** The capabilities a record allows, as the list of ids that are on. */
 export function enabledCapabilities(record = {}) {
-  const switches = { ...defaultCapabilities(), ...(record.capabilities || {}) };
-  return CAPABILITY_IDS.filter((id) => switches[id] !== false);
+  const switches = capabilitySwitches(record || {});
+  return CAPABILITY_IDS.filter((id) => switches[id] === true);
 }
 
 /** A new key: the prefix and 32 random bytes, base64url. */
@@ -215,14 +280,18 @@ export function hashMatches(secret, storedHash) {
 /**
  * The record a Generate (or Rotate) writes. Only the hash and the hint of the
  * secret are kept. `previous` carries the switches and the first creation
- * across a rotation, so rotating the key does not reset what Koda may do.
+ * across a rotation, so rotating the key does not reset what it may do.
+ * `agentId` names the key (Koda's when absent); a new key's switches are its
+ * row's `switchesOnWhenMade`.
  */
-export function buildKeyRecord({ secret, actor, now = () => new Date(), previous = null }) {
+export function buildKeyRecord({ secret, actor, now = () => new Date(), previous = null, agentId = AGENT_ID }) {
+  const entry = agentKeyById(agentId);
+  if (!entry) throw new Error('buildKeyRecord: not an agent key');
   const stamp = now().toISOString();
   return {
-    id: KEY_RECORD_ID,
+    id: entry.recordId,
     configScope: ADMIN_CONFIG_PARTITION,
-    agent: AGENT_ID,
+    agent: entry.id,
     keyHash: hashKey(secret),
     keyHint: keyHint(secret),
     createdAt: previous?.createdAt || stamp,
@@ -232,7 +301,7 @@ export function buildKeyRecord({ secret, actor, now = () => new Date(), previous
     lastUsedAt: null,
     revokedAt: null,
     revokedBy: null,
-    capabilities: normalizeCapabilities(null, previous?.capabilities || {}),
+    capabilities: normalizeCapabilities(null, previous?.capabilities || {}, entry.id),
     version: 1,
   };
 }
@@ -247,9 +316,9 @@ export function isUsable(record) {
  * projection built field by field, so a field added to the record later does
  * not reach the browser by accident.
  */
-export function presentKeyRecord(record) {
+export function presentKeyRecord(record, agentId = undefined) {
   if (!record) {
-    return { present: false, active: false, capabilities: defaultCapabilities() };
+    return { present: false, active: false, capabilities: defaultCapabilities(agentId) };
   }
   return {
     present: true,
@@ -262,7 +331,7 @@ export function presentKeyRecord(record) {
     lastUsedAt: record.lastUsedAt || null,
     revokedAt: record.revokedAt || null,
     revokedBy: record.revokedBy || null,
-    capabilities: { ...defaultCapabilities(), ...(record.capabilities || {}) },
+    capabilities: capabilitySwitches(record),
   };
 }
 
@@ -271,9 +340,9 @@ export function minuteBucket(nowMs) {
   return Math.floor(nowMs / 60_000);
 }
 
-/** The counter document for this minute (submission_quota expires them after two hours). */
-export function quotaKeyFor(nowMs) {
-  return `agent-content:${AGENT_ID}:${minuteBucket(nowMs)}`;
+/** The counter document for this minute and this key (submission_quota expires them after two hours). */
+export function quotaKeyFor(nowMs, agentId = AGENT_ID) {
+  return `agent-content:${agentId}:${minuteBucket(nowMs)}`;
 }
 
 /** Seconds until the next minute starts, for Retry-After (at least 1). */
