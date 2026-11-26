@@ -172,22 +172,47 @@ declared and passes.
    A good answer has `"configured": true` and the zone's name.
 
 Each change it makes writes an audit row and sends you a Telegram message
-such as "Claude Network Guy changed the Cloudflare zone setting
-always_use_https". Rotating and revoking work as for any agent key (the
+such as "Claude Network Guy changed the Cloudflare zone setting brotli".
+Every change gets a message of its own: two changes a minute apart are two
+messages, not one. The audit row for a setting keeps its old and new value;
+the row for a DNS record keeps its type, its name and whether it was
+proxied and for how long (its TTL) before and after, but never what it
+points to. Rotating and revoking work as for any agent key (the
 [Agent Content API runbook](agent-content-api.md), parts 3 and 5, on the
 Agents page's tab).
 
 ## What is refused, and why
 
+The server refuses each of these before it calls Cloudflare, whoever asks.
+Two rows apply to an agent key only, and say so.
+
 | Refused | Why | Change it in |
 | --- | --- | --- |
 | The apex (`hybridcloudworks.com`) and `www` | They are the site itself, on the Static Web App; a wrong value takes the site down | The Cloudflare dashboard, by hand, with care |
 | The DNS records Terraform manages (`api-azure`, `docs`, `podcast`, `go`, `_cf-custom-hostname.go`, `notes`, `asuid.api-azure`) | An apply would put them back, and some are what Azure checks to keep the custom domain | [`infra/frontend.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/frontend.tf) |
-| The lab's records | The lab's own Terraform and its certificate setup own them | [`infra-lab/dns.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra-lab/dns.tf) |
+| The lab's records, and every name under `*.lab` and `*.coder.lab` | The lab's own Terraform and its certificate setup own them | [`infra-lab/dns.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra-lab/dns.tf) |
 | Any `_acme-challenge` name | Certificate checks write these for a few minutes | Nothing to change by hand |
+| A wildcard over any name above (`*.www`, `*.api-azure`), and `*` for the whole zone | A wildcard answers for names nobody listed, so it could stand in for a protected name | The Cloudflare dashboard |
+| A DNS edit to a record that is not A, AAAA, CNAME, MX or TXT (an NS or CAA record, say) | The page adds and edits only those five types | The Cloudflare dashboard |
+| A badly formed DNS name: a leading, trailing or double dot, `@` anywhere but on its own, `*` anywhere but as the whole first part | The name that is checked must be the name that is sent | Correct the name |
 | The `http_request_late_transform` rule phase | It holds the origin rule; a mistake there refuses every visitor's API call | `infra/frontend.tf`, and the [origin secret rotation runbook](origin-secret-rotation.md) |
 | The `http_ratelimit` rule phase | It holds the API rate limit rule ([#1904](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1904)) | `infra/frontend.tf` |
-| Any delete | No agent key deletes anything (ADR 0038), and the page offers none | The Cloudflare dashboard |
+| Every other rule phase except five (origin rules, cache rules, cloud connector, snippets, managed rules, DDoS and any phase Cloudflare adds later) | "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard." Only redirects, URL rewrites, response headers, configuration rules and custom security rules can be replaced from the page | The Cloudflare dashboard |
+| A custom security rule whose action is `skip` | It would let matching requests past the other security checks | The Cloudflare dashboard |
+| An empty list of rules | It would delete every rule in the phase, and deleting is done in the dashboard | The Cloudflare dashboard |
+| A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
+| A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
+| Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
+| Any change, when the zone id points at another zone | The protected list names this zone's records, so it would protect nothing elsewhere | `CF_ZONE_ID`, which Terraform sets on the function app |
+| Any delete | No agent key deletes anything (ADR 0038), and the page offers none. Replacing a phase's rules does remove the ones left out of the new list | The Cloudflare dashboard |
+
+What the page shows is limited too. The rules of a phase that cannot be
+changed here are shown without what they carry (only each rule's id,
+description, expression, action and whether it is on), so the origin secret
+in the `http_request_late_transform` rule never leaves the server. In the
+five phases that can be changed, a header value whose name has secret,
+token, auth or key in it is shown as
+`[hidden: change this value in the Cloudflare dashboard]`.
 
 The full list is in
 [`functions/src/lib/cloudflare/protected.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cloudflare/protected.js),
@@ -205,6 +230,10 @@ the issue once you have checked the change was yours or Network Guy's.
 | **Not configured** on the Cloudflare page | The token or the zone id is missing | Part 2, steps 4 and the `CF_ZONE_ID` note |
 | A part of the page says the token cannot read it | The token lacks that permission | Edit the token in Cloudflare and add it (Part 2, step 2) |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
-| "That name is protected" or "That rule phase is managed by Terraform" | The table above | Change it where the table says |
+| "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
+| "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
+| "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
+| "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
+| The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
 | 403 "This key may not call that route" for Network Guy | The switch for that kind of change is off | Turn it on (Part 3, step 4) |
 | 429 "Too many requests" | The key's limit of 120 calls a minute | Wait a minute |
