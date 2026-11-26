@@ -151,7 +151,109 @@ describe("resolveOriginRef: the Ambassador entry", () => {
   });
 });
 
+/** A store holding `docs` in one container, as resolveOriginRef reads it. */
+const storeIn = (container, ...docs) => ({
+  readDoc: vi.fn(async (asked, id) => {
+    const doc = docs.find((d) => d.id === id && asked === container);
+    return doc ? structuredClone(doc) : null;
+  }),
+});
+
+const TALK = Object.freeze({
+  id: "event-101",
+  eventName: "  Example Talk  ",
+  name: "Example Talk (old name)",
+  date: "2026-12-01",
+});
+const CERT = Object.freeze({ id: "cert-example", name: " Example Certification " });
+
+describe.each([
+  {
+    page: "speaking",
+    container: "speakerevents",
+    record: TALK,
+    label: "Example Talk",
+    missing: "No stored talk has that id.",
+  },
+  {
+    page: "certifications",
+    container: "certifications",
+    record: CERT,
+    label: "Example Certification",
+    missing: "No certification has that id.",
+  },
+])("resolveOriginRef: the $page entry", ({ page, container, record, label, missing }) => {
+  it("reads the record from the Page's own container and labels it with its trimmed name", async () => {
+    const store = storeIn(container, record);
+    expect(await resolveOriginRef(store, { page, id: record.id })).toEqual({
+      page,
+      id: record.id,
+      part: null,
+      label,
+    });
+    expect(store.readDoc).toHaveBeenCalledWith(container, record.id, record.id);
+  });
+
+  it("refuses a record that does not exist", async () => {
+    await expect(
+      resolveOriginRef(storeIn(container), { page, id: record.id }),
+    ).rejects.toThrow(missing);
+  });
+
+  it("refuses a record marked deleted", async () => {
+    const deleted = { ...record, softDeletedAt: "2026-11-01T00:00:00.000Z" };
+    await expect(
+      resolveOriginRef(storeIn(container, deleted), { page, id: record.id }),
+    ).rejects.toThrow(missing);
+  });
+
+  it("refuses any part, since the record has none", async () => {
+    await expect(
+      resolveOriginRef(storeIn(container, record), {
+        page,
+        id: record.id,
+        part: "anything",
+      }),
+    ).rejects.toThrow(/has no parts/);
+  });
+
+  it("falls back to the id when the record has no name", async () => {
+    const unnamed = { id: record.id, name: "   " };
+    const ref = await resolveOriginRef(storeIn(container, unnamed), {
+      page,
+      id: record.id,
+    });
+    expect(ref.label).toBe(record.id);
+  });
+
+  it("is guarded by the agent key's Spotlight switch, like the rest of the Page", () => {
+    expect(ORIGIN_PAGES[page].agentSection).toBe("admin.spotlight");
+  });
+});
+
+describe("resolveOriginRef: a talk's name", () => {
+  it("uses `name` when a stored talk has no `eventName`", async () => {
+    const store = storeIn("speakerevents", { id: "manual-1", name: "Example Meetup" });
+    const ref = await resolveOriginRef(store, { page: "speaking", id: "manual-1" });
+    expect(ref.label).toBe("Example Meetup");
+  });
+});
+
 describe("every Page on the list", () => {
+  it("names the switch the agent key's own allow-list uses for the Page's container", async () => {
+    const { POLICY } = await import("../agent-content/admin-access.js");
+    const uploads = POLICY.find(
+      (row) => row.method === "POST" && row.route === "cms/uploads/{container}",
+    );
+    const listRoute = { speaking: "cms/speakerevents", certifications: "cms/certifications" };
+    for (const id of Object.keys(listRoute)) {
+      const { container, agentSection } = ORIGIN_PAGES[id];
+      expect(uploads.segments.container[container], id).toBe(agentSection);
+      const list = POLICY.find((row) => row.method === "GET" && row.route === listRoute[id]);
+      expect(list.sections, id).toEqual([agentSection]);
+    }
+  });
+
   it("names the switch on the agent key that guards it", async () => {
     const { CAPABILITY_IDS } = await import("../agent-content/keys.js");
     for (const id of ORIGIN_PAGE_IDS) {
@@ -255,6 +357,8 @@ describe("what the agent key sees (review of #1890)", () => {
   it("hides a Page whose switch is off from the agent key, and nothing from a person", async () => {
     expect(await hiddenOriginPages(storeWithKey(false), AGENT)).toEqual([
       "ambassador",
+      "speaking",
+      "certifications",
     ]);
     expect(await hiddenOriginPages(storeWithKey(true), AGENT)).toEqual([]);
     const store = storeWithKey(false);
@@ -307,6 +411,25 @@ describe("what the agent key sees (review of #1890)", () => {
     await expect(
       resolveOriginRef(missing, { page: "ambassador", id: "program-example" }, { user: AGENT }),
     ).rejects.toThrow(/switch for that section is off/);
+  });
+
+  it("refuses and hides a Speaking reference while the key's Spotlight switch is off", async () => {
+    const store = storeWithKey(false);
+    await expect(
+      resolveOriginRef(store, { page: "speaking", id: "event-101" }, { user: AGENT }),
+    ).rejects.toThrow(/switch for that section is off/);
+    // Refused before the talk is read: only the key's own record was read.
+    expect(store.readDoc).toHaveBeenCalledTimes(1);
+    const talkRef = { page: "speaking", id: "event-101", part: null, label: "Example Talk" };
+    const response = {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ items: [{ id: "c1", originRef: talkRef }] }),
+    };
+    const hidden = await answerWithoutHiddenOrigins(store, AGENT, response);
+    expect(JSON.parse(hidden.body)).toEqual({ items: [{ id: "c1" }] });
+    expect(await mayFilterByOrigin(store, AGENT, "speaking")).toBe(false);
+    expect(await mayFilterByOrigin(storeWithKey(true), AGENT, "speaking")).toBe(true);
   });
 
   it("refuses the agent key a filter by a hidden Page", async () => {

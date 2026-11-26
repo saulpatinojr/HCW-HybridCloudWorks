@@ -25,6 +25,11 @@ vi.mock('@/lib/api', () => ({
   sendJSON: (...args) => sendJSON(...args),
 }));
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
+// The pieces box under a saved cert is tested on CertificationsPage.test.jsx,
+// with the router it links through; here it is a marker.
+vi.mock('./CertPipeline', () => ({
+  default: ({ cert }) => (cert?._docId ? <div data-testid="cert-pipeline" /> : null),
+}));
 
 beforeEach(() => {
   postJSON.mockReset();

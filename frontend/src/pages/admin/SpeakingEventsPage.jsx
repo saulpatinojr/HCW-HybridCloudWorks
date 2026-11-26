@@ -21,7 +21,9 @@
  *               Hub's Sessionize card), the speaker profile, the display rules
  *
  * Deep links are `?tab=`; an unknown id, or one naming a tab's content, lands
- * where that content is (speaking-events/tabs.js).
+ * where that content is (speaking-events/tabs.js). `?talk=<stored id>` opens
+ * that talk's edit form, and its pieces in the Pipeline, on the tab its date
+ * puts it on (speaking-events/linkedTalk.js, #1886).
  *
  * The state that Upcoming, Past and Sources share lives on this page: the
  * Sessionize read, the stored overrides, the override editor and the sync.
@@ -37,7 +39,7 @@
  * JSON, as the Integrations Hub's Sessionize test does.
  */
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { Mic } from 'lucide-react';
 import { useAuthReady } from '@/hooks/useAuthReady';
@@ -45,7 +47,7 @@ import HubTabs from '@/components/admin/HubTabs';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import { TABS, resolveTab } from '@/components/admin/speaking-events/tabs';
-import { PastTab, UpcomingTab } from '@/components/admin/speaking-events/SessionsTab';
+import { PastTab, UpcomingTab, canListRows } from '@/components/admin/speaking-events/SessionsTab';
 import ApplyTab from '@/components/admin/speaking-events/ApplyTab';
 import SourcesTab from '@/components/admin/speaking-events/SourcesTab';
 import PublishingTab from '@/components/admin/speaking-events/PublishingTab';
@@ -60,6 +62,8 @@ import {
   useStoredEvents,
 } from '@/components/admin/speaking-events/useSpeakingData';
 import { mergeEvents } from '@/components/admin/speaking-events/eventModel';
+import useLinkedTalk from '@/components/admin/speaking-events/linkedTalk';
+import { LINK_PARAMS } from '@/lib/itemLinks';
 
 const PANELS = {
   upcoming: UpcomingTab,
@@ -95,6 +99,30 @@ export default function SpeakingEventsPage() {
   const setTab = (id) => {
     if (id !== activeTab) setSearchParams({ tab: id });
   };
+  const talkId = searchParams.get(LINK_PARAMS.talk);
+  const showTalkTab = useCallback(
+    (tab) => {
+      if (tab !== activeTab) setSearchParams({ tab, [LINK_PARAMS.talk]: talkId });
+    },
+    [activeTab, setSearchParams, talkId]
+  );
+  const clearTalkLink = useCallback(
+    () =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete(LINK_PARAMS.talk);
+        return next;
+      }),
+    [setSearchParams]
+  );
+  useLinkedTalk({
+    clearLink: clearTalkLink,
+    talkId,
+    listable: canListRows(sessionize, stored),
+    rows,
+    editor,
+    showTab: showTalkTab,
+  });
   const ActivePanel = PANELS[activeTab];
 
   return (

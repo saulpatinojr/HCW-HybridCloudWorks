@@ -47,6 +47,19 @@ describe('originLink', () => {
     expect(link.icon).toBeTruthy();
   });
 
+  it.each([
+    ['speaking', 'Speaking', '/admin/speaking?talk=event-101', 'Example Talk'],
+    [
+      'certifications',
+      'Certifications',
+      '/admin/certifications?certification=cert-example',
+      'Example Certification',
+    ],
+  ])('links a %s record to the Page that opens it', (page, pageLabel, href, label) => {
+    const id = new URL(href, 'https://hybridcloudworks.com').searchParams.values().next().value;
+    expect(originLink({ page, id, part: null, label })).toMatchObject({ pageLabel, label, href });
+  });
+
   it('encodes the id', () => {
     expect(originLink({ page: 'ambassador', id: 'a&b', label: 'x' }).href).toContain(
       'program=a%26b'
