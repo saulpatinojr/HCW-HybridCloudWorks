@@ -17,7 +17,7 @@ vi.mock('../cosmos-client.js', () => cosmos);
 vi.mock('./require-role.js', () => roleGuard);
 vi.mock('./verify-token.js', () => ({ createTokenVerifier: vi.fn(() => ({ verify: vi.fn() })) }));
 const agentGuard = vi.hoisted(() => ({
-  authenticate: vi.fn(async () => ({ record: { capabilities: {} }, user: { oid: 'agent:koda' }, error: null })),
+  authenticate: vi.fn(async () => ({ record: { capabilities: {} }, user: { oid: 'agent:koda', agent: 'koda' }, error: null })),
 }));
 vi.mock('../agent-content/guard.js', () => ({ getAgentContentGuard: () => agentGuard, resetAgentContentGuard: () => {} }));
 
