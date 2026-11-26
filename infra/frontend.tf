@@ -378,8 +378,8 @@ moved {
 #      this configuration holds no secret value anywhere, and that is the
 #      property worth keeping.
 #   2. It needs `account_id` and an account-level Turnstile permission.
-#      cloudflare_api_token is scoped to this zone (DNS, Transform Rules and
-#      Rulesets:Read); widening the one production-DNS credential to account
+#      cloudflare_api_token is scoped to this zone (DNS, Transform Rules,
+#      Zone WAF and Rulesets:Read); widening the one production-DNS credential to account
 #      scope for a resource created once is the wrong trade. (#1302 added
 #      Account Settings:Write to that token for the Web Analytics site at
 #      the end of this file, which holds no secret; reason 1 is what keeps
@@ -515,24 +515,33 @@ resource "cloudflare_ruleset" "origin_secret" {
 # Before a request is signed in, the API compares anything that looks like an
 # agent key with each key's record: one Cosmos point read per key, uncounted,
 # because the per-minute limit belongs to a key and a made-up value has none.
-# This rule stops a loop of made-up keys at Cloudflare, before the function
-# app or Cosmos does any work. The origin lock above means every request to
-# the API comes through Cloudflare, so nothing can go around it.
+# Every admin route does this, whatever its path (the key-aware guard wraps
+# the default role guard, functions/src/lib/auth/default-guard.js), so the
+# rule counts every API path, not only /api/cms/. It stops a loop of made-up
+# keys at Cloudflare, before the function app or Cosmos does any work. The
+# origin lock above means every request to the API comes through Cloudflare,
+# so nothing can go around it.
 #
 # FREE PLAN LIMITS (https://developers.cloudflare.com/waf/rate-limiting-rules/,
-# read 2026-11-26): one rule per zone, the expression may use the path only,
-# counting is per IP over 10 seconds, and the block lasts 10 seconds. So the
-# expression names the two path prefixes that take a key (`/api/cms/`, where
-# admin-access.js lets a key in, and `/api/agent-content/`, the agent
-# surface) without a host, and `contains` is used rather than a regex, which
-# is a Business-plan feature. Only api-azure is proxied (the apex and www are
-# DNS-only to the Static Web App), so in practice the rule sees the API alone.
+# read 2026-11-26): one rule per zone, the expression may use the path only
+# (no host), counting is per IP over 10 seconds, and the block lasts 10
+# seconds. A regex (`matches`) needs the Business plan, so the rule uses
+# `contains`. The path is lowered first because the Functions host matches
+# routes regardless of case, so `/API/...` must count too. Two hosts are
+# proxied in this zone, api-azure and notes (Obsidian Publish); the apex and
+# www are DNS-only. A path containing /api/ is the API in practice, and at
+# this limit a notes visitor would never meet it.
 #
 # THE LIMIT: 100 requests per 10 seconds from one address, about ten a second.
-# An admin page loads a handful of calls at once, and an agent key is held to
+# The busiest admin moment found is Health -> "Run all", 30 to 40 calls at
+# once; polling is every 5 seconds at fastest; and an agent key is held to
 # 120 a minute by the app itself (REQUESTS_PER_MINUTE in
-# functions/src/lib/agent-content/keys.js), so normal use stays far below it.
-# A caller over the limit gets Cloudflare's 429 for 10 seconds.
+# functions/src/lib/agent-content/keys.js). A caller over the limit gets
+# Cloudflare's 429 for 10 seconds.
+#
+# ONE RULE PER ZONE. If a rate limiting rule was ever made by hand in the
+# dashboard (Security -> WAF -> Rate limiting rules), this create fails until
+# that one is deleted there. None is recorded anywhere in this repository.
 #
 # THE TOKEN NEEDS Zone WAF Write (the dashboard's Zone -> Zone WAF -> Edit),
 # the permission Cloudflare's Terraform page lists for a zone rate limiting
@@ -546,21 +555,21 @@ resource "cloudflare_ruleset" "api_rate_limit" {
   count = var.api_rate_limit_enabled ? 1 : 0
 
   zone_id = var.cloudflare_zone_id
-  name    = "Rate limit for the API paths that take a key"
+  name    = "Rate limit for the API"
   kind    = "zone"
   phase   = "http_ratelimit"
 
   rules = [
     {
       ref         = "api_key_paths_per_ip"
-      description = "Block an address sending more than 100 requests in 10 seconds to the API paths that take a key"
+      description = "Block an address sending more than 100 requests in 10 seconds to the API"
       enabled     = true
       action      = "block"
-      expression  = "(http.request.uri.path contains \"/api/cms/\") or (http.request.uri.path contains \"/api/agent-content/\")"
+      expression  = "(lower(http.request.uri.path) contains \"/api/\")"
 
       ratelimit = {
-        # cf.colo.id is required beside ip.src: Cloudflare counts per data
-        # centre, as its own Terraform example does.
+        # cf.colo.id is mandatory beside ip.src: Cloudflare counts per data
+        # centre (https://developers.cloudflare.com/waf/rate-limiting-rules/parameters/).
         characteristics     = ["cf.colo.id", "ip.src"]
         period              = 10
         requests_per_period = 100

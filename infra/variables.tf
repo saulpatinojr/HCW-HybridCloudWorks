@@ -1170,12 +1170,12 @@ variable "functions_origin_lock_enabled" {
   default     = true
 }
 
-# The rate limit on the API paths that take a key (cloudflare_ruleset.api_rate_limit
+# The rate limit on the API (cloudflare_ruleset.api_rate_limit
 # in frontend.tf, #1903). false removes the rule in one apply, the rollback if
 # it ever blocks a legitimate caller. It needs Zone WAF Write on the token;
 # see the permission paragraph beside cloudflare_origin_secret.
 variable "api_rate_limit_enabled" {
-  description = "Rate-limit the API paths that take an agent key at Cloudflare (100 requests per 10 seconds per address). Needs Zone WAF Write on cloudflare_api_token"
+  description = "Rate-limit every /api/ path at Cloudflare (100 requests per 10 seconds per address). Needs Zone WAF Write on cloudflare_api_token"
   type        = bool
   default     = true
 }

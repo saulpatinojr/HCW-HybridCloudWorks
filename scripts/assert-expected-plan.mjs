@@ -502,6 +502,13 @@ export const DECLARED = [
     reason:
       "#1302: the Web Analytics site, created once cloudflare_account_id is set",
   },
+  // #1903: the rate limit on the API paths, at Cloudflare. A one-time
+  // create; delete this entry once the apply has made it.
+  {
+    address: "cloudflare_ruleset.api_rate_limit[0]",
+    action: "create",
+    reason: "#1903: the Cloudflare rate limit on the API paths",
+  },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied.
