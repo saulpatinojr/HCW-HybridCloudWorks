@@ -401,6 +401,18 @@ describe('withAgentAccess', () => {
     expect(roleGuard.requireUser).toHaveBeenCalledTimes(1);
   });
 
+  it('names the matched key on a user-only refusal, without counting it as a use', async () => {
+    const { guard, agentGuard, audits } = setup();
+    agentGuard.identify = vi.fn(async () => 'claude');
+    await guard.requireUser(request({ method: 'GET', path: 'getCurrentAdminStatus' }));
+    expect(audits).toEqual([expect.objectContaining({ reason: 'user-only-route', agent: 'claude' })]);
+    expect(agentGuard.authenticate).not.toHaveBeenCalled();
+    agentGuard.identify = vi.fn(async () => null);
+    await guard.requireUser(request({ method: 'GET', path: 'getCurrentAdminStatus' }));
+    // A key that matches no record stays on the first key's card, as documented.
+    expect(audits[1].agent).toBe('koda');
+  });
+
   it('keeps the role guard’s other members, such as clearCache', () => {
     const { guard, roleGuard } = setup();
     expect(guard.clearCache).toBe(roleGuard.clearCache);

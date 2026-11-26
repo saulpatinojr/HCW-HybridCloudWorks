@@ -156,14 +156,33 @@ function noMatchReason(seen) {
  * refused like an unknown key rather than taken as the first.
  */
 async function matchingRecord({ store, auditDenial }, secret, where) {
-  const seen = await Promise.all(AGENT_KEYS.map((key) => readKeyRecord(store, key)));
-  const matches = AGENT_KEYS.map((key, index) => ({ key, record: seen[index] })).filter(
-    ({ record }) => isUsable(record) && hashMatches(secret, record.keyHash),
-  );
+  const { seen, matches } = await compareWithEveryKey(store, secret);
   if (matches.length === 1) return matches[0];
   const reason = matches.length > 1 ? 'ambiguous-key' : noMatchReason(seen);
   audit(auditDenial, { outcome: 'denied', reason }, where);
   return null;
+}
+
+/** Every key's record, and the ones whose live hash `secret` matches. */
+async function compareWithEveryKey(store, secret) {
+  const seen = await Promise.all(AGENT_KEYS.map((key) => readKeyRecord(store, key)));
+  const matches = AGENT_KEYS.map((key, index) => ({ key, record: seen[index] })).filter(
+    ({ record }) => isUsable(record) && hashMatches(secret, record.keyHash),
+  );
+  return { seen, matches };
+}
+
+/**
+ * Which agent key a request presents, or null: the same comparison as
+ * authenticate, with none of its effects (no audit row, no rate-limit count,
+ * no last-used stamp). For a refusal that names the key it refuses, so a
+ * refused request is not counted as a use.
+ */
+async function identify({ store }, request) {
+  const secret = agentKeyFrom(request);
+  if (!secret || !looksLikeKey(secret)) return null;
+  const { matches } = await compareWithEveryKey(store, secret);
+  return matches.length === 1 ? matches[0].key.id : null;
 }
 
 /** The per-minute limit: the 429 answer, after its denial row, when this request is over it; null when not. */
@@ -252,6 +271,7 @@ export function createAgentContentGuard({
   const deps = { store, now, auditDenial, requestsPerMinute };
   return {
     authenticate: (request, where = {}) => authenticate(deps, request, where),
+    identify: (request) => identify(deps, request),
     requireCapability: (request, capability) => requireCapability(deps, request, capability),
   };
 }

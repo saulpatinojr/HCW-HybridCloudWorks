@@ -232,6 +232,18 @@ describe('the key guard', () => {
     ).toEqual(AGENT_KEYS.map((key) => key.recordId));
   });
 
+  it('identifies a presented key without counting it as a use', async () => {
+    const store = memoryStore(kodaRecord(), claudeRecord());
+    const guard = guardOver(store);
+    expect(await guard.identify(request(CLAUDE_SECRET))).toBe('claude');
+    expect(await guard.identify(request(KODA_SECRET))).toBe('koda');
+    expect(await guard.identify(request('hcwk_' + 'x'.repeat(43)))).toBeNull();
+    expect(await guard.identify(request(null))).toBeNull();
+    expect(store.quota.size).toBe(0);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+    expect(audits).toEqual([]);
+  });
+
   it('refuses a key that matches more than one record, as it would an unknown key', async () => {
     // Two records holding the same hash: the key cannot say which agent it is.
     const twin = { ...claudeRecord(), keyHash: hashKey(KODA_SECRET) };
