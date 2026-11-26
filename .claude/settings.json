@@ -44,6 +44,17 @@
       "Bash(gh pr *)"
     ]
   },
+  "extraKnownMarketplaces": {
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "cloudflare@cloudflare": true
+  },
   "hooks": {
     "SessionStart": [
       {
