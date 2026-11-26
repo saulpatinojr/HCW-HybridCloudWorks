@@ -169,7 +169,7 @@ Set category `Terraform`:
 - `subscription_conn` = `<SUBSCRIPTION_CONN_ID>` (sensitive)
 - `entra_tenant_id` = `<ENTRA_TENANT_ID>` (sensitive)
 - `entra_api_audience` = `api://<HCWSite-Client-ID>`
-- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and, for the Web Analytics site, Account → Account Settings → Write)
+- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Zone WAF:Edit (the API rate limit, #1903), Account Rulesets:Read and, for the Web Analytics site, Account → Account Settings → Write)
 - `cloudflare_zone_id` = `<CLOUDFLARE_ZONE_ID>`
 - `cloudflare_account_id` = `<CLOUDFLARE_ACCOUNT_ID>` (optional, #1302, the same value as the repository variable of that name; while unset the Web Analytics site is not created and its outputs read null)
 - `cloudflare_origin_secret` = `<CF_ORIGIN_SECRET>` (sensitive; from Bitwarden)
