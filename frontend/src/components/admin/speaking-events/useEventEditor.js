@@ -140,6 +140,19 @@ export default function useEventEditor(stored) {
   const openManual = () =>
     guardedOpen('new', null, { ...EMPTY_FORM, _manualName: '', _manualDate: '' });
   const openEditManual = (fd) => guardedOpen(fd._docId, null, formFromManual(fd));
+  /**
+   * A new event to propose a talk to, from the Future Events tab: status
+   * Idea, and not shown on the public site until the owner ticks Show on
+   * site (an idea is not an engagement yet).
+   */
+  const openNewIdea = () =>
+    guardedOpen('new', null, {
+      ...EMPTY_FORM,
+      status: 'idea',
+      display: false,
+      _manualName: '',
+      _manualDate: '',
+    });
 
   const requestClose = () => {
     if (dirtyRef.current) setPendingOpen({ id: null, event: null, form: EMPTY_FORM });
@@ -196,6 +209,7 @@ export default function useEventEditor(stored) {
     openEnrich,
     openManual,
     openEditManual,
+    openNewIdea,
     close,
     requestClose,
     save,

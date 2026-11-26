@@ -89,9 +89,16 @@ a route that caches and paces an outside service, for no gain.
   undecided event it says what its dates would meet but never makes a clash.
   Its notes are the entry's own description. It has **no estimate**, because
   the estimate reads the directory's copy of an event's page, and the row
-  says so. **Edit** opens the entry's own form on the Speaking hub
-  (`/admin/speaking?talk=<id>`), rather than this tab's status and costs,
-  which are stored per directory event.
+  says so. **Edit** opens the entry's own form (the hub's shared editor) on
+  this tab, rather than this tab's status and costs, which are stored per
+  directory event.
+- **Adding one by hand.** **Add an event**, beside Refresh, opens the same
+  form Sources → Manual Entry uses (name, date, location, event URL, CFP
+  deadline, description, status and the rest), with the status **Idea** and
+  **Show on site off**, so a new idea is not public until the owner ticks it.
+  It saves through the existing `upsertSpeakerEvent` write and the row
+  appears as soon as the hub re-reads its stored events. No new route or
+  role: the same editor role as the rest of the Speaking hub.
 - **Order.** Directory rows keep the server's order (soonest first); each
   manual row is slotted in before the first directory row that starts later.
 - **Without the Community Days key** the tab still lists the owner's ideas,

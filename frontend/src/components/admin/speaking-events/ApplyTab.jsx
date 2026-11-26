@@ -33,7 +33,10 @@
  * stored events, not from a second read on this tab. Its row has the same
  * dates, days left and clash words; its notes are the entry's own
  * description, it has no estimate (the estimate reads the directory's copy
- * of an event), and Edit opens the entry's form on the Speaking hub.
+ * of an event), and Edit opens the entry's own form (the hub's shared
+ * editor, useEventEditor) on this tab. "Add an event" opens the same form
+ * for a new entry with the status Idea and Show on site off, and saves
+ * through the same `upsertSpeakerEvent` write as Sources → Manual Entry.
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
@@ -41,6 +44,7 @@ import {
   AlertTriangle,
   CalendarClock,
   ExternalLink,
+  Plus,
   KeyRound,
   Loader2,
   Pencil,
@@ -57,6 +61,7 @@ import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { tabHref as integrationsTabHref } from '@/components/admin/integrations/tabs';
 import { tabHref as aiEngineTabHref } from '@/components/admin/ai-engine/tabs';
 import ApplyCalendar from './ApplyCalendar';
+import EventForm from './EventForm';
 import { Dismissible, ReadsStatus, RefreshButton } from './TabParts';
 import { SectionHeading } from './EventTables';
 import { httpUrl } from './eventModel';
@@ -527,7 +532,7 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
   );
 }
 
-/** Where Edit on a manual row goes: the entry's own form on the Speaking hub. */
+/** Where Edit on a manual row links when the tab has no editor: the entry's form on the hub. */
 export const manualEditHref = (row) => ORIGIN_RECORD_PATHS.speaking({ id: row.docId });
 export const MANUAL_BADGE = {
   id: 'manual',
@@ -538,13 +543,38 @@ export const MANUAL_BADGE = {
 export const MANUAL_NO_ESTIMATE =
   'Not available for an event you added yourself: the estimate reads the directory’s copy of an event.';
 
+/** Edit on a manual row: the hub's own form for the entry, or a link to it. */
+function ManualEdit({ event, onEdit }) {
+  const label = `Edit ${event.title}`;
+  if (onEdit) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs"
+        onClick={onEdit}
+        aria-label={label}
+      >
+        <Pencil className="mr-1 h-3 w-3" /> Edit event
+      </Button>
+    );
+  }
+  return (
+    <Button asChild size="sm" variant="outline" className="h-7 text-xs">
+      <Link to={manualEditHref(event)} aria-label={label}>
+        <Pencil className="mr-1 h-3 w-3" /> Edit event
+      </Link>
+    </Button>
+  );
+}
+
 /**
  * A speaking event the owner added by hand (status Idea). The same dates,
  * days left and clash words as a directory row; its notes and its form are
  * the stored entry's own, so Edit opens that entry rather than this tab's
  * status and costs (those belong to directory events).
  */
-function ManualRow({ event, overlap, today }) {
+function ManualRow({ event, overlap, today, onEdit }) {
   const close = callCloseInfo(event.callCloses, today);
   return (
     <li className="space-y-2 rounded-xl border border-border p-4" data-event={event.id}>
@@ -567,11 +597,7 @@ function ManualRow({ event, overlap, today }) {
       </dl>
       <Overlap overlap={overlap} />
       <div className="flex flex-wrap gap-2">
-        <Button asChild size="sm" variant="outline" className="h-7 text-xs">
-          <Link to={manualEditHref(event)} aria-label={`Edit ${event.title} on the Speaking hub`}>
-            <Pencil className="mr-1 h-3 w-3" /> Edit on the Speaking hub
-          </Link>
-        </Button>
+        <ManualEdit event={event} onEdit={onEdit} />
       </div>
     </li>
   );
@@ -802,7 +828,21 @@ function Intro({ fetchedAt }) {
 const talksNotReady = (data) =>
   !(data.stored.loaded && (data.sessionize.loaded || Boolean(data.sessionize.error)));
 
-export default function ApplyTab({ data }) {
+/** The stored entry behind a manual row, for the editor. */
+const entryFor = (data, row) =>
+  (data.rows?.manualEntries ?? []).find((entry) => (entry._docId ?? entry.id) === row.docId);
+
+/** "Add an event", and the hub's form when it is open on this tab. */
+function ManualEditor({ editor }) {
+  return (
+    <>
+      {editor.error && <Dismissible onDismiss={editor.clearError}>{editor.error}</Dismissible>}
+      {editor.isOpen && <EventForm editor={editor} />}
+    </>
+  );
+}
+
+export default function ApplyTab({ data, editor = null }) {
   const { authReady } = useAuthReady();
   const apply = useApplyEvents(authReady);
   const { read } = apply;
@@ -846,10 +886,22 @@ export default function ApplyTab({ data }) {
     <div className="space-y-6 pt-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <Intro fetchedAt={list.fetchedAt} />
-        <RefreshButton onClick={apply.refreshNow} busy={read.pending} disabled={!list.keySet}>
-          Refresh
-        </RefreshButton>
+        <div className="flex flex-wrap gap-2">
+          <RefreshButton onClick={apply.refreshNow} busy={read.pending} disabled={!list.keySet}>
+            Refresh
+          </RefreshButton>
+          {editor && (
+            <Button
+              size="sm"
+              onClick={editor.openNewIdea}
+              title="An event you found yourself: saved on the Speaking hub with the status Idea"
+            >
+              <Plus className="mr-1 h-4 w-4" /> Add an event
+            </Button>
+          )}
+        </div>
       </div>
+      {editor && <ManualEditor editor={editor} />}
 
       {apply.writeError && (
         <Dismissible onDismiss={apply.clearWriteError}>
@@ -890,6 +942,7 @@ export default function ApplyTab({ data }) {
                         event={event}
                         overlap={overlaps.get(event.id)}
                         today={today}
+                        onEdit={editor ? () => editor.openEditManual(entryFor(data, event)) : null}
                       />
                     ) : (
                       <EventRow

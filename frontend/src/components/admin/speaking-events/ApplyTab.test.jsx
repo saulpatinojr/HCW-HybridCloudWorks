@@ -20,14 +20,19 @@ import ApplyTab, {
 import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
 import { marksForMonth } from './applyCalendarModel';
 import { EVENTS_ROUTE, REFRESH_ROUTE } from './useApplyEvents';
+import useEventEditor from './useEventEditor';
 
 const getJSON = vi.fn();
 const sendJSON = vi.fn();
+const postJSON = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   getJSON: (...args) => getJSON(...args),
   sendJSON: (...args) => sendJSON(...args),
+  postJSON: (...args) => postJSON(...args),
 }));
+// The editor's Pipeline box has its own tests (TalkPipeline); here it would only add reads.
+vi.mock('./TalkPipeline', () => ({ default: () => null }));
 vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true }) }));
 vi.mock('react-router', () => ({
   Link: ({ to, children, ...rest }) => (
@@ -805,9 +810,10 @@ describe('the owner’s own ideas', () => {
     expect(inRow.getByText('Two talk ideas.')).toBeInTheDocument();
     expect(inRow.getByText(MANUAL_NO_ESTIMATE)).toBeInTheDocument();
     expect(inRow.queryByRole('button', { name: /Estimate/ })).toBeNull();
-    expect(
-      inRow.getByRole('link', { name: 'Edit Example Conf 2099 on the Speaking hub' })
-    ).toHaveAttribute('href', '/admin/speaking?talk=example-conf-2099');
+    expect(inRow.getByRole('link', { name: 'Edit Example Conf 2099' })).toHaveAttribute(
+      'href',
+      '/admin/speaking?talk=example-conf-2099'
+    );
     // The tab still reads one route; the entry came from the hub's own read.
     expect(getJSON).toHaveBeenCalledTimes(1);
     expect(getJSON).toHaveBeenCalledWith(EVENTS_ROUTE);
@@ -836,6 +842,67 @@ describe('the owner’s own ideas', () => {
     expect(within(list).getByText('Example Conf 2099')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
     expect(screen.queryByTestId('topics-line')).toBeNull();
+  });
+});
+
+describe('adding and editing your own events from the tab', () => {
+  const stored = { refresh: vi.fn() };
+  /** The tab with the hub's real editor, as the page passes it. */
+  function WithEditor({ data }) {
+    const editor = useEventEditor(stored);
+    return <ApplyTab data={data} editor={editor} />;
+  }
+  const idea = {
+    _docId: 'example-conf-2099',
+    eventName: 'Example Conf 2099',
+    date: '2099-08-02',
+    status: 'idea',
+    cfpDeadline: '2099-01-14',
+    location: 'Exampleton, WA',
+    display: false,
+  };
+
+  beforeEach(() => {
+    postJSON.mockReset().mockResolvedValue({ ok: true });
+    stored.refresh.mockReset().mockResolvedValue(true);
+  });
+
+  it('adds an event as an Idea, not shown on the site, through the hub’s own write', async () => {
+    render(<WithEditor data={hubData()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add an event/ }));
+    const form = screen.getByRole('form', { name: 'New Manual Entry' });
+    expect(within(form).getByLabelText('Status')).toHaveValue('idea');
+    fireEvent.change(within(form).getByLabelText(/Event Name/i), {
+      target: { value: 'Example Conf 2099' },
+    });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1));
+    expect(postJSON).toHaveBeenCalledWith(
+      'upsertSpeakerEvent',
+      expect.objectContaining({
+        merge: true,
+        data: expect.objectContaining({
+          eventName: 'Example Conf 2099',
+          status: 'idea',
+          display: false,
+        }),
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('form', { name: 'New Manual Entry' })).toBeNull()
+    );
+    expect(stored.refresh).toHaveBeenCalled();
+    // Nothing on the Community Days routes was written.
+    expect(sendJSON).not.toHaveBeenCalled();
+  });
+
+  it('opens an entry’s own form from its row', async () => {
+    render(<WithEditor data={hubData([idea])} />);
+    const row = (await screen.findByText('Example Conf 2099')).closest('li');
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit Example Conf 2099' }));
+    const form = screen.getByRole('form', { name: 'Edit Event' });
+    expect(within(form).getByDisplayValue('Example Conf 2099')).toBeInTheDocument();
+    expect(within(form).getByDisplayValue('2099-01-14')).toBeInTheDocument();
   });
 });
 
