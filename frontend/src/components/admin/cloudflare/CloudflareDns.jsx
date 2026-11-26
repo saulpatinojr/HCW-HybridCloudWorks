@@ -8,7 +8,8 @@
  * Terraform manages, certificate checks) is LOCKED: its row shows a lock and
  * the server's reason and offers no edit, and the server refuses a change to
  * it (409) whatever is sent. The add form checks a new name against the same
- * list before sending.
+ * list before sending. A long zone is listed up to the server's page cap,
+ * and the tab says so when the server answers `truncated`.
  *
  * Adding and changing need the super admin role (RoleGate); the form's Save
  * is disabled while its request is out.
@@ -263,8 +264,15 @@ export default function CloudflareDns({ status = null }) {
               <CardTitle className="text-lg">DNS records</CardTitle>
               <CardDescription>
                 Where each name in the zone points. A locked record keeps the site running and is
-                changed only in Terraform; nothing here can delete a record.
+                changed only in Terraform. No record can be deleted from this page, and only A,
+                AAAA, CNAME, MX and TXT records can be added or changed.
               </CardDescription>
+              {read.data?.truncated && (
+                <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+                  The zone holds more records than this page lists at once; the list stops at the
+                  limit. Find the rest in the Cloudflare dashboard.
+                </p>
+              )}
             </div>
             <RoleGate minRole="super_admin" reason={WRITE_REASON}>
               <Button size="sm" onClick={() => setDialog({ record: null })}>

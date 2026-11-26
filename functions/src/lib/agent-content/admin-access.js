@@ -31,7 +31,10 @@
  *     listed: the owner named the sections Koda works in, and those are not
  *     among them. Platform Settings may be read (owner request 2026-11-10,
  *     "all platform items"), never written: its autoposting settings decide
- *     what is published.
+ *     what is published. The one settings write listed is Cloudflare's
+ *     (PATCH cms/cloudflare/settings/{settingId}, #1905), behind its own
+ *     switch, and the Cloudflare handler refuses an agent key the settings
+ *     only the owner changes (cloudflare/protected.js OWNER_ONLY_SETTINGS).
  *   - Each route belongs to a section switch on each key's own tab
  *     (keys.js CAPABILITIES, the `admin.*` ids), read from that key's own
  *     record. A section that is off refuses its routes with 403 and an

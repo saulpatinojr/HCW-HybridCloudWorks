@@ -40,13 +40,20 @@ describe('the Cloudflare routes', () => {
 
   it('writes with the contract’s methods and bodies, and never deletes', async () => {
     await api.saveCloudflareSetting('always_use_https', 'on');
-    await api.updateCloudflareDnsRecord('abc123', { content: 'x' });
-    await api.replaceCloudflarePhase('http_request_firewall_custom', { rules: [] });
+    await api.updateCloudflareDnsRecord('0123456789abcdef0123456789abcdef', { content: 'x' });
+    await api.replaceCloudflarePhase('http_request_firewall_custom', {
+      rules: [],
+      expectedVersion: '3',
+    });
     await api.createCloudflareDnsRecord({ type: 'A' });
     expect(sendJSON.mock.calls).toEqual([
       ['cms/cloudflare/settings/always_use_https', 'PATCH', { value: 'on' }],
-      ['cms/cloudflare/dns/abc123', 'PATCH', { content: 'x' }],
-      ['cms/cloudflare/rulesets/phases/http_request_firewall_custom', 'PUT', { rules: [] }],
+      ['cms/cloudflare/dns/0123456789abcdef0123456789abcdef', 'PATCH', { content: 'x' }],
+      [
+        'cms/cloudflare/rulesets/phases/http_request_firewall_custom',
+        'PUT',
+        { rules: [], expectedVersion: '3' },
+      ],
     ]);
     expect(postJSON).toHaveBeenCalledWith('cms/cloudflare/dns', { type: 'A' });
     for (const [, method] of sendJSON.mock.calls) expect(method).not.toBe('DELETE');
@@ -64,7 +71,16 @@ describe('the Cloudflare routes', () => {
   it('refuses an id that is not the server’s shape before any request', () => {
     expect(() => api.saveCloudflareSetting('../zones', 'on')).toThrow(/not a valid setting id/);
     expect(() => api.readCloudflarePhase('HTTP-1')).toThrow(/not a valid rule phase/);
+    expect(api.PHASE_ID.test('ddos_l7')).toBe(true);
     expect(() => api.updateCloudflareDnsRecord('a/b', {})).toThrow(/not a valid record id/);
+    // The server's rule exactly: 32 lower-case hex characters.
+    expect(() => api.updateCloudflareDnsRecord('abc123', {})).toThrow(/not a valid record id/);
+    expect(() => api.updateCloudflareDnsRecord('G'.repeat(32), {})).toThrow(
+      /not a valid record id/
+    );
+    expect(() => api.updateCloudflareDnsRecord('A'.repeat(32), {})).toThrow(
+      /not a valid record id/
+    );
     expect(sendJSON).not.toHaveBeenCalled();
     expect(getJSON).not.toHaveBeenCalled();
   });

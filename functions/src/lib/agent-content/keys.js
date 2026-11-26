@@ -109,30 +109,31 @@ export const CAPABILITIES = Object.freeze([
   // The Cloudflare sections (#1905). Reading is one switch; each kind of
   // change is its own, so the owner opens only what a task needs. None of
   // them reaches what Terraform manages or the site's own address, and none
-  // deletes (cloudflare/protected.js says what is refused and why).
+  // deletes (cloudflare/protected.js says what is refused and why). The
+  // texts below promise no more than cloudflare/handlers.test.js proves.
   {
     id: 'admin.cloudflare',
     label: 'Cloudflare: read',
     description:
-      "Read the site's Cloudflare zone on the Cloudflare page: its status, every zone setting, the DNS records, the rules and whether the Cloudflare token works. No changes.",
+      "Read the site's Cloudflare zone on the Cloudflare page: its status, every zone setting, the DNS records, the rulesets and whether the Cloudflare token works. Rules in a phase that cannot be edited from the page are shown without what they carry, and secret-looking header values are hidden. No changes.",
   },
   {
     id: 'admin.cloudflare.settings',
     label: 'Cloudflare: change zone settings and purge the cache',
     description:
-      "Change any of the zone's settings (SSL/TLS, HTTPS, security level, caching, speed and the rest) and purge the cache. Each change is recorded in the audit log and sent to your phone.",
+      'Change a zone setting (security level, caching, speed and the like) and purge the cache. Never the SSL mode, the minimum TLS version, Always Use HTTPS, HSTS or the certificate Cloudflare shows the site: only you change those, on the Cloudflare page. Each change is recorded in the audit log with its old and new value, and sent to your phone.',
   },
   {
     id: 'admin.cloudflare.dns',
     label: 'Cloudflare: add and edit DNS records',
     description:
-      "Add a DNS record or edit one. Never the site's own address (the apex and www), a record Terraform manages, or the lab's records, and never a delete.",
+      "Add or edit A, AAAA, CNAME, MX and TXT records. Never the site's own address (the apex and www), a record Terraform manages, the lab's records, a certificate check, or a wildcard over any of them, and never a delete. Each change is recorded and sent to your phone.",
   },
   {
     id: 'admin.cloudflare.rules',
     label: 'Cloudflare: edit rules',
     description:
-      'Replace the rules of a rule phase (redirects, cache, configuration, custom security rules and the like). Never the phases Terraform manages (the origin rule and the rate limit), and never a delete.',
+      'Replace the rules of five kinds of phase: redirects, URL rewrites, response headers, configuration rules and custom security rules (never one that skips the other checks). Every other phase is read-only, an empty list is refused, and a rule left out of a replacement is removed. These rules can still redirect or change requests to the API, so turn this on only for a task that needs it.',
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));

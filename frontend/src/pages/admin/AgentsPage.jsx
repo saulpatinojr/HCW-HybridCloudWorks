@@ -33,7 +33,7 @@ const HELP = [
   'An agent is a program that works on the site for you. It signs in with its own agent key, which the site shows once and then keeps only a fingerprint of.',
   'Overview lists every agent: what it is for, how many of its switches are on, and whether its key is active.',
   'Each agent’s tab makes, rotates and revokes its key, and turns its switches on and off. Those changes need the super admin role; anyone with the editor role can look.',
-  'No agent key can delete, publish or read a secret, whatever is switched on. Every call it makes, and every call it is refused, is in the audit log.',
+  'No agent key can publish, or delete a DNS record, a ruleset or any content, whatever is switched on; replacing a phase’s Cloudflare rules does remove the ones left out. Every change it makes, and every call it is refused, is in the audit log; reads are not.',
 ];
 
 export default function AgentsPage() {

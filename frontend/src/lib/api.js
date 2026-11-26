@@ -93,6 +93,15 @@ const FUNCTION_TIMEOUT_MS = {
   // timing out. Not retried: the server keeps its own copy and its own waits.
   'cms/community-days/events': 60000,
   'cms/community-days/refresh': 60000,
+  // The Cloudflare page (#1905). Each call the server makes to Cloudflare
+  // may take up to 15 s (functions/src/lib/cloudflare/client.js). The status
+  // reads the zone and then four reads side by side (about 30 s at worst);
+  // a purge reads the zone and then purges. Adding a DNS record shares its
+  // route with the list, which reads the zone's records a page at a time.
+  // None of these is retried: a write sent twice would change twice.
+  'cms/cloudflare/status': 35000,
+  'cms/cloudflare/purge': 35000,
+  'cms/cloudflare/dns': 50000,
 };
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const SAFE_RETRY_FUNCTIONS = new Set([
@@ -109,9 +118,17 @@ const SAFE_RETRY_FUNCTIONS = new Set([
  * upload.js), which for 500 MiB is far past the default; sized under the
  * Function host's 230 s cap. Not retried: a second completion answers 409.
  */
-const PATTERN_TIMEOUT_MS = [[/^cms\/interviews\/uploads\/[^/]+\/complete$/, 200000]];
+const PATTERN_TIMEOUT_MS = [
+  [/^cms\/interviews\/uploads\/[^/]+\/complete$/, 200000],
+  // A Cloudflare change makes three calls of up to 15 s each, one after the
+  // other: the zone check, the read of the current value (or, for a phase,
+  // its version), and the change itself (#1905). Not retried.
+  [/^cms\/cloudflare\/settings\/[^/]+$/, 50000],
+  [/^cms\/cloudflare\/dns\/[^/]+$/, 50000],
+  [/^cms\/cloudflare\/rulesets\/phases\/[^/]+$/, 50000],
+];
 
-function timeoutForFunction(fnName) {
+export function timeoutForFunction(fnName) {
   if (FUNCTION_TIMEOUT_MS[fnName]) return FUNCTION_TIMEOUT_MS[fnName];
   const matched = PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(fnName));
   return matched ? matched[1] : DEFAULT_TIMEOUT_MS;

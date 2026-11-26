@@ -74,14 +74,41 @@ decision widens that for one system, Cloudflare, in a narrow way.
    for a `super_admin`: one zone setting at a time, a cache purge, a DNS
    record added or edited, or the rules of one rule phase replaced. There is
    no delete route at all.
-4. **Some things are refused, whoever asks:** the apex and `www` (the site
-   itself), every DNS record Terraform manages in `infra/` and `infra-lab/`,
-   any `_acme-challenge` name (certificate checks), and the rule phases
-   Terraform manages (`http_request_late_transform`, the origin rule, and
-   `http_ratelimit`, the rate limit). The list lives in one file,
-   `functions/src/lib/cloudflare/protected.js`, and a test fails when a
-   Terraform record or phase is missing from it. The refusal names the file
-   that manages the thing, so the change is made there.
+4. **Some things are refused, whoever asks, and rules are an allow-list.**
+   The lists live in one file, `functions/src/lib/cloudflare/protected.js`,
+   and a test fails when a Terraform record or phase is missing from it.
+   - **DNS:** the apex and `www` (the site itself), every DNS record
+     Terraform manages in `infra/` and `infra-lab/`, any `_acme-challenge`
+     name (certificate checks), a wildcard over any of those, and `*` for
+     the whole zone. A name is checked strictly (no empty part, `@` only on
+     its own, `*` only as the whole first part) and the full name that was
+     checked is the one sent to Cloudflare. Only A, AAAA, CNAME, MX and TXT
+     records are added or edited, judged by the record's current type.
+   - **Rules:** only five phases may be replaced: redirects
+     (`http_request_dynamic_redirect`), URL rewrites
+     (`http_request_transform`), response headers
+     (`http_response_headers_transform`), configuration rules
+     (`http_config_settings`) and custom security rules
+     (`http_request_firewall_custom`). Every other phase is read-only: the
+     two Terraform writes (`http_request_late_transform`, the origin rule,
+     and `http_ratelimit`, the rate limit) with their own reasons, and every
+     other phase, including any Cloudflare adds later, because that kind of
+     rule can send or store the site's traffic elsewhere (an origin rule, a
+     snippet, a cloud connector). An empty list is refused (it would delete
+     every rule), a custom security rule may not `skip`, and a replacement
+     must carry the version it read, so it cannot overwrite a newer change.
+     A read-only phase's rules are answered without what they carry, and a
+     secret-looking header value in an editable phase is hidden, so the
+     origin secret never leaves the server.
+   - **Owner-only settings:** an agent key may not change the SSL mode, the
+     minimum TLS version, Always Use HTTPS, HSTS (`security_header`) or the
+     certificate Cloudflare shows the site (`tls_client_auth`); a
+     `super_admin` person may.
+   - **The zone:** every change first reads the zone and is refused unless
+     it is `hybridcloudworks.com`, so the list is never applied to another
+     zone.
+
+   The refusal names where the thing is changed instead.
 5. **Claude Network Guy is a third agent key** (`claude-network`), with its
    own record, switches, audit rows and per-minute limit like the others.
    Four new switches belong to the shared list: **Cloudflare: read**,
@@ -92,8 +119,11 @@ decision widens that for one system, Cloudflare, in a narrow way.
    switches stay off for Koda and for Claude Publisher until the owner turns
    one on.
 6. **Every change is recorded.** Each successful write is an
-   `admin_audit_logs` row (`action: cloudflare_change`), and a change made
-   by an agent key also sends the owner a Telegram message.
+   `admin_audit_logs` row (`action: cloudflare_change`) with the setting's
+   value before and after, or the DNS record's type, name, proxied flag and
+   TTL before and after (never what it points to). A change made by an
+   agent key also sends the owner a Telegram message under a source of its
+   own, so the 15-minute cooldown never swallows one.
 7. **The agents get their own page.** An **Agents** page in the Platform
    group explains what an agent key is and has one tab per key; the key
    tabs move there from the AI Engine page, and the old links still land on
@@ -104,12 +134,29 @@ decision widens that for one system, Cloudflare, in a narrow way.
 ## Consequences and accepted risks
 
 - **A stolen Network Guy key with every switch on could change zone
-  settings, add or edit DNS records and replace rules,** within the token's
-  own Cloudflare permissions. It could not delete, touch the site's own
-  address or Terraform's things, or reach anything outside the zone. The
-  owner limits this by turning on only the switches a task needs, by the
-  token's own permission list, and by the Telegram message each change
-  sends.
+  settings, add or edit DNS records and replace the rules of the five
+  editable phases,** within the token's own Cloudflare permissions. It
+  could not delete a record or a ruleset, touch the site's own address,
+  Terraform's records or phases, the owner-only settings or any other
+  phase, or reach anything outside the zone. The owner limits this by
+  turning on only the switches a task needs, by the token's own permission
+  list, and by the Telegram message each change sends.
+- **The rules switch can still redirect or reconfigure requests to the
+  API host.** The five editable phases apply to every host in the zone,
+  `api-azure.hybridcloudworks.com` included: a redirect can send the API's
+  callers elsewhere, a URL rewrite can change which route a request
+  reaches, a response header rule can change what the browser is told,
+  and a configuration rule can turn off a setting (such as the security
+  level) for matching requests. None of them can read or change the origin
+  secret header, which is set in the read-only late-transform phase. This
+  is accepted because those are the rules the owner asked the agent to
+  manage; it is why the rules switch starts off and each change reaches
+  the owner's phone. Narrowing it further (refusing any rule whose
+  expression names the API host) is the next step if it is ever needed.
+- **Replacing a phase removes the rules left out.** There is no delete
+  route, and an empty list is refused, but a shorter list is still a
+  removal; the page asks for the phase's name to be typed before a custom
+  security rule is removed, and the audit row records the count.
 - **The DNS audit will call a Network Guy DNS change unexpected.**
   `cloudflare-dns-audit.yml` opens an issue for any DNS change made by
   something it does not know, and this token is not on its list. That is

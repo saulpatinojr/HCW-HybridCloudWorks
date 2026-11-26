@@ -8,10 +8,12 @@
  *
  * Saving needs the super admin role (RoleGate). The Save button is disabled
  * while its request is out, and a setting that can lock visitors out asks
- * first (CAREFUL_SETTINGS).
+ * first (CAREFUL_SETTINGS). A setting only the owner changes
+ * (OWNER_ONLY_SETTINGS, from the status answer) says so beside it: the server
+ * refuses it to an agent key, while a super admin may still change it here.
  */
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Save } from 'lucide-react';
+import { AlertTriangle, Loader2, Lock, Save } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +29,7 @@ import useCanWrite from './useCanWrite';
 import {
   CAREFUL_SETTINGS,
   SETTING_CHOICES,
+  ownerOnlyReason,
   parseSettingDraft,
   settingControl,
   settingDraft,
@@ -101,7 +104,28 @@ function Control({ setting, control, draft, onDraft, disabled }) {
   );
 }
 
-function SettingRow({ setting, busy, canWrite, onSave }) {
+function SettingNotes({ careful, ownerOnly }) {
+  return (
+    <>
+      {careful && (
+        <p className="mt-1 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+          {careful}
+        </p>
+      )}
+      {ownerOnly && (
+        <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
+          <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            <span className="font-medium text-foreground">Owner only.</span> {ownerOnly}
+          </span>
+        </p>
+      )}
+    </>
+  );
+}
+
+function SettingRow({ setting, status, busy, canWrite, onSave }) {
   const control = settingControl(setting);
   const original = settingDraft(control, setting.value);
   const [draft, setDraft] = useState(original);
@@ -136,12 +160,7 @@ function SettingRow({ setting, busy, canWrite, onSave }) {
           <code>{setting.id}</code>
           {setting.modifiedOn ? ` · changed ${whenText(setting.modifiedOn)}` : ''}
         </p>
-        {careful && (
-          <p className="mt-1 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-400">
-            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-            {careful}
-          </p>
-        )}
+        <SettingNotes careful={careful} ownerOnly={ownerOnlyReason(setting.id, status)} />
       </div>
       <div className="min-w-0">
         <Control
@@ -191,7 +210,7 @@ function SettingRow({ setting, busy, canWrite, onSave }) {
   );
 }
 
-export default function CloudflareSettings() {
+export default function CloudflareSettings({ status = null }) {
   const read = useCloudflareRead(readCloudflareSettings, EMPTY);
   const { busyIds, run } = useCloudflareWrite(read.refresh);
   const canWrite = useCanWrite();
@@ -216,7 +235,9 @@ export default function CloudflareSettings() {
           <CardDescription>
             Every setting Cloudflare reports for the zone. Change one, then press its Save; each
             setting is saved on its own, and a change reaches visitors within a minute or so. The
-            ones marked with a warning can lock visitors out, so they ask first.
+            ones marked with a warning can lock visitors out, so they ask first; the ones marked
+            owner only are refused to an agent key. Each change is written to the audit log with its
+            old and new value.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -243,6 +264,7 @@ export default function CloudflareSettings() {
                 <SettingRow
                   key={setting.id}
                   setting={setting}
+                  status={status}
                   busy={busyIds.has(setting.id)}
                   canWrite={canWrite}
                   onSave={onSave}
