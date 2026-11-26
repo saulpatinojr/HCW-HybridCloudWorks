@@ -174,9 +174,13 @@ async function keyAwareRequireRole({ roleGuard, agentGuard, auditDenial, env, po
  * current-admin status, the bootstrap) refuse it without a verifier round
  * trip, and the refusal is a denial row like any other presented key's.
  */
-async function keyAwareRequireUser({ roleGuard, auditDenial }, request) {
+async function keyAwareRequireUser({ roleGuard, agentGuard, auditDenial }, request) {
   if (!presentsKey(request)) return roleGuard.requireUser(request);
+  // Name the key refused, so its own Health card counts it; a key that
+  // matches no record stays on the first key's card, as before.
+  const agent = (await agentGuard?.identify?.(request).catch(() => null)) ?? null;
   auditDenialRow(auditDenial, {
+    ...(agent ? { agent } : {}),
     outcome: 'denied',
     reason: 'user-only-route',
     surface: 'admin',
