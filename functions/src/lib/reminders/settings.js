@@ -38,7 +38,11 @@ export {
 } from './calendar.js';
 
 export const REMINDERS_CONFIG_ID = 'reminders';
-export const MAX_REMINDERS = 200;
+/**
+ * 220 since #1886: 180 rows for the owner (unchanged) and 20 for each row
+ * provider below.
+ */
+export const MAX_REMINDERS = 220;
 /**
  * Rows kept for the credential register's own reminders, which an editor's
  * save of the sheet cannot use (review of #1039): without the reserve, a
@@ -154,6 +158,49 @@ export const isCredentialRow = (row) =>
   typeof row?.id === 'string' && row.id.startsWith(CREDENTIAL_ROW_PREFIX);
 
 /**
+ * Every part of the platform that keeps its own rows on this sheet (#1886),
+ * by reserved id prefix, with the rows kept for it and who keeps them. A
+ * provider writes its rows through reminders/provided-rows.js; the owner's
+ * save below can neither add, change nor remove one. A new provider is one
+ * entry here plus its sync in REMINDER_PROVIDERS (reminders/providers.js).
+ */
+export const PROVIDED_ROWS = Object.freeze([
+  Object.freeze({
+    prefix: CREDENTIAL_ROW_PREFIX,
+    reserved: REGISTER_RESERVED_ROWS,
+    keeper: 'the credential register',
+    agentSection: 'admin.platform',
+    ownDashboardSource: false,
+  }),
+  Object.freeze({
+    prefix: 'ambassador-',
+    reserved: 20,
+    keeper: 'Ambassador',
+    agentSection: 'admin.spotlight',
+    ownDashboardSource: true,
+  }),
+]);
+
+/*
+ * Each provider also names:
+ *   agentSection        the agent key's switch for the Page the rows come
+ *                       from. While it is off, the key's reads of the sheet
+ *                       and of the alert log leave the rows out
+ *                       (reminders/agent-visibility.js), because a row names
+ *                       a record on that Page.
+ *   ownDashboardSource  true when the Page already puts the same items on the
+ *                       Dashboard itself, so the reminders source there skips
+ *                       the rows instead of listing each item twice.
+ */
+
+/** The rows kept for every provider together. */
+export const PROVIDED_RESERVED_ROWS = PROVIDED_ROWS.reduce((sum, provider) => sum + provider.reserved, 0);
+
+/** Whether a row is one a provider keeps, by its reserved id prefix. */
+export const isProvidedRow = (row) =>
+  typeof row?.id === 'string' && PROVIDED_ROWS.some(({ prefix }) => row.id.startsWith(prefix));
+
+/**
  * The stored document's register rows, each normalized on its own, stamps
  * included. A row that does not validate is left out and the rest are kept
  * (#1041): the whole sheet used to be validated at once, so one malformed
@@ -162,7 +209,7 @@ export const isCredentialRow = (row) =>
  * register's next sync. A second row under an id already kept is dropped,
  * as a whole-sheet read would have refused it.
  */
-function storedCredentialRows(storedDoc) {
+function storedProvidedRows(storedDoc) {
   const storedRows = Array.isArray(storedDoc?.reminders) ? storedDoc.reminders : [];
   const kept = new Map();
   for (const entry of storedRows) {
@@ -173,7 +220,7 @@ function storedCredentialRows(storedDoc) {
       if (error instanceof RemindersValidationError) continue;
       throw error;
     }
-    if (isCredentialRow(row) && !kept.has(row.id)) kept.set(row.id, row);
+    if (isProvidedRow(row) && !kept.has(row.id)) kept.set(row.id, row);
   }
   return [...kept.values()];
 }
@@ -184,6 +231,10 @@ function storedCredentialRows(storedDoc) {
  * is the merge of both. Rows the owner removed stay removed, rows they added
  * carry only what they sent. Review of #910: without this, a save made after
  * the 13:00 run erased that morning's stamp and the reminder was said again.
+ *
+ * The same holds for every provider in PROVIDED_ROWS (#1886): Ambassador's
+ * rows say a deadline or an activity requirement, and an editor's save does not
+ * silence them either. What follows says "register" for all of them.
  *
  * THE CREDENTIAL REGISTER'S ROWS ARE NOT THE SHEET'S TO CHANGE (review of
  * #1039). This page saves at `editor`, below the `super_admin` that records
@@ -214,19 +265,19 @@ export function mergeStoredStamps(value, storedDoc) {
   const storedRows = Array.isArray(storedDoc?.reminders) ? storedDoc.reminders : [];
   const stored = new Map(storedRows.map((row) => [row?.id, row?.notified]));
   const ownRows = value.reminders
-    .filter((row) => !isCredentialRow(row))
+    .filter((row) => !isProvidedRow(row))
     .map((row) =>
       stored.has(row.id) ? { ...row, notified: mergeStamps(stored.get(row.id), row.notified) } : row
     );
-  const ownLimit = MAX_REMINDERS - REGISTER_RESERVED_ROWS;
+  const ownLimit = MAX_REMINDERS - PROVIDED_RESERVED_ROWS;
   if (ownRows.length > ownLimit) {
     fail(
-      `reminders may hold at most ${ownLimit} of your own entries; ${REGISTER_RESERVED_ROWS} are kept for the credential register`
+      `reminders may hold at most ${ownLimit} of your own entries; ${PROVIDED_RESERVED_ROWS} are kept for the credential register and Ambassador`
     );
   }
-  const reminders = [...ownRows, ...storedCredentialRows(storedDoc)];
+  const reminders = [...ownRows, ...storedProvidedRows(storedDoc)];
   if (reminders.length > MAX_REMINDERS) {
-    fail(`reminders may hold at most ${MAX_REMINDERS} entries, the credential register's rows included`);
+    fail(`reminders may hold at most ${MAX_REMINDERS} entries, the kept rows included`);
   }
   return { reminders };
 }

@@ -272,26 +272,46 @@ export function NewReminderForm({ saving, onAdd }) {
 }
 
 /**
- * The credential register's rows (#1026), by their reserved id prefix: kept
- * by Integrations → Credentials, and read-only here. The server keeps them as
+ * The rows another part of the platform keeps on this sheet, by their
+ * reserved id prefix, read-only here (#1026, #1886). The server keeps them as
  * stored whatever a save sends (functions/src/lib/reminders/settings.js,
- * mergeStoredStamps; review of #1039), so offering Edit, Done or the X on
- * one would offer a change that is silently undone.
+ * PROVIDED_ROWS and mergeStoredStamps; review of #1039), so offering Edit,
+ * Done or the X on one would offer a change that is silently undone.
+ * remindersKeepers.test.js holds this list to the server's.
  */
 export const CREDENTIAL_ROW_PREFIX = 'credential-';
-export const isRegisterRow = (reminder) =>
-  typeof reminder?.id === 'string' && reminder.id.startsWith(CREDENTIAL_ROW_PREFIX);
 export const CREDENTIALS_TAB_HREF = '/admin/integrations?tab=credentials';
+export const ROW_KEEPERS = Object.freeze([
+  Object.freeze({
+    prefix: CREDENTIAL_ROW_PREFIX,
+    label: 'Integrations → Credentials',
+    href: CREDENTIALS_TAB_HREF,
+    how: 'Record the rotation there to move it',
+  }),
+  Object.freeze({
+    prefix: 'ambassador-',
+    label: 'Ambassador',
+    href: '/admin/ambassador',
+    how: 'It moves with the deadline, and goes once the application moves on or the period’s activity requirement is met',
+  }),
+]);
 
-/** In place of the controls on a register row: who keeps it, and how it moves. */
-function ManagedNote() {
+/** Who keeps a row, or null for one of the owner's own. */
+export const keeperOf = (reminder) =>
+  (typeof reminder?.id === 'string' &&
+    ROW_KEEPERS.find(({ prefix }) => reminder.id.startsWith(prefix))) ||
+  null;
+export const isRegisterRow = (reminder) => keeperOf(reminder) !== null;
+
+/** In place of the controls on a kept row: who keeps it, and how it moves. */
+function ManagedNote({ keeper }) {
   return (
     <p className="max-w-xs text-xs text-muted-foreground">
       Managed by{' '}
-      <a href={CREDENTIALS_TAB_HREF} className="underline">
-        Integrations → Credentials
+      <a href={keeper.href} className="underline">
+        {keeper.label}
       </a>
-      . Record the rotation there to move it; it cannot be edited, marked done or removed here.
+      . {keeper.how}; it cannot be edited, marked done or removed here.
     </p>
   );
 }
@@ -300,7 +320,8 @@ function ManagedNote() {
 function ReminderItem({ reminder, today, saving, onEdit, onToggleDone, onCancel }) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
-  const managed = isRegisterRow(reminder);
+  const keeper = keeperOf(reminder);
+  const managed = keeper !== null;
   // `?reminder=<id>` (the dashboard's Decision Center) scrolls to this one and rings it.
   const { ref, linkedProps, linkedClassName } = useLinkedItem(LINK_PARAMS.reminder, reminder.id);
   const due = describeDue(reminder, today);
@@ -365,7 +386,7 @@ function ReminderItem({ reminder, today, saving, onEdit, onToggleDone, onCancel 
         </p>
       </div>
       {managed ? (
-        <ManagedNote />
+        <ManagedNote keeper={keeper} />
       ) : (
         <div className="flex items-center gap-3">
           <Button

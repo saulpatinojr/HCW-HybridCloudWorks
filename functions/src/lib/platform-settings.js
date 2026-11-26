@@ -63,6 +63,7 @@ export {
 } from './platform-setting-media.js';
 export { normalizeNewsletterSettings } from './platform-setting-newsletter.js';
 
+import { hiddenReminderPrefixes, isHiddenReminderId } from './reminders/agent-visibility.js';
 import {
   PLATFORM_SETTING_AUDIT_ACTION,
   auditDetailsForLog,
@@ -308,6 +309,20 @@ async function saveSetting(deps, spec, { value, meta, tags }) {
   return result.error ? result : { value, etag: result.written?._etag ?? null };
 }
 
+/**
+ * The reminders sheet as the agent key may see it: without the rows kept for
+ * a Page whose switch is off on the key (reminders/agent-visibility.js). The
+ * key cannot save the sheet, so the shorter list is never written back.
+ */
+async function hideRowsFromAgent(store, user, presented) {
+  const hidden = await hiddenReminderPrefixes(store, user);
+  if (!hidden.length || !Array.isArray(presented.value?.reminders)) return;
+  presented.value = {
+    ...presented.value,
+    reminders: presented.value.reminders.filter((row) => !isHiddenReminderId(row?.id, hidden)),
+  };
+}
+
 /** GET /api/cms/platform-settings/{setting} */
 async function getSetting(deps, request, context) {
   // `history` has its own literal route, but the host's choice between a
@@ -317,10 +332,12 @@ async function getSetting(deps, request, context) {
   if (request.params?.setting === 'history') return getHistory(deps, request, context);
   const opened = await openSetting(deps, request);
   if (opened.response) return opened.response;
-  const { name, spec } = opened;
+  const { name, spec, auth } = opened;
   const { store } = deps;
   try {
     const doc = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
+    const presented = presentSetting(name, doc);
+    if (name === 'reminders') await hideRowsFromAgent(store, auth.user, presented);
     // The version the page's save names in If-Match (#946): null when
     // nothing is stored (the save creates), and null for a merged setting,
     // whose save is guarded by its own read (writeMerged).
@@ -330,7 +347,7 @@ async function getSetting(deps, request, context) {
       {
         success: true,
         setting: name,
-        ...presentSetting(name, doc),
+        ...presented,
         etag,
         ...optionsFor(spec),
       },

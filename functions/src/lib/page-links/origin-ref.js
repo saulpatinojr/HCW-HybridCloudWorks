@@ -105,7 +105,7 @@ async function agentMayRead(store, user, page) {
  * cannot be found: a missing record fails closed here (review of #1891),
  * rather than taking the all-on defaults an older record is read with.
  */
-async function agentSwitchesOn(store) {
+export async function agentSwitchesOn(store) {
   const record = await store.readDoc(
     "admin_config",
     KEY_RECORD_ID,

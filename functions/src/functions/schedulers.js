@@ -62,7 +62,7 @@ import { createBlogListingsScrape, listingsLogSummary } from '../lib/timers/blog
 import { createPodcastIngest, createPodcastParser } from '../lib/timers/podcasts.js';
 import { createNewsletterAutoBuild } from '../lib/timers/newsletter-autobuild.js';
 import { createReminderCheck } from '../lib/timers/reminders.js';
-import { syncCredentialReminders } from '../lib/credentials/reminders.js';
+import { syncReminderProviders } from '../lib/reminders/providers.js';
 import { createNotifier } from '../lib/notify.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 import { jsonForLog } from '../lib/http/log-json.js';
@@ -385,13 +385,16 @@ timer('syncSearchConsole', 'SYNC_SEARCH_CONSOLE', '0 10 0,12 * * *', async (cont
 // Telegram ahead of each date, on the day, and weekly while overdue until
 // marked done (owner request 2026-10-06). 13:00 UTC is 08:00 Central. Each
 // run first syncs the credential register's rows (#1026), so a rotation
-// since yesterday has moved its reminder before anything is said.
+// since yesterday has moved its reminder before anything is said; since
+// #1886 Ambassador's rows are synced the same way, from reminders/providers.js.
 timer('sendReminders', 'SEND_REMINDERS', '0 0 13 * * *', (context) =>
   createReminderCheck({
     store,
     notifier: createNotifier({ store, log: context }),
     log: context,
-    syncCredentials: (at) => syncCredentialReminders({ store, now: () => at, log: context }),
+    // Every part of the platform that keeps rows on the sheet: the credential
+    // register (#1026) and Ambassador's deadlines and quarters (#1886).
+    syncProviders: (at) => syncReminderProviders({ store, at, log: context }),
   }).run()
 );
 

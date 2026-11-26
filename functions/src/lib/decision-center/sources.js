@@ -29,11 +29,13 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { isContainerMissing } from '../calendar/collectors.js';
 import { getWorkflowAlertStatus } from '../ops-health.js';
 import { splitUnresolved, unresolvedSecretNames } from '../secrets-health.js';
-import { REMINDERS_CONFIG_ID, dateOnly, daysUntil, readStoredReminders } from '../reminders/settings.js';
+import { PROVIDED_ROWS, REMINDERS_CONFIG_ID, dateOnly, daysUntil, readStoredReminders } from '../reminders/settings.js';
 import { STATUS as PODCAST_STATUS, TRANSCRIPT_CONTAINER } from '../podcast/store.js';
 import { EPISODE_CONTAINER, STATUS as CHAPTER_STATUS } from '../listen-and-learn/publish.js';
 import { isSoftDeleted } from '../listen-and-learn/handlers-shared.js';
 import { CONTAINER as AMBASSADOR_CONTAINER } from '../ambassador/model.js';
+import { isDueSoon } from '../ambassador/attention.js';
+import { readAmbassadorAttention } from '../ambassador/attention-read.js';
 import { QUEUE_DOC_TYPE } from '../content/forge-studio/queue.js';
 import { decisionItem, fromTs, text } from './items.js';
 import { readLedger } from '../cost/ledger-store.js';
@@ -45,7 +47,6 @@ import {
   SOCIAL_QUEUE_HREF,
   UNRESOLVED_SECRETS_HREF,
   alertHref,
-  ambassadorHref,
   chapterHref,
   newsletterIssueHref,
   reminderHref,
@@ -394,6 +395,10 @@ const cost = Object.freeze({
 
 // ── reminders ────────────────────────────────────────────────────────────────
 
+const OWN_SOURCE_PREFIXES = PROVIDED_ROWS.filter((p) => p.ownDashboardSource).map((p) => p.prefix);
+const hasOwnDashboardSource = (reminder) =>
+  typeof reminder?.id === 'string' && OWN_SOURCE_PREFIXES.some((prefix) => reminder.id.startsWith(prefix));
+
 /** Due today or overdue and not done: the reminders the daily Telegram check is saying now. */
 const reminders = Object.freeze({
   id: 'reminders',
@@ -404,7 +409,10 @@ const reminders = Object.freeze({
     const doc = await store.readDoc('admin_config', REMINDERS_CONFIG_ID, ADMIN_CONFIG_PARTITION);
     const today = dateOnly(now());
     const items = readStoredReminders(doc)
-      .reminders.map((reminder) => ({ reminder, days: daysUntil(reminder.dueDate, today) }))
+      // Rows a Page keeps for items it already lists here itself (Ambassador's)
+      // are skipped, so one date is not shown twice.
+      .reminders.filter((reminder) => !hasOwnDashboardSource(reminder))
+      .map((reminder) => ({ reminder, days: daysUntil(reminder.dueDate, today) }))
       .filter(({ reminder, days }) => !reminder.done && days !== null && days <= 0)
       .map(({ reminder, days }) =>
         decisionItem({
@@ -427,67 +435,48 @@ const reminders = Object.freeze({
 
 // ── ambassador ───────────────────────────────────────────────────────────────
 
-/** How far ahead an ambassador deadline starts to need a decision. */
-export const AMBASSADOR_HORIZON_DAYS = 14;
-
-/** Each deadline field, the statuses it still matters in, and its verb. */
-const AMBASSADOR_DEADLINES = Object.freeze([
-  { field: 'submissionDeadline', verb: 'Submit', statuses: ['interested', 'preparing', 'ready'] },
-  { field: 'renewalDate', verb: 'Renew', statuses: ['accepted', 'active', 'renewal_due'] },
-  { field: 'expirationDate', verb: 'Expires', statuses: ['accepted', 'active', 'renewal_due'] },
-]);
-const OPEN_APPLICATION_STATUSES = [...new Set(AMBASSADOR_DEADLINES.flatMap((d) => d.statuses))];
-
-function ambassadorItems(row, { horizon, todayMs }) {
-  return AMBASSADOR_DEADLINES.filter(
-    ({ field, statuses }) =>
-      statuses.includes(row.status) && typeof row[field] === 'string' && row[field].slice(0, 10) <= horizon
-  ).map(({ field, verb }) => {
-    const due = row[field].slice(0, 10);
-    const dueMs = Date.parse(`${due}T00:00:00.000Z`);
-    const name = row.programName || row.title || row.programId || 'Ambassador application';
-    const days = Math.round((dueMs - todayMs) / DAY_MS);
-    return decisionItem({
-      id: `ambassador:${row.id}:${field}`,
-      category: 'other',
-      kind: 'ambassador',
-      title: `${verb}: ${name}`,
-      stage: 'deadline',
-      status: row.status,
-      // It became a decision when it came inside the horizon, not on the day
-      // itself: a deadline next week must not sort as the newest arrival.
-      waitingSince: new Date(dueMs - AMBASSADOR_HORIZON_DAYS * DAY_MS).toISOString(),
-      priority: days <= 3 ? 'high' : 'normal',
-      href: ambassadorHref(row.id),
-      source: { collection: AMBASSADOR_CONTAINER, id: row.id, deadline: field },
-      detail: days < 0 ? `${-days} days past` : `Due ${due}`,
-    });
+/**
+ * Ambassador's deadlines and upkeep (#1886), from the one list the Telegram
+ * reminders also read (ambassador/attention.js): each item is shown from the
+ * program's own lead time (Settings: days before a deadline, days before a
+ * renewal) rather than a fixed window, an application's title names its
+ * program, a deleted application is not shown, and a held membership whose
+ * quarter (or year) has an activity requirement not yet met is shown until it
+ * is met.
+ */
+function ambassadorDecision(item) {
+  const dueMs = Date.parse(`${item.due}T00:00:00.000Z`);
+  return decisionItem({
+    id: `ambassador:${item.key}`,
+    category: 'other',
+    kind: 'ambassador',
+    title: item.title,
+    stage: item.kind === 'upkeep' ? 'upkeep' : 'deadline',
+    status: item.status || (item.kind === 'upkeep' ? 'not-yet-met' : ''),
+    // It became a decision when it came inside its lead time, not on the day
+    // itself: a deadline next week must not sort as the newest arrival.
+    waitingSince: new Date(dueMs - item.leadDays * DAY_MS).toISOString(),
+    priority: item.daysLeft <= 3 ? 'high' : 'normal',
+    href: item.href,
+    source: {
+      collection: AMBASSADOR_CONTAINER,
+      id: item.recordId,
+      ...(item.field ? { deadline: item.field } : { upkeep: item.due }),
+    },
+    detail:
+      item.detail ||
+      (item.daysLeft < 0 ? `${-item.daysLeft} days past` : `Due ${item.due}`),
   });
 }
 
 const ambassador = Object.freeze({
   id: 'ambassador',
-  label: 'Ambassador deadlines',
+  label: 'Ambassador deadlines and upkeep',
   category: 'other',
   role: 'editor',
   async collect({ store, now }) {
-    const todayMs = Date.parse(`${dateOnly(now())}T00:00:00.000Z`);
-    const horizon = dateOnly(new Date(todayMs + AMBASSADOR_HORIZON_DAYS * DAY_MS));
-    const limit = 50;
-    const rows = await rowsOrNone(() =>
-      store.queryDocs(
-        AMBASSADOR_CONTAINER,
-        `SELECT TOP ${limit} c.id, c.title, c.programName, c.programId, c.status, c.submissionDeadline, c.renewalDate, c.expirationDate FROM c WHERE c.docType = 'application' AND ARRAY_CONTAINS(@open, c.status) AND ((IS_STRING(c.submissionDeadline) AND c.submissionDeadline < @after) OR (IS_STRING(c.renewalDate) AND c.renewalDate < @after) OR (IS_STRING(c.expirationDate) AND c.expirationDate < @after)) ORDER BY c._ts DESC`,
-        [
-          { name: '@open', value: OPEN_APPLICATION_STATUSES },
-          // Exclusive bound, the day after the horizon: an ISO instant on the
-          // horizon day sorts after the bare day and must still be in.
-          { name: '@after', value: dateOnly(new Date(todayMs + (AMBASSADOR_HORIZON_DAYS + 1) * DAY_MS)) },
-        ]
-      )
-    );
-    const items = rows.flatMap((row) => ambassadorItems(row, { horizon, todayMs }));
-    return { items, truncated: rows.length >= limit };
+    const { items, truncated } = await readAmbassadorAttention(store, dateOnly(now()));
+    return { items: items.filter(isDueSoon).map(ambassadorDecision), truncated };
   },
 });
 

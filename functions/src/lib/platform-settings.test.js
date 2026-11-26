@@ -31,6 +31,7 @@ import {
   satisfiesIfMatch,
 } from './platform-settings.js';
 import { pickDefaultHero, DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
+import { AGENT_USER, KEY_RECORD_ID } from './agent-content/keys.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
 import {
   MAIN_FEED_PROVIDER,
@@ -1161,8 +1162,8 @@ describe('handlers', () => {
       const rows = Array.from({ length: 200 }, (_, i) => ({ id: `r${i}`, title: 'T', dueDate: '2027-01-04' }));
       const { put, written } = await save(rows);
       expect(put.status).toBe(400);
-      // The owner's share runs out first: REGISTER_RESERVED_ROWS stay the register's (review of #1039).
-      expect(parse(put).error).toMatch(/at most 180 of your own entries; 20 are kept for the credential register/);
+      // The owner's share runs out first: the providers' rows stay theirs (review of #1039, #1886).
+      expect(parse(put).error).toMatch(/at most 180 of your own entries; 40 are kept for the credential register and Ambassador/);
       expect(written).toBeUndefined();
     });
   });
@@ -1926,5 +1927,35 @@ describe('change history', () => {
       setting: 'podcast-feeds',
       summary: { feeds: 0, mainFeed: false },
     });
+  });
+});
+
+describe('the reminders sheet as the agent key reads it (#1886)', () => {
+  const SHEET = {
+    id: 'reminders',
+    reminders: [
+      { id: 'my-own-row', title: 'Own', dueDate: '2026-12-01', leadDays: 7 },
+      { id: 'ambassador-0123456789abcdef', title: 'Submit: Example Program', dueDate: '2026-12-10', leadDays: 14 },
+    ],
+  };
+  const storeFor = (spotlight) =>
+    makeStore({
+      readDoc: vi.fn(async (_c, id) =>
+        id === KEY_RECORD_ID ? { id, capabilities: { 'admin.spotlight': spotlight } } : structuredClone(SHEET)
+      ),
+    });
+  const as = (user) => ({ requireRole: vi.fn(async () => ({ user, role: 'editor', error: null })) });
+  const rowIds = async (user, spotlight) =>
+    parse(
+      await createPlatformSettingsHandlers({ guard: as(user), store: storeFor(spotlight), ...fixed }).getSetting(
+        makeRequest({ params: { setting: 'reminders' } }),
+        context
+      )
+    ).value.reminders.map((row) => row.id);
+
+  it('leaves out the rows of a Page whose switch is off on the key, and nothing for a person', async () => {
+    expect(await rowIds(AGENT_USER, false)).toEqual(['my-own-row']);
+    expect(await rowIds(AGENT_USER, true)).toEqual(['my-own-row', 'ambassador-0123456789abcdef']);
+    expect(await rowIds({ oid: 'u1' }, false)).toEqual(['my-own-row', 'ambassador-0123456789abcdef']);
   });
 });

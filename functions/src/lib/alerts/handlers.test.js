@@ -3,6 +3,7 @@
  * and how each refusal from the notifier is put into words.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { AGENT_USER, KEY_RECORD_ID } from '../agent-content/keys.js';
 import { createAlertLogHandlers, ALERTS_READ_ROLE, ALERTS_RESEND_ROLE } from './handlers.js';
 import { NOTIFY_LOG_ID } from '../notify.js';
 
@@ -41,6 +42,26 @@ const post = (body) => ({
 const parse = (res) => JSON.parse(res.body);
 
 describe('GET cms/alerts/recent', () => {
+  it('leaves out, for an agent key whose switch is off, the alerts sent for that Page\'s reminder rows', async () => {
+    const log = {
+      id: NOTIFY_LOG_ID,
+      entries: [
+        { id: 'r1', at: '2026-11-10T00:40:00.000Z', source: 'reminder:ambassador-0123456789ab', title: 'Submit: Example Program', message: 'm' },
+        { id: 'r2', at: '2026-11-10T00:41:00.000Z', source: 'reminder:my-own-row', title: 'Own', message: 'm' },
+      ],
+    };
+    const storeFor = () => ({
+      readDoc: vi.fn(async (container, id) =>
+        id === KEY_RECORD_ID ? { id, capabilities: { 'admin.spotlight': false } } : log
+      ),
+    });
+    const as = (user) => ({ requireRole: vi.fn(async () => ({ user })) });
+    const agent = await createAlertLogHandlers({ guard: as(AGENT_USER), store: storeFor(), notifier: {} }).getRecent({}, {});
+    expect(parse(agent).alerts.map((a) => a.id)).toEqual(['r2']);
+    const person = await createAlertLogHandlers({ guard: as({ oid: 'o' }), store: storeFor(), notifier: {} }).getRecent({}, {});
+    expect(parse(person).alerts.map((a) => a.id).sort()).toEqual(['r1', 'r2']);
+  });
+
   it('reads at editor, like the reminders sheet whose notices the log keeps', () => {
     expect(ALERTS_READ_ROLE).toBe('editor');
     expect(ALERTS_RESEND_ROLE).toBe('editor');

@@ -23,6 +23,7 @@
  * logged: a failure is logged by its code with a correlation id
  * (http/error-response.js).
  */
+import { hiddenReminderPrefixes, isHiddenReminderAlert } from '../reminders/agent-visibility.js';
 import { readJsonBodyWithin } from '../http/bounded-body.js';
 import { errorResponse } from '../http/error-response.js';
 import { readAlertLog } from '../notify.js';
@@ -103,7 +104,12 @@ export function createAlertLogHandlers({ guard, store, notifier }) {
       const auth = await guard.requireRole(request, ALERTS_READ_ROLE);
       if (auth.error) return auth.error;
       try {
-        const alerts = (await readAlertLog(store)).map(present);
+        // An agent key does not see the alerts sent for reminder rows of a
+        // Page whose switch is off on it (reminders/agent-visibility.js).
+        const hidden = await hiddenReminderPrefixes(store, auth.user);
+        const alerts = (await readAlertLog(store))
+          .map(present)
+          .filter((alert) => !isHiddenReminderAlert(alert, hidden));
         return privateJson(200, { ok: true, alerts });
       } catch (failure) {
         return errorResponse(context, 'Failed to read the alert log', failure, 500, request);

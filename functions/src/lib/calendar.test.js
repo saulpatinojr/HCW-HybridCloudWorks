@@ -233,8 +233,9 @@ describe('collectors', () => {
       store: storeOf({
         ambassador: [
           {
+            // An application has no programName (#1886); its title names the program.
             id: 'app1',
-            programName: 'MVP',
+            title: 'Example Program',
             submissionDeadline: '2026-10-31',
             renewalDate: '2027-01-01',
           },
@@ -245,9 +246,10 @@ describe('collectors', () => {
     });
     expect(items).toEqual([
       expect.objectContaining({
-        title: 'Submit: MVP',
+        title: 'Submit: Example Program',
         kind: 'ambassador',
         allDay: true,
+        href: '/admin/ambassador?tab=applications&application=app1',
       }),
     ]);
   });
