@@ -77,7 +77,7 @@ const PANELS = {
 const HELP = [
   'Sessionize is read live; Sync from Sessionize on Sources creates a stored row for each event so you can enrich it.',
   'Enrich a row with its status, CFP deadline, sessions, slides, recording, attendance and evidence links. The Ambassador hub imports those as evidence.',
-  'Future Events lists other events with an open call for speakers. Record a status, costs and notes for each; an estimate of the chance of acceptance is a rough guess and is made only when you press Estimate.',
+  'Future Events lists other events with an open call for speakers, and the events you added yourself with the status Idea. Record a status, costs and notes for each; an estimate of the chance of acceptance is a rough guess and is made only when you press Estimate.',
   'Only rows with Show on site ticked are public; unticking it on a Sessionize event hides that event publicly too.',
   'Visitors see changes after Publish snapshot on the Publishing tab — the About page renders the newer of the published snapshot and the deploy-time copy.',
 ];

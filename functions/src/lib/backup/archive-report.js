@@ -91,7 +91,7 @@ export {
   sensitiveNamesIn,
   valueKind,
 } from './archive-report-fields.js';
-export { archiveStartDecision, reportGate } from './archive-report-gate.js';
+export { archiveStartDecision, cutShortParts, reportGate } from './archive-report-gate.js';
 export {
   findLatestFullBackup,
   isUnnamedContainer,

@@ -41,9 +41,51 @@ export const MIN_NAME_RECORDS = 2;
 export const MIN_NAME_SHARE = 0.01;
 /** The most names that look sensitive one container's part lists. */
 export const MAX_SENSITIVE_NAMES = 40;
-/** How deep, and how many values, one record is searched for a name that looks sensitive. */
-export const SENSITIVE_MAX_DEPTH = 8;
-export const SENSITIVE_MAX_NODES = 5000;
+/**
+ * How deep, and how many objects and lists, one record is searched for a
+ * name that looks sensitive. Past either, the record counts as "cut short"
+ * and the archive will not start (archive-report-gate.js).
+ *
+ * The first limits (8 levels, 5,000 objects) were set when the dry run was
+ * built, with no reason recorded, and the owner's newest dry run met a record
+ * past one of them. They are now set from the database's own limits, so a
+ * record the database can hold is searched whole
+ * (https://learn.microsoft.com/azure/cosmos-db/concepts-limits#per-item-limits):
+ *
+ *   - Depth: Cosmos DB refuses an item nested more than 128 levels. The
+ *     record itself is level 0 here and each object or list below it adds
+ *     one, so 128 is the deepest level an item can reach.
+ *   - Size: Cosmos DB refuses an item over 2 MB of JSON. Every object or
+ *     list costs at least its two brackets (`{}` or `[]`; a comma is only
+ *     needed between siblings), so 2 MiB holds at most
+ *     2,097,152 / 2 = 1,048,576 of them. That is a ceiling no real item can
+ *     reach, since the item itself, its `id` and its field names cost bytes
+ *     too.
+ *
+ * Still bounded, and not a security limit: only names are read, never a
+ * value. The bound is there so one huge record cannot hold a job. Measured
+ * in a development container (Node 22): a record near that ceiling takes
+ * about 1.5 to 2 seconds and about 180 MB of short-lived memory, against
+ * 2,048 MB on the host (instance_memory_in_mb, infra/functionapp.tf). 7,713
+ * records of about 900 objects each take about 15 to 35 seconds (one or two
+ * walks per record: the record as read, and again what an archive would
+ * keep when that differs, archive-report-tally.js), against a job budget of
+ * 28 minutes per container (content-archive-http.js). A container of
+ * thousands of records at the size limit would run out of that budget; its
+ * part is then never written, the dry run does not finish, and the archive
+ * does not start, which is the safe way round.
+ *
+ * A record deeper than 128 levels, or with more than 1,048,576 objects and
+ * lists (a backup line the database could not have written), is still cut
+ * short, and still stops the archive. Size alone does not cut a record
+ * short: only names are read, so a long value (a 2 MB body, say) adds
+ * nothing to search and the record is still searched whole. The limits
+ * count levels and objects, not bytes.
+ */
+export const COSMOS_MAX_NESTING = 128;
+export const COSMOS_MAX_ITEM_BYTES = 2 * 1024 * 1024;
+export const SENSITIVE_MAX_DEPTH = COSMOS_MAX_NESTING;
+export const SENSITIVE_MAX_NODES = COSMOS_MAX_ITEM_BYTES / 2;
 /** A dry run that has not finished after this long is called "did not finish", and a new one may start. */
 export const RUN_STALE_MINUTES = 30;
 /** Reports older than this are deleted when a new dry run starts. */

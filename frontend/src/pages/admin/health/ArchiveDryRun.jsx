@@ -7,7 +7,7 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import ColumnHeads from '@/pages/shared/ColumnHeads';
-import { FieldNames, Row, SensitiveLine } from './ArchiveReport';
+import { CutShortLine, FieldNames, Row, SensitiveLine } from './ArchiveReport';
 import { isFlagged, number, REASONS, reasonWords } from './archiveWords';
 import { utcMinute } from './SentAlertsCard';
 
@@ -211,6 +211,7 @@ export function ReportBody({ latest, ownerAccepted }) {
                   {part.leftOut ? ` (${reasonWords(part.leftOutBy)})` : ''}
                 </td>
                 <td className="py-1">
+                  <CutShortLine part={part} />
                   <FieldNames part={part} />
                   <SensitiveLine part={part} />
                 </td>

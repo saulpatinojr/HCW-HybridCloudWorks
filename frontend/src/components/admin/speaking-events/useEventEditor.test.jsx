@@ -66,6 +66,38 @@ describe('useEventEditor', () => {
     expect(result.current.saving).toBeNull();
   });
 
+  it('opens a new idea from Future Events as an Idea that is not shown on the site, and saves it as a manual entry', async () => {
+    const { result } = renderHook(() => useEventEditor(stored));
+    act(() => result.current.openNewIdea());
+    expect(result.current.editingId).toBe('new');
+    expect(result.current.editingEvent).toBeNull();
+    expect(result.current.form).toMatchObject({ status: 'idea', display: false, _manualName: '' });
+    act(() =>
+      result.current.setForm((f) => ({
+        ...f,
+        _manualName: 'Example Conf 2099',
+        _manualDate: '2099-08-02',
+        cfpDeadline: '2099-01-14',
+      }))
+    );
+    await act(() => result.current.save());
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    expect(postJSON).toHaveBeenCalledWith('upsertSpeakerEvent', {
+      docId: expect.stringMatching(/^event-\d+$/),
+      merge: true,
+      data: expect.objectContaining({
+        eventName: 'Example Conf 2099',
+        name: 'Example Conf 2099',
+        date: '2099-08-02',
+        cfpDeadline: '2099-01-14',
+        status: 'idea',
+        display: false,
+      }),
+    });
+    expect(stored.refresh).toHaveBeenCalled();
+    expect(result.current.isOpen).toBe(false);
+  });
+
   it('keeps the form open and reports a failed save', async () => {
     postJSON.mockRejectedValueOnce(new Error('refused'));
     const { result } = renderHook(() => useEventEditor(stored));

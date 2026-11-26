@@ -76,8 +76,7 @@ function walkBounded(doc, onField) {
   const walk = { nodes: 0, cutShort: false, stack: [[doc, 0, '']] };
   while (walk.stack.length) {
     const [value, depth, above] = walk.stack.pop();
-    if (!visitable(walk, value, depth)) continue;
-    for (const [inner, path] of childrenOf(value, above, onField)) pushChild(walk, inner, depth + 1, path);
+    if (visitable(walk, value, depth)) pushChildren(walk, value, depth + 1, above, onField);
   }
   return walk.cutShort;
 }
@@ -100,10 +99,20 @@ function pushChild(walk, inner, depth, path) {
   else walk.stack.push([inner, depth, path]);
 }
 
-/** `[inner, path]` for each child of an object or list. */
-function childrenOf(value, above, onField) {
-  if (Array.isArray(value)) return value.map((item) => [item, above]);
-  return Object.entries(value).map(([key, inner]) => [inner, onField(key, inner, above)]);
+/**
+ * Queue each child of an object or list, straight onto the stack: no list of
+ * children is built first, which keeps the walk's memory about half as large
+ * on a record of a million objects.
+ */
+function pushChildren(walk, value, depth, above, onField) {
+  if (Array.isArray(value)) {
+    for (const item of value) pushChild(walk, item, depth, above);
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    const inner = value[key];
+    pushChild(walk, inner, depth, onField(key, inner, above));
+  }
 }
 
 /**

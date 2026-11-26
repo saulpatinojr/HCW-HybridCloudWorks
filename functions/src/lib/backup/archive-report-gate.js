@@ -100,11 +100,29 @@ function coverageBlockers(report, containers, backupContainers) {
 /** A part whose count disagrees with the backup, or that met a line it could not read. */
 const misread = (part) => part.matchesBackup !== true || count(part.unreadable) > 0;
 
+/**
+ * The containers an archive would keep in which the report met a record it
+ * could not search whole, each with how many such records: `[{ container,
+ * records }]`, in the report's order. Fixed container names and counts
+ * only, never a record id. A container that is left out is not listed:
+ * nothing of it would be archived. This is what `report-cut-short` stands
+ * for, and the status route sends it so the card can name the containers.
+ *
+ * @param {object|null|undefined} report - a finished report (`latest.report`)
+ * @returns {{ container: string, records: number }[]}
+ */
+export function cutShortParts(report) {
+  const containers = Array.isArray(report?.containers) ? report.containers : [];
+  return containers
+    .filter((part) => part && part.decision !== DECISIONS.leaveOut && count(part.sensitive?.cutShort) > 0)
+    .map((part) => ({ container: String(part.container), records: count(part.sensitive.cutShort) }));
+}
+
 /** What the report found that still needs deciding: cut short, flagged, waiting. */
 function findingBlockers(containers, leftOutWhole) {
   const blockers = [];
   const kept = containers.filter((part) => part?.decision !== DECISIONS.leaveOut);
-  if (kept.some((part) => count(part.sensitive?.cutShort) > 0)) blockers.push('report-cut-short');
+  if (cutShortParts({ containers }).length) blockers.push('report-cut-short');
   if (kept.some(isFlaggedPart)) blockers.push('report-flagged');
   // Waiting: the report called it unclassified, and the list still has no
   // other answer for it today.

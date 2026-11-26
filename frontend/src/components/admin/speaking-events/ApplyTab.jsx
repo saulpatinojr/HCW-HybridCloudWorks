@@ -25,19 +25,24 @@
  * with no status never clashes; its row says in plain grey words what its
  * dates would meet. Days are compared as calendar days in each event's own
  * local time.
+ *
+ * THE OWNER'S OWN IDEAS ARE LISTED TOO (owner request 2026-11-25). A
+ * speaking event the owner added by hand with the status Idea, and that the
+ * directory does not already list by the same name, is a row here as well
+ * (manualOpportunities.js; the row is drawn by ManualRows.jsx). It comes
+ * from the hub's existing read of the stored events, not from a second
+ * read on this tab. Only events still to come are listed, and never a
+ * stored Sessionize record. Its row has the same
+ * dates, days left and clash words; its notes are the entry's own
+ * description, it has no estimate (the estimate reads the directory's copy
+ * of an event), and Edit opens the entry's own form (the hub's shared
+ * editor, useEventEditor) on this tab. "Add an event" opens the same form
+ * for a new entry with the status Idea and Show on site off, and saves
+ * through the same `upsertSpeakerEvent` write as Sources → Manual Entry.
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import {
-  AlertTriangle,
-  CalendarClock,
-  ExternalLink,
-  KeyRound,
-  Loader2,
-  Pencil,
-  Sparkles,
-  X,
-} from 'lucide-react';
+import { CalendarClock, KeyRound, Loader2, Pencil, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,6 +57,9 @@ import { Dismissible, ReadsStatus, RefreshButton } from './TabParts';
 import { SectionHeading } from './EventTables';
 import { httpUrl } from './eventModel';
 import useApplyEvents from './useApplyEvents';
+import { manualOpportunities, withManualRows } from './manualOpportunities';
+import { CLOSE_TONES, Overlap, RowHeader } from './ApplyRowParts';
+import { AddEventButton, ManualEditor, ManualRow, manualEditAction } from './ManualRows';
 import {
   APPLY_STATUSES,
   COST_FIELDS,
@@ -105,7 +113,8 @@ function NoKey() {
       />
       <div className="min-w-0 flex-1 space-y-1">
         <p className="font-medium">
-          The Community Days key is not set yet, so there are no events to show.
+          The Community Days key is not set yet, so there are no Community Days events to show.
+          Events you added yourself are still listed.
         </p>
         <p className="text-muted-foreground">
           Community Days has to approve API access for your account first. When it has, make a key
@@ -281,106 +290,6 @@ function NoteEditor({ event, note, busy, onSave, onClose, onClear }) {
   );
 }
 
-/** "Clash" and "already speaking here", in words and with an icon. */
-function Overlap({ overlap }) {
-  if (!overlap) return null;
-  const { clashes, wouldMeet = [], speakingHere } = overlap;
-  if (clashes.length === 0 && wouldMeet.length === 0 && !speakingHere) return null;
-  return (
-    <div className="space-y-1 text-xs">
-      {wouldMeet.length > 0 && (
-        // Not a clash: the owner has not marked this event. Plain grey words,
-        // no warning sign, so a long list of unmarked events stays calm.
-        <p className="text-muted-foreground" data-testid="would-meet">
-          If you go, these dates meet{' '}
-          {wouldMeet.map((entry, index) => (
-            <span key={`${entry.kind}-${entry.name}`}>
-              {index > 0 ? '; ' : ''}
-              {entry.name} ({entry.detail})
-            </span>
-          ))}
-          .
-        </p>
-      )}
-      {overlap.speakingHere && (
-        <p className="text-emerald-700 dark:text-emerald-400">
-          You already have a talk at this event ({overlap.speakingHere}).
-        </p>
-      )}
-      {overlap.clashes.length > 0 && (
-        <div
-          role="note"
-          className="flex items-start gap-1.5 rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
-          data-testid="clash"
-        >
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <div>
-            <span className="font-semibold">Clash:</span> these dates meet{' '}
-            {overlap.clashes.map((clash, index) => (
-              <span key={`${clash.kind}-${clash.name}`}>
-                {index > 0 ? '; ' : ''}
-                {clash.name} ({clash.detail})
-              </span>
-            ))}
-            .
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const CLOSE_TONES = {
-  bad: 'text-rose-700 dark:text-rose-400',
-  warn: 'text-amber-700 dark:text-amber-400',
-  muted: 'text-muted-foreground',
-};
-const CANCELLED = {
-  id: 'cancelled',
-  label: 'Cancelled',
-  tone: 'bad',
-  help: 'The organizers cancelled this event.',
-};
-const POSTPONED = {
-  id: 'postponed',
-  label: 'Postponed',
-  tone: 'warn',
-  help: 'The organizers postponed this event; its dates may change.',
-};
-
-/** The title (a link to the event's page when there is one), tagline and badges. */
-function RowHeader({ event }) {
-  const page = httpUrl(event.url) || httpUrl(event.website);
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0">
-        <h3 className="text-sm font-semibold">
-          {page ? (
-            <a
-              href={page}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-              aria-label={`${event.title} (opens the event’s page in a new tab)`}
-            >
-              {event.title}
-              <ExternalLink className="ml-1 inline h-3 w-3" aria-hidden="true" />
-            </a>
-          ) : (
-            event.title
-          )}
-        </h3>
-        {event.tagline && <p className="text-xs text-muted-foreground">{event.tagline}</p>}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {event.cancelled && <StatusBadge status={CANCELLED} />}
-        {event.postponed && <StatusBadge status={POSTPONED} />}
-        <StatusBadge status={applyStatusInfo(event.note?.status)} />
-      </div>
-    </div>
-  );
-}
-
 /** The owner's cost boxes that hold a number, and their total, in words. */
 function costsLine(note) {
   const total = costTotal(note?.costs);
@@ -490,7 +399,7 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
   const busy = apply.busyIds.has(event.id);
   return (
     <li className="space-y-2 rounded-xl border border-border p-4" data-event={event.id}>
-      <RowHeader event={event} />
+      <RowHeader event={event} badge={applyStatusInfo(note?.status)} />
       <RowFacts event={event} today={today} />
       <Overlap overlap={overlap} />
       {editing ? (
@@ -691,6 +600,8 @@ function TopicsLine({ topics, canEstimate }) {
 
 /** The rows, or what to do when there are none. */
 function EventList({ list, shown, children }) {
+  // `list.events` here is every row the tab could show: the directory's and
+  // the owner's own ideas (ApplyTab passes the merged list).
   if (shown.length > 0) {
     return (
       <ul className="space-y-3" aria-label="Future Events">
@@ -721,7 +632,8 @@ function Intro({ fetchedAt }) {
       <p>
         Community events with an open call for speakers, read from the Community Days directory.
         Record a status, your costs and notes for each, and see where its dates meet talks you
-        already have.
+        already have. Speaking events you added yourself with the status Idea are listed here too,
+        marked “Added by you”.
       </p>
       {fetchedAt && (
         <p className="text-xs">
@@ -738,7 +650,7 @@ function Intro({ fetchedAt }) {
 const talksNotReady = (data) =>
   !(data.stored.loaded && (data.sessionize.loaded || Boolean(data.sessionize.error)));
 
-export default function ApplyTab({ data }) {
+export default function ApplyTab({ data, editor = null }) {
   const { authReady } = useAuthReady();
   const apply = useApplyEvents(authReady);
   const { read } = apply;
@@ -751,14 +663,30 @@ export default function ApplyTab({ data }) {
   const [month, setMonth] = useState(null);
 
   const talks = useMemo(() => ownTalks(data.rows), [data.rows]);
-  const overlaps = useMemo(
-    () => allOverlaps({ events: list.events, saved: list.saved, talks }),
-    [list.events, list.saved, talks]
+  // The directory's rows with the owner's own ideas slotted in by date. The
+  // clash rule, the calendar and the filters all read this one list.
+  const manual = useMemo(
+    () =>
+      manualOpportunities(
+        data.rows?.manualEntries,
+        { events: list.events, saved: list.saved },
+        today
+      ),
+    [data.rows, list.events, list.saved, today]
   );
-  const shownMonth = month ?? firstMonth(list.events, today);
-  const marks = marksForMonth(shownMonth, { events: list.events, saved: list.saved, talks });
-  const shown = filterEvents(list.events, { search, status });
+  const events = useMemo(() => withManualRows(list.events, manual), [list.events, manual]);
+  const overlaps = useMemo(
+    () => allOverlaps({ events, saved: list.saved, talks }),
+    [events, list.saved, talks]
+  );
+  const shownMonth = month ?? firstMonth(events, today);
+  const marks = marksForMonth(shownMonth, { events, saved: list.saved, talks });
+  const shown = filterEvents(events, { search, status });
   const canEstimate = list.topics.count > 0 || list.topics.hasBio;
+  const editManual = manualEditAction(editor, data.rows?.manualEntries);
+  // The owner's own rows come from the stored events, not from the
+  // directory read, so they show while that read is loading or has failed.
+  const showList = read.loaded || manual.length > 0;
   const askClear = (target) =>
     setPendingClear({ id: target.id, title: target.title, note: target.note });
 
@@ -775,10 +703,14 @@ export default function ApplyTab({ data }) {
     <div className="space-y-6 pt-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <Intro fetchedAt={list.fetchedAt} />
-        <RefreshButton onClick={apply.refreshNow} busy={read.pending} disabled={!list.keySet}>
-          Refresh
-        </RefreshButton>
+        <div className="flex flex-wrap gap-2">
+          <RefreshButton onClick={apply.refreshNow} busy={read.pending} disabled={!list.keySet}>
+            Refresh
+          </RefreshButton>
+          <AddEventButton editor={editor} />
+        </div>
       </div>
+      <ManualEditor editor={editor} />
 
       {apply.writeError && (
         <Dismissible onDismiss={apply.clearWriteError}>
@@ -793,15 +725,15 @@ export default function ApplyTab({ data }) {
           )}
         </Dismissible>
       )}
-      <ReadsStatus reads={[read]} label="events to apply to" />
+      <ReadsStatus reads={[read]} label="Community Days events" />
 
       {read.loaded && !list.keySet && <NoKey />}
       {read.loaded && <ListNotices list={list} />}
 
-      {read.loaded && (
+      {showList && (
         <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
           <div className="order-2 space-y-4 lg:order-1">
-            {list.keySet && (
+            {(list.keySet || manual.length > 0) && (
               <>
                 <Filters
                   search={search}
@@ -809,21 +741,32 @@ export default function ApplyTab({ data }) {
                   status={status}
                   setStatus={setStatus}
                 />
-                <TopicsLine topics={list.topics} canEstimate={canEstimate} />
-                <EventList list={list} shown={shown}>
-                  {shown.map((event) => (
-                    <EventRow
-                      key={event.id}
-                      event={event}
-                      overlap={overlaps.get(event.id)}
-                      today={today}
-                      apply={apply}
-                      canEstimate={canEstimate}
-                      editing={editing === event.id}
-                      setEditing={setEditing}
-                      askClear={askClear}
-                    />
-                  ))}
+                {/* About the estimate, which only directory events have. */}
+                {list.keySet && <TopicsLine topics={list.topics} canEstimate={canEstimate} />}
+                <EventList list={{ ...list, events }} shown={shown}>
+                  {shown.map((event) =>
+                    event.manual ? (
+                      <ManualRow
+                        key={event.id}
+                        event={event}
+                        overlap={overlaps.get(event.id)}
+                        today={today}
+                        onEdit={editManual(event)}
+                      />
+                    ) : (
+                      <EventRow
+                        key={event.id}
+                        event={event}
+                        overlap={overlaps.get(event.id)}
+                        today={today}
+                        apply={apply}
+                        canEstimate={canEstimate}
+                        editing={editing === event.id}
+                        setEditing={setEditing}
+                        askClear={askClear}
+                      />
+                    )
+                  )}
                 </EventList>
               </>
             )}
