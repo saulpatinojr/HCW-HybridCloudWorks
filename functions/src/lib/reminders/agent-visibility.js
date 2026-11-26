@@ -8,7 +8,7 @@
  * list of keys, fails closed (every provider row hidden).
  */
 import { isAgentUser } from '../agent-content/keys.js';
-import { agentSwitchesOn } from '../page-links/origin-ref.js';
+import { agentSwitchesOn } from '../agent-content/agent-switches.js';
 import { PROVIDED_ROWS } from './settings.js';
 import { REMINDER_SOURCE_PREFIX } from '../timers/reminders.js';
 

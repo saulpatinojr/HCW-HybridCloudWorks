@@ -32,13 +32,8 @@
  */
 import { AuthoredError } from "../http/error-response.js";
 import { ORIGIN_PAGES, ORIGIN_PAGE_IDS, trimmedLabel } from "./origin-pages.js";
-import { ADMIN_CONFIG_PARTITION } from "../cosmos-client.js";
-import {
-  AGENT_ID,
-  agentKeyById,
-  enabledCapabilities,
-  isAgentUser,
-} from "../agent-content/keys.js";
+import { isAgentUser } from "../agent-content/keys.js";
+import { agentSwitchesOn } from "../agent-content/agent-switches.js";
 
 /** Record ids on the Pages below: uuids with a prefix, or fixed seed ids. */
 const REF_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -101,25 +96,9 @@ async function agentMayRead(store, user, page) {
   return (await agentSwitchesOn(store, user.agent)).includes(page.agentSection);
 }
 
-/**
- * The switches on one agent key's record (Koda's when `agentId` is absent),
- * or none at all when the record cannot be found or the id is not an agent
- * key: a missing record fails closed here (review of #1891), rather than
- * taking the all-on defaults an older record is read with. A document whose
- * own id is not that key's record id is no record of it.
- */
-export async function agentSwitchesOn(store, agentId = AGENT_ID) {
-  const key = agentKeyById(agentId);
-  if (!key) return [];
-  const record = await store.readDoc(
-    "admin_config",
-    key.recordId,
-    ADMIN_CONFIG_PARTITION,
-  );
-  if (!record) return [];
-  if (typeof record.id === "string" && record.id !== key.recordId) return [];
-  return enabledCapabilities(record);
-}
+// The switches on one agent key's own record, failing closed: moved to
+// agent-content/agent-switches.js, re-exported here for older importers.
+export { agentSwitchesOn };
 
 /**
  * The Pages whose references this caller may not see: none for a person,
