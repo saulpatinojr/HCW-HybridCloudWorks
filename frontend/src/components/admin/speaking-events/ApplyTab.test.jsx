@@ -16,17 +16,23 @@ import ApplyTab, {
   KEYS_HREF,
   SWITCHED_OFF_CODE,
 } from './ApplyTab';
+import { MANUAL_NO_ESTIMATE } from './ManualRows';
 import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
 import { marksForMonth } from './applyCalendarModel';
 import { EVENTS_ROUTE, REFRESH_ROUTE } from './useApplyEvents';
+import useEventEditor from './useEventEditor';
 
 const getJSON = vi.fn();
 const sendJSON = vi.fn();
+const postJSON = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   getJSON: (...args) => getJSON(...args),
   sendJSON: (...args) => sendJSON(...args),
+  postJSON: (...args) => postJSON(...args),
 }));
+// The editor's Pipeline box has its own tests (TalkPipeline); here it would only add reads.
+vi.mock('./TalkPipeline', () => ({ default: () => null }));
 vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true }) }));
 vi.mock('react-router', () => ({
   Link: ({ to, children, ...rest }) => (
@@ -368,7 +374,9 @@ describe('the list', () => {
   it('shows the read’s own error with a way to try again', async () => {
     getJSON.mockRejectedValueOnce(new Error('HTTP 500'));
     render(<ApplyTab data={hubData()} />);
-    expect(await screen.findByText('The events could not be loaded: HTTP 500')).toBeInTheDocument();
+    expect(
+      await screen.findByText('The Community Days events could not be loaded: HTTP 500')
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
     expect(await screen.findByText('Example Community Day')).toBeInTheDocument();
   });
@@ -767,6 +775,185 @@ describe('the list’s filters', () => {
       target: { value: 'nothing like this' },
     });
     expect(screen.getByText('No events match these filters.')).toBeInTheDocument();
+  });
+});
+
+describe('the owner’s own ideas', () => {
+  const idea = (over = {}) => ({
+    _docId: 'example-conf-2099',
+    eventName: 'Example Conf 2099',
+    date: '2099-08-02',
+    status: 'idea',
+    cfpDeadline: '2099-01-14',
+    location: 'Exampleton, WA',
+    eventUrl: 'https://example.org/conf',
+    description: 'Two talk ideas.',
+    display: false,
+    ...over,
+  });
+
+  it('lists an Idea entry next to the directory rows, with its deadline and days left, and no second read', async () => {
+    await show(hubData([idea()]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    const rows = within(list).getAllByRole('listitem');
+    // Soonest first: the directory event in March, then the idea in August.
+    expect(rows.map((row) => row.getAttribute('data-event'))).toEqual([
+      'event-1',
+      'manual-example-conf-2099',
+    ]);
+    const inRow = within(rows[1]);
+    expect(inRow.getByRole('link', { name: /^Example Conf 2099/ })).toHaveAttribute(
+      'href',
+      'https://example.org/conf'
+    );
+    expect(inRow.getByText('Added by you')).toBeInTheDocument();
+    expect(inRow.getByText('Exampleton, WA')).toBeInTheDocument();
+    expect(inRow.getByText(/Closes Jan 14, 2099, about \d+ days left/)).toBeInTheDocument();
+    expect(inRow.getByText('Two talk ideas.')).toBeInTheDocument();
+    expect(inRow.getByText(MANUAL_NO_ESTIMATE)).toBeInTheDocument();
+    expect(inRow.queryByRole('button', { name: /Estimate/ })).toBeNull();
+    expect(inRow.getByRole('link', { name: 'Edit Example Conf 2099' })).toHaveAttribute(
+      'href',
+      '/admin/speaking?talk=example-conf-2099'
+    );
+    // The tab still reads one route; the entry came from the hub's own read.
+    expect(getJSON).toHaveBeenCalledTimes(1);
+    expect(getJSON).toHaveBeenCalledWith(EVENTS_ROUTE);
+  });
+
+  it('shows an entry with a Dec 14, 2026 deadline and its days left (the spec’s acceptance line)', async () => {
+    // A made-up entry, read with the clock set to 2026-11-26.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 10, 26, 9) });
+    try {
+      await show(
+        hubData([
+          idea({
+            _docId: 'example-conf-2027',
+            eventName: 'Example Conf 2027',
+            date: '2027-08-02',
+            location: 'Exampleton, WA',
+            eventUrl: 'https://example.org/cfp',
+            cfpDeadline: '2026-12-14',
+          }),
+        ])
+      );
+      const row = (await screen.findByText('Example Conf 2027')).closest('li');
+      expect(row).toHaveAttribute('data-event', 'manual-example-conf-2027');
+      expect(row).toHaveTextContent('Closes Dec 14, 2026, about 18 days left');
+      expect(row).toHaveTextContent('Aug 2, 2027');
+      // Next to the directory row, not instead of it.
+      expect(screen.getByText('Example Community Day')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows an entry with the same name as a directory event once, as the directory row', async () => {
+    await show(hubData([idea({ eventName: 'Example Community Day' })]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(list).queryByText('Added by you')).toBeNull();
+  });
+
+  it('leaves out a Proposed entry: it is one of the owner’s talks already', async () => {
+    await show(hubData([idea({ status: 'proposed' })]));
+    const list = await screen.findByRole('list', { name: 'Future Events' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('lists the owner’s ideas even before the Community Days key is set', async () => {
+    getJSON.mockResolvedValue(
+      answer({ status: 'no_key', keySet: false, events: [], fetchedAt: null })
+    );
+    await show(hubData([idea()]));
+    // The notice is about the directory only, so it does not contradict the row below it.
+    expect(
+      await screen.findByText(
+        'The Community Days key is not set yet, so there are no Community Days events to show. Events you added yourself are still listed.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/so there are no events to show/)).toBeNull();
+    const list = screen.getByRole('list', { name: 'Future Events' });
+    expect(within(list).getByText('Example Conf 2099')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    expect(screen.queryByTestId('topics-line')).toBeNull();
+  });
+
+  it('still lists the owner’s ideas when the Community Days read fails', async () => {
+    getJSON.mockImplementation(async (route) => {
+      if (route === EVENTS_ROUTE) throw new Error('HTTP 503');
+      return answer();
+    });
+    await show(hubData([idea()]));
+    // The error names the directory, not every event on the tab.
+    expect(
+      await screen.findByText('The Community Days events could not be loaded: HTTP 503')
+    ).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Future Events' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows.map((row) => row.getAttribute('data-event'))).toEqual(['manual-example-conf-2099']);
+    expect(screen.queryByTestId('topics-line')).toBeNull();
+  });
+});
+
+describe('adding and editing your own events from the tab', () => {
+  const stored = { refresh: vi.fn() };
+  /** The tab with the hub's real editor, as the page passes it. */
+  function WithEditor({ data }) {
+    const editor = useEventEditor(stored);
+    return <ApplyTab data={data} editor={editor} />;
+  }
+  const idea = {
+    _docId: 'example-conf-2099',
+    eventName: 'Example Conf 2099',
+    date: '2099-08-02',
+    status: 'idea',
+    cfpDeadline: '2099-01-14',
+    location: 'Exampleton, WA',
+    display: false,
+  };
+
+  beforeEach(() => {
+    postJSON.mockReset().mockResolvedValue({ ok: true });
+    stored.refresh.mockReset().mockResolvedValue(true);
+  });
+
+  it('adds an event as an Idea, not shown on the site, through the hub’s own write', async () => {
+    render(<WithEditor data={hubData()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add an event/ }));
+    const form = screen.getByRole('form', { name: 'New Manual Entry' });
+    expect(within(form).getByLabelText('Status')).toHaveValue('idea');
+    fireEvent.change(within(form).getByLabelText(/Event Name/i), {
+      target: { value: 'Example Conf 2099' },
+    });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1));
+    expect(postJSON).toHaveBeenCalledWith(
+      'upsertSpeakerEvent',
+      expect.objectContaining({
+        merge: true,
+        data: expect.objectContaining({
+          eventName: 'Example Conf 2099',
+          status: 'idea',
+          display: false,
+        }),
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('form', { name: 'New Manual Entry' })).toBeNull()
+    );
+    expect(stored.refresh).toHaveBeenCalled();
+    // Nothing on the Community Days routes was written.
+    expect(sendJSON).not.toHaveBeenCalled();
+  });
+
+  it('opens an entry’s own form from its row', async () => {
+    render(<WithEditor data={hubData([idea])} />);
+    const row = (await screen.findByText('Example Conf 2099')).closest('li');
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit Example Conf 2099' }));
+    const form = screen.getByRole('form', { name: 'Edit Event' });
+    expect(within(form).getByDisplayValue('Example Conf 2099')).toBeInTheDocument();
+    expect(within(form).getByDisplayValue('2099-01-14')).toBeInTheDocument();
   });
 });
 
