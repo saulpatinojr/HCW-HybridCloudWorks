@@ -1,7 +1,8 @@
 /**
  * NextStepLink — once a piece another admin Page sent is live, the natural
- * next Page for it (#1886): "File as evidence" for a program's piece, "Back
- * to the talk", "Back to the certification". The list is lib/nextSteps.js.
+ * next Page for it (#1886): today "Open the program" for a piece written for
+ * an Ambassador program. Pages with no follow-up (Speaking, Certifications)
+ * are in NO_NEXT_STEP and get nothing. The list is lib/nextSteps.js.
  *
  * Rendered by TaxonomyChips beside the "sent from" chip, so every Pipeline
  * list and board that shows a live piece (Publish, Live Pages, the Editor's
