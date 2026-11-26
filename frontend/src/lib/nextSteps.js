@@ -42,18 +42,31 @@ export const NO_NEXT_STEP = Object.freeze({
     'Nothing is left to do on the certification once its piece is live; the "sent from" chip already links back to it.',
 });
 
+/** The published statuses the public site admits (functions/src/lib/public-read-rules.js PUBLIC_STATUSES). */
+export const PUBLIC_STATUSES = new Set([
+  'published',
+  'published_blog',
+  'published_news',
+  'published_both',
+]);
+
 /**
- * Whether a piece is live, as the Pipeline's next step reads it. The same
- * test the server applies before a live piece can be filed as evidence
- * (functions/src/lib/ambassador/import-readers.js isLiveContent): `Live` is
- * true, or the older `Status` is "Live", or the status is "published", and
- * the piece is not deleted. One rule, so a link never offers a step the
- * Page at the other end would refuse (liveRuleMirror.test.js holds the two
- * together).
+ * Whether a piece is live: the public site's own rule
+ * (functions/src/lib/public-read-rules.js isPublicDocument), which the
+ * server's evidence import also uses (import-readers.js isLiveContent), so a
+ * piece is live here exactly when a visitor can open it and when it can be
+ * recorded as evidence (#1897). `Live` is set, or the older `Status` is
+ * "Live", or the status is a published one; a draft never is; and the piece
+ * is not deleted. liveRuleMirror.test.js holds the three together.
  */
 export function isLivePiece(piece) {
-  if (!piece || ![undefined, null, '', false].includes(piece.softDeletedAt)) return false;
-  return piece.Live === true || piece.Status === 'Live' || piece.contentStatus === 'published';
+  if (!piece || piece.softDeletedAt || piece.softDeleteExpiresAt) return false;
+  if (String(piece.contentStatus || '') === 'drafting') return false;
+  return (
+    piece.Live === true ||
+    piece.Status === 'Live' ||
+    PUBLIC_STATUSES.has(String(piece.contentStatus || ''))
+  );
 }
 
 /**
