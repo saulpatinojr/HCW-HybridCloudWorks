@@ -1,0 +1,178 @@
+/**
+ * cloudflare/zone-routes.js — the Cloudflare page's status, zone settings
+ * and cache purge routes (#1905). handlers.js wraps each in the role check
+ * and the error handling; each is handed one `call` object: { deps,
+ * request, context, client, user }.
+ *
+ * A change is checked in this order, so a bad request never reaches
+ * Cloudflare: the path value, the body's shape, what the caller may change
+ * (an agent key and the owner-only settings), then the zone check, then the
+ * read of the current value, then the change.
+ */
+import { authoredMessage } from '../http/error-response.js';
+import { isAgentUser } from '../agent-content/agent-keys.js';
+import { CloudflareError } from './client.js';
+import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './input.js';
+import { recordChange, requireOurZone } from './record.js';
+import {
+  EDITABLE_PHASES,
+  OWNER_ONLY_SETTINGS,
+  PROTECTED_DNS_NAMES,
+  PROTECTED_DNS_PREFIXES,
+  PROTECTED_PHASES,
+  ZONE_APEX,
+  ownerOnlySettingReason,
+} from './protected.js';
+
+export const SETTING_ID_PATTERN = /^[a-z0-9_]{1,64}$/;
+export const MAX_PURGE_FILES = 30;
+const MAX_URL_LENGTH = 2048;
+
+/** The four kinds of thing the page shows, in its tab order. */
+export const FAMILIES = Object.freeze([
+  Object.freeze({ id: 'settings', label: 'Zone settings' }),
+  Object.freeze({ id: 'dns', label: 'DNS records' }),
+  Object.freeze({ id: 'rules', label: 'Rules' }),
+  Object.freeze({ id: 'cache', label: 'Cache settings (purging needs its own permission, which cannot be tested without a purge)' }),
+]);
+
+export const NOT_CONFIGURED_MESSAGE =
+  'Cloudflare is not set up yet: paste the Cloudflare admin token on Integrations → Keys (CLOUDFLARE-ADMIN-TOKEN). The zone id comes from Terraform.';
+
+/** What `protected.js` holds, as the status route shows it. */
+export const PROTECTED_VIEW = Object.freeze({
+  dnsNames: PROTECTED_DNS_NAMES.map(({ name, reason }) => ({ name, reason })),
+  dnsPrefixes: PROTECTED_DNS_PREFIXES.map(({ prefix, reason }) => ({ prefix, reason })),
+  phases: PROTECTED_PHASES.map(({ phase, reason }) => ({ phase, reason })),
+  editablePhases: EDITABLE_PHASES.map(({ phase, description }) => ({ phase, description })),
+  ownerOnlySettings: OWNER_ONLY_SETTINGS.map(({ setting, reason }) => ({ setting, reason })),
+});
+
+/** The zone's id, name, status and plan, or the sentence saying why it could not be read. */
+async function zoneSummary(client) {
+  try {
+    const found = await client.getZone();
+    const zone = { id: found?.id ?? client.zoneId, name: found?.name ?? null, status: found?.status ?? null, plan: found?.plan?.name ?? null };
+    return { zone, zoneError: null };
+  } catch (error) {
+    if (!(error instanceof CloudflareError)) throw error;
+    return { zone: null, zoneError: authoredMessage(error, 'Cloudflare did not answer for the zone.') };
+  }
+}
+
+/** GET cms/cloudflare/status. 200 even when not set up. Never holds a rule, a record or a value. */
+export async function getStatus({ client }) {
+  if (!client) {
+    return json(200, { ok: true, configured: false, message: NOT_CONFIGURED_MESSAGE, zone: null, families: [], protected: PROTECTED_VIEW });
+  }
+  const { zone, zoneError } = await zoneSummary(client);
+  const readable = await Promise.all(FAMILIES.map((family) => client.canRead(family.id)));
+  return json(200, {
+    ok: true,
+    configured: true,
+    zone,
+    zoneError,
+    families: FAMILIES.map((family, index) => ({ ...family, readable: readable[index] })),
+    protected: PROTECTED_VIEW,
+  });
+}
+
+const settingView = (setting) => ({
+  id: setting?.id ?? null,
+  value: setting?.value ?? null,
+  editable: setting?.editable !== false,
+  modifiedOn: setting?.modified_on ?? null,
+});
+
+/** GET cms/cloudflare/settings. */
+export async function getSettings({ client }) {
+  const settings = await client.listSettings();
+  return json(200, { ok: true, settings: (Array.isArray(settings) ? settings : []).map(settingView) });
+}
+
+/** The setting id in the path, checked. */
+function settingIdOf(request) {
+  const settingId = paramOf(request, 'settingId');
+  if (!SETTING_ID_PATTERN.test(settingId)) throw bad('The setting id must be 1 to 64 lower-case letters, digits or underscores.');
+  return settingId;
+}
+
+/** Refuses an agent key a setting only the owner changes. */
+function refuseOwnerOnly(user, settingId) {
+  const reason = ownerOnlySettingReason(settingId);
+  if (reason && isAgentUser(user)) {
+    throw new Refusal(`An agent key may not change ${settingId}. ${reason}`, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason });
+  }
+}
+
+/**
+ * PATCH cms/cloudflare/settings/{settingId} { value }. The current value is
+ * read first, so the audit row says what it was and what it became (zone
+ * settings hold no secrets).
+ */
+export async function patchSetting(call) {
+  const { request, client, user } = call;
+  const settingId = settingIdOf(request);
+  const body = await bodyOf(request);
+  refuseUnknownFields(body, ['value']);
+  if (!Object.hasOwn(body, 'value')) throw bad('Send { "value": ... }.');
+  refuseOwnerOnly(user, settingId);
+  await requireOurZone(client);
+  const before = (await client.getSetting(settingId))?.value ?? null;
+  const result = await client.patchSetting(settingId, body.value);
+  const saved = settingView({ ...result, id: result?.id ?? settingId, value: result?.value ?? body.value });
+  await recordChange(call, { family: 'settings', settingId, before, after: saved.value }, `changed the Cloudflare zone setting ${settingId}.`);
+  return json(200, { ok: true, setting: saved });
+}
+
+/** Whether a host is the zone or one of its names. */
+const onZone = (host) => host === ZONE_APEX || host.endsWith(`.${ZONE_APEX}`);
+
+/** A URL from a purge list, or null when it is not text of a sane length or not a URL. */
+function urlOrNull(value) {
+  if (typeof value !== 'string' || value.length > MAX_URL_LENGTH) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a purge address is https, carries no sign-in, and is on the zone's own names. */
+function purgeable(url) {
+  if (!url || url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+  return onZone(url.hostname.toLowerCase());
+}
+
+/** A purge request, checked: everything, or 1 to 30 https URLs on the zone's own names. */
+function purgeBody(body) {
+  refuseUnknownFields(body, ['everything', 'files']);
+  if (body.everything !== undefined) {
+    if (body.everything !== true || body.files !== undefined) throw bad('Send { "everything": true } or { "files": [...] }, not both.');
+    return { purge_everything: true };
+  }
+  const files = body.files;
+  if (!Array.isArray(files) || files.length < 1 || files.length > MAX_PURGE_FILES) {
+    throw bad(`files must be a list of 1 to ${MAX_PURGE_FILES} addresses.`);
+  }
+  const checked = files.map((value, index) => {
+    const url = urlOrNull(value);
+    if (!purgeable(url)) throw bad(`Address ${index + 1} must be an https address on ${ZONE_APEX} or one of its subdomains.`);
+    return url.toString();
+  });
+  return { files: checked };
+}
+
+/** POST cms/cloudflare/purge { everything: true } or { files }. */
+export async function purge(call) {
+  const { request, client } = call;
+  const sent = purgeBody(await bodyOf(request));
+  await requireOurZone(client);
+  await client.purge(sent);
+  const everything = sent.purge_everything === true;
+  const details = everything ? { family: 'cache', purge: 'everything' } : { family: 'cache', purge: 'files', count: sent.files.length };
+  const sentence = everything ? 'purged the whole Cloudflare cache.' : `purged ${sent.files.length} address(es) from the Cloudflare cache.`;
+  await recordChange(call, details, sentence);
+  return json(200, { ok: true, purged: everything ? 'everything' : sent.files.length });
+}

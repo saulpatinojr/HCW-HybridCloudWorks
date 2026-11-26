@@ -12,6 +12,10 @@
  * on (they can quote what was sent back); only its numeric error codes are,
  * so the owner can look one up.
  *
+ * Each call is a small function at the top level of this file, handed the
+ * connection (`conn`: the token and the test doubles), so no one function
+ * holds the whole client.
+ *
  * API reference: https://developers.cloudflare.com/api/
  */
 import { guardedFetch } from '../http/guarded-fetch.js';
@@ -25,9 +29,13 @@ export const ZONE_ID_PATTERN = /^[a-f0-9]{32}$/;
 
 const TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-/** DNS records are listed 100 a page, and at most this many pages (5,000 records). */
-const DNS_PAGE_SIZE = 100;
-const DNS_MAX_PAGES = 50;
+/**
+ * DNS records are listed 100 a page, and at most this many pages (5,000
+ * records). A zone with more is cut at the cap, and the list says so
+ * (`truncated: true`) rather than passing a part off as the whole.
+ */
+export const DNS_PAGE_SIZE = 100;
+export const DNS_MAX_PAGES = 50;
 
 /** A refusal or failure from Cloudflare, with a sentence written here. */
 export class CloudflareError extends AuthoredError {
@@ -48,22 +56,150 @@ function errorCodes(body) {
   return list.map((entry) => codeShaped(entry?.code)).filter(Boolean).slice(0, 5);
 }
 
+const TOKEN_REFUSED = {
+  status: 502,
+  sentence: (suffix, upstream) =>
+    `Cloudflare refused the token for this (HTTP ${upstream})${suffix}. It may be wrong, expired, or missing the permission for this kind of change; check it on Integrations → Keys.`,
+};
+
+/** The status this API answers with, and its sentence, for each status Cloudflare refuses with. */
+const REFUSALS = Object.freeze({
+  400: { status: 400, sentence: (suffix) => `Cloudflare refused the change as not valid${suffix}. Check the value and try again.` },
+  401: TOKEN_REFUSED,
+  403: TOKEN_REFUSED,
+  404: { status: 404, sentence: (suffix) => `Cloudflare has no such item${suffix}.` },
+  409: { status: 409, sentence: (suffix) => `Cloudflare refused the change because it conflicts with what is there${suffix}.` },
+  429: { status: 429, sentence: () => 'Cloudflare is limiting requests right now. Wait a minute and try again.' },
+});
+const OTHER_REFUSAL = {
+  status: 502,
+  sentence: (suffix, upstream) => `Cloudflare answered with an error (HTTP ${upstream})${suffix}. Try again shortly.`,
+};
+
 /** The sentence and the status this API answers with for a Cloudflare refusal. */
-function refusal(upstreamStatus, codes) {
+export function refusal(upstreamStatus, codes) {
   const suffix = codes.length ? ` (Cloudflare error code ${codes.join(', ')})` : '';
-  if (upstreamStatus === 400) {
-    return { status: 400, sentence: `Cloudflare refused the change as not valid${suffix}. Check the value and try again.` };
-  }
-  if (upstreamStatus === 401 || upstreamStatus === 403) {
-    return {
+  const entry = REFUSALS[upstreamStatus] || OTHER_REFUSAL;
+  return { status: entry.status, sentence: entry.sentence(suffix, upstreamStatus) };
+}
+
+/** The address of one call: the base, the path built by the caller, and its query. */
+function urlOf(path, query) {
+  const url = new URL(`${CLOUDFLARE_API_BASE}${path}`);
+  for (const [name, value] of Object.entries(query || {})) url.searchParams.set(name, String(value));
+  return url.toString();
+}
+
+/** What guardedFetch is handed: the method, the token header, the body and the limits. */
+function fetchOptions(conn, method, body) {
+  const hasBody = body !== undefined;
+  return {
+    method,
+    headers: {
+      Authorization: `Bearer ${conn.token}`,
+      Accept: 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(hasBody ? { body: JSON.stringify(body) } : {}),
+    httpsOnly: true,
+    maxRedirects: 0,
+    timeoutMs: TIMEOUT_MS,
+    maxBytes: MAX_RESPONSE_BYTES,
+    ...conn.doubles,
+  };
+}
+
+/** One fetch. A timeout, a refused address or an oversized answer becomes one fixed sentence. */
+async function send(url, options) {
+  try {
+    return await guardedFetch(url, options);
+  } catch {
+    // None of the transport's text is passed on; the handler logs this error's code.
+    throw new CloudflareError('Cloudflare could not be reached. Try again shortly.', {
       status: 502,
-      sentence: `Cloudflare refused the token for this (HTTP ${upstreamStatus})${suffix}. It may be wrong, expired, or missing the permission for this kind of change; check it on Integrations → Keys.`,
-    };
+      code: 'CLOUDFLARE_UNREACHABLE',
+    });
   }
-  if (upstreamStatus === 404) return { status: 404, sentence: `Cloudflare has no such item${suffix}.` };
-  if (upstreamStatus === 409) return { status: 409, sentence: `Cloudflare refused the change because it conflicts with what is there${suffix}.` };
-  if (upstreamStatus === 429) return { status: 429, sentence: 'Cloudflare is limiting requests right now. Wait a minute and try again.' };
-  return { status: 502, sentence: `Cloudflare answered with an error (HTTP ${upstreamStatus})${suffix}. Try again shortly.` };
+}
+
+/** The answer's JSON, or null when it is not JSON. */
+function parseAnswer(text) {
+  try {
+    return JSON.parse(text());
+  } catch {
+    return null;
+  }
+}
+
+const isSuccess = (status, body) => status >= 200 && status < 300 && Boolean(body) && body.success !== false;
+
+/** The error for an answer that is not a success (a 2xx Cloudflare marks failed counts as 502). */
+function refusalError(status, body) {
+  const codes = errorCodes(body);
+  const upstream = status >= 200 && status < 300 ? 502 : status;
+  const { status: answer, sentence } = refusal(upstream, codes);
+  return new CloudflareError(sentence, { status: answer, upstreamStatus: status, codes });
+}
+
+/** One call. Answers `{ status, body }` for a 2xx (or a 404 the caller allows); throws CloudflareError otherwise. */
+async function call(conn, method, path, { query = null, body = undefined, allow404 = false } = {}) {
+  const { response, text } = await send(urlOf(path, query), fetchOptions(conn, method, body));
+  const parsed = parseAnswer(text);
+  const status = response.status;
+  if (status === 404 && allow404) return { status, body: null };
+  if (isSuccess(status, parsed)) return { status, body: parsed };
+  throw refusalError(status, parsed);
+}
+
+/** The `result` of a call. */
+const resultOf = async (conn, method, path, options) => (await call(conn, method, path, options)).body.result;
+
+/** Whether a read is allowed: true for a 2xx, false for 401/403, null for anything else. */
+async function canRead(conn, path, query) {
+  try {
+    await call(conn, 'GET', path, { query });
+    return true;
+  } catch (error) {
+    const refused = error?.upstreamStatus === 401 || error?.upstreamStatus === 403;
+    return refused ? false : null;
+  }
+}
+
+/** The one cheap read per family the status route tries. */
+const READ_PROBES = Object.freeze({
+  settings: ['/settings/ssl'],
+  dns: ['/dns_records', { per_page: 1 }],
+  rules: ['/rulesets'],
+  cache: ['/settings/cache_level'],
+});
+
+/** Every DNS record, a page at a time, up to the page cap; `truncated` when the zone holds more. */
+async function listDns(conn, zonePath) {
+  const records = [];
+  let totalPages = 1;
+  for (let page = 1; page <= Math.min(totalPages, DNS_MAX_PAGES); page += 1) {
+    const { body } = await call(conn, 'GET', `${zonePath}/dns_records`, { query: { page, per_page: DNS_PAGE_SIZE } });
+    if (Array.isArray(body.result)) records.push(...body.result);
+    totalPages = Number(body.result_info?.total_pages) || 1;
+  }
+  return { records, truncated: totalPages > DNS_MAX_PAGES };
+}
+
+/** One phase's entry point ruleset, or null when the phase has none yet. */
+async function getPhase(conn, zonePath, phase) {
+  const { body } = await call(conn, 'GET', `${zonePath}/rulesets/phases/${encodeURIComponent(phase)}/entrypoint`, {
+    allow404: true,
+  });
+  return body ? body.result : null;
+}
+
+/** The test doubles, when given, passed through to guardedFetch. */
+function doublesOf({ fetch: fetchImpl, resolve, dispatcherFor }) {
+  const doubles = {};
+  if (fetchImpl) doubles.fetch = fetchImpl;
+  if (resolve) doubles.resolve = resolve;
+  if (dispatcherFor) doubles.dispatcherFor = dispatcherFor;
+  return doubles;
 }
 
 /**
@@ -74,108 +210,29 @@ function refusal(upstreamStatus, codes) {
  * @param {Function} [options.resolve] for tests
  * @param {Function} [options.dispatcherFor] for tests
  */
-export function createCloudflareClient({ token, zoneId, fetch: fetchImpl, resolve, dispatcherFor }) {
+export function createCloudflareClient(options) {
+  const { token, zoneId } = options;
   if (!ZONE_ID_PATTERN.test(String(zoneId || ''))) throw new Error('createCloudflareClient: zone id has the wrong shape');
-  const zonePath = `/zones/${zoneId}`;
-
-  /** One call. Answers `{ status, body }` for a 2xx; throws CloudflareError otherwise. */
-  async function call(method, path, { query = null, body = undefined, allow404 = false } = {}) {
-    const url = new URL(`${CLOUDFLARE_API_BASE}${path}`);
-    for (const [name, value] of Object.entries(query || {})) url.searchParams.set(name, String(value));
-    const deps = {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      httpsOnly: true,
-      maxRedirects: 0,
-      timeoutMs: TIMEOUT_MS,
-      maxBytes: MAX_RESPONSE_BYTES,
-    };
-    if (fetchImpl) deps.fetch = fetchImpl;
-    if (resolve) deps.resolve = resolve;
-    if (dispatcherFor) deps.dispatcherFor = dispatcherFor;
-
-    let response;
-    let text;
-    try {
-      ({ response, text } = await guardedFetch(url.toString(), deps));
-    } catch {
-      // A timeout, a refused address or an oversized answer: none of its
-      // text is passed on, and the handler logs this error's code.
-      throw new CloudflareError('Cloudflare could not be reached. Try again shortly.', {
-        status: 502,
-        code: 'CLOUDFLARE_UNREACHABLE',
-      });
-    }
-    let parsed = null;
-    try {
-      parsed = JSON.parse(text());
-    } catch {
-      parsed = null;
-    }
-    const status = response.status;
-    if (status === 404 && allow404) return { status, body: null };
-    if (status >= 200 && status < 300 && parsed && parsed.success !== false) return { status, body: parsed };
-    const codes = errorCodes(parsed);
-    const { status: answer, sentence } = refusal(status >= 200 && status < 300 ? 502 : status, codes);
-    throw new CloudflareError(sentence, { status: answer, upstreamStatus: status, codes });
-  }
-
-  /** Whether a read is allowed: true for a 2xx, false for 401/403, null for anything else. */
-  async function canRead(path, query) {
-    try {
-      await call('GET', path, { query });
-      return true;
-    } catch (error) {
-      if (error?.upstreamStatus === 401 || error?.upstreamStatus === 403) return false;
-      return null;
-    }
-  }
+  const conn = { token, doubles: doublesOf(options) };
+  const zone = `/zones/${zoneId}`;
+  const setting = (id) => `${zone}/settings/${encodeURIComponent(id)}`;
+  const record = (id) => `${zone}/dns_records/${encodeURIComponent(id)}`;
+  const phase = (id) => `${zone}/rulesets/phases/${encodeURIComponent(id)}/entrypoint`;
 
   return Object.freeze({
     zoneId,
-    getZone: async () => (await call('GET', zonePath)).body.result,
-    canRead: (family) => {
-      const probes = {
-        settings: [`${zonePath}/settings/ssl`],
-        dns: [`${zonePath}/dns_records`, { per_page: 1 }],
-        rules: [`${zonePath}/rulesets`],
-        cache: [`${zonePath}/settings/cache_level`],
-      };
-      const [path, query] = probes[family];
-      return canRead(path, query);
-    },
-    listSettings: async () => (await call('GET', `${zonePath}/settings`)).body.result,
-    patchSetting: async (settingId, value) =>
-      (await call('PATCH', `${zonePath}/settings/${encodeURIComponent(settingId)}`, { body: { value } })).body.result,
-    purge: async (body) => (await call('POST', `${zonePath}/purge_cache`, { body })).body.result,
-    listDns: async () => {
-      const records = [];
-      for (let page = 1; page <= DNS_MAX_PAGES; page += 1) {
-        const { body } = await call('GET', `${zonePath}/dns_records`, { query: { page, per_page: DNS_PAGE_SIZE } });
-        records.push(...(Array.isArray(body.result) ? body.result : []));
-        const totalPages = Number(body.result_info?.total_pages) || 1;
-        if (page >= totalPages) break;
-      }
-      return records;
-    },
-    getDns: async (recordId) => (await call('GET', `${zonePath}/dns_records/${encodeURIComponent(recordId)}`)).body.result,
-    createDns: async (record) => (await call('POST', `${zonePath}/dns_records`, { body: record })).body.result,
-    patchDns: async (recordId, changes) =>
-      (await call('PATCH', `${zonePath}/dns_records/${encodeURIComponent(recordId)}`, { body: changes })).body.result,
-    listRulesets: async () => (await call('GET', `${zonePath}/rulesets`)).body.result,
-    getPhase: async (phase) => {
-      const { body } = await call('GET', `${zonePath}/rulesets/phases/${encodeURIComponent(phase)}/entrypoint`, {
-        allow404: true,
-      });
-      return body ? body.result : null;
-    },
-    putPhase: async (phase, ruleset) =>
-      (await call('PUT', `${zonePath}/rulesets/phases/${encodeURIComponent(phase)}/entrypoint`, { body: ruleset })).body
-        .result,
+    getZone: () => resultOf(conn, 'GET', zone),
+    canRead: (family) => canRead(conn, `${zone}${READ_PROBES[family][0]}`, READ_PROBES[family][1]),
+    listSettings: () => resultOf(conn, 'GET', `${zone}/settings`),
+    getSetting: (settingId) => resultOf(conn, 'GET', setting(settingId)),
+    patchSetting: (settingId, value) => resultOf(conn, 'PATCH', setting(settingId), { body: { value } }),
+    purge: (body) => resultOf(conn, 'POST', `${zone}/purge_cache`, { body }),
+    listDns: () => listDns(conn, zone),
+    getDns: (recordId) => resultOf(conn, 'GET', record(recordId)),
+    createDns: (fields) => resultOf(conn, 'POST', `${zone}/dns_records`, { body: fields }),
+    patchDns: (recordId, changes) => resultOf(conn, 'PATCH', record(recordId), { body: changes }),
+    listRulesets: () => resultOf(conn, 'GET', `${zone}/rulesets`),
+    getPhase: (phaseId) => getPhase(conn, zone, phaseId),
+    putPhase: (phaseId, ruleset) => resultOf(conn, 'PUT', phase(phaseId), { body: ruleset }),
   });
 }

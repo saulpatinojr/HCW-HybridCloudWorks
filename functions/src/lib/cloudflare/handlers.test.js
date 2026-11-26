@@ -1,26 +1,35 @@
 /**
  * The Cloudflare page's routes (#1905), against a fake Cloudflare API: no
- * network. Roles, "not set up", the protected names and phases, input
- * checks, the audit row and the phone message, and that the token never
- * leaves the Authorization header.
+ * network. Roles, "not set up", the zone check, the protected names, the
+ * allow-list of rule phases, the owner-only settings, input checks (the body
+ * size included), the audit row with its before and after, the phone
+ * message, the hidden origin secret, the freshness check on a phase, and
+ * that the token never leaves the Authorization header.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCloudflareHandlers, MAX_PURGE_FILES, READ_ROLE, WRITE_ROLE } from './handlers.js';
-import { CLOUDFLARE_API_BASE } from './client.js';
+import { createCloudflareHandlers, MAX_BODY_BYTES, MAX_PURGE_FILES, READ_ROLE, REDACTED_VALUE, WRITE_ROLE } from './handlers.js';
+import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES } from './client.js';
+import { EDITABLE_PHASES, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
+import { WRONG_ZONE_MESSAGE } from './record.js';
+import { STALE_MESSAGE } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
+import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'not-a-real-cloudflare-token-EXAMPLE-0123456789';
+const ORIGIN_SECRET = 'not-a-real-origin-secret-EXAMPLE-9876543210';
 const ZONE = '00000000000000000000000000000001';
 const RECORD_ID = '00000000000000000000000000000002';
 const ENV = { CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: ZONE };
 const ZONE_PATH = `/client/v4/zones/${ZONE}`;
+const PHASES = `${ZONE_PATH}/rulesets/phases`;
 const PERSON = { oid: 'person-oid', email: 'owner@example.com' };
 const NETWORK_GUY = agentUserOf(agentKeyById('claude-network'));
+const REDIRECT = 'http_request_dynamic_redirect';
 
 const reply = (status, body = {}) => {
   const text = typeof body === 'string' ? body : JSON.stringify(body);
@@ -42,15 +51,15 @@ function cloudflare(routes = {}) {
   return { fetch, calls };
 }
 
-const ZONE_READS = {
-  [`GET ${ZONE_PATH}`]: ok({ id: ZONE, name: 'example.com', status: 'active', plan: { name: 'Free Website' }, owner: { email: 'someone@example.com' } }),
-};
+const zoneReply = (name = ZONE_APEX) => ok({ id: ZONE, name, status: 'active', plan: { name: 'Free Website' }, owner: { email: 'someone@example.com' } });
+const ZONE_READS = { [`GET ${ZONE_PATH}`]: zoneReply() };
 
 function setup({ routes = {}, env = ENV, user = PERSON, refuse = null } = {}) {
   const api = cloudflare({ ...ZONE_READS, ...routes });
   const guard = { requireRole: vi.fn(async (request, role) => (refuse ? { error: refuse } : { user, role, error: null })) };
   const store = { upsertDoc: vi.fn(async () => ({})) };
   const notifier = { notifyTelegram: vi.fn(async () => ({ sent: true })) };
+  let ids = 0;
   const handlers = createCloudflareHandlers({
     guard,
     store,
@@ -60,19 +69,23 @@ function setup({ routes = {}, env = ENV, user = PERSON, refuse = null } = {}) {
     resolve: async () => ({ address: '93.184.216.34' }),
     dispatcherFor: () => ({ close: async () => {} }),
     now: () => new Date('2026-11-26T12:00:00.000Z'),
-    uuid: () => 'audit-1',
+    uuid: () => `audit-${(ids += 1)}`,
   });
   const context = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
   return { api, guard, store, notifier, handlers, context };
 }
 
-const request = ({ params = {}, body, text } = {}) => ({
+const request = ({ params = {}, body, text, headers = {} } = {}) => ({
   params,
-  headers: { get: (name) => (name.toLowerCase() === 'user-agent' ? 'test-agent' : null) },
+  headers: { get: (name) => (name.toLowerCase() === 'user-agent' ? 'test-agent' : (headers[name.toLowerCase()] ?? null)) },
   text: async () => (text !== undefined ? text : body === undefined ? '' : JSON.stringify(body)),
 });
 const parse = (res) => ({ status: res.status, body: JSON.parse(res.body) });
 const logs = (context) => JSON.stringify([context.log.mock.calls, context.warn.mock.calls, context.error.mock.calls]);
+const methods = (api) => api.calls.map((call) => `${call.method} ${call.path.replace(ZONE_PATH, '')}`);
+const WRITES = (api) => api.calls.filter((call) => call.method !== 'GET');
+
+const RULE = { expression: 'true', action: 'redirect', action_parameters: {} };
 
 /** Every route, with a request that would pass its checks. */
 const ROUTES = [
@@ -84,8 +97,8 @@ const ROUTES = [
   ['createDns', WRITE_ROLE, request({ body: { type: 'A', name: 'blog', content: '192.0.2.1' } })],
   ['patchDns', WRITE_ROLE, request({ params: { recordId: RECORD_ID }, body: { proxied: true } })],
   ['listRulesets', READ_ROLE, request()],
-  ['getPhase', READ_ROLE, request({ params: { phase: 'http_request_dynamic_redirect' } })],
-  ['putPhase', WRITE_ROLE, request({ params: { phase: 'http_request_dynamic_redirect' }, body: { rules: [] } })],
+  ['getPhase', READ_ROLE, request({ params: { phase: REDIRECT } })],
+  ['putPhase', WRITE_ROLE, request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: null } })],
 ];
 
 describe('roles', () => {
@@ -119,7 +132,7 @@ describe('not set up', () => {
     { CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: 'not-a-zone-id' },
   ];
 
-  it('says so on the status route with 200, and lists what is protected', async () => {
+  it('says so on the status route with 200, and lists what is protected and what may be edited', async () => {
     for (const env of unset) {
       const { handlers, api } = setup({ env });
       const res = parse(await handlers.getStatus(request(), {}));
@@ -127,6 +140,8 @@ describe('not set up', () => {
       expect(res.body).toMatchObject({ configured: false, zone: null, families: [] });
       expect(res.body.message).toMatch(/Integrations → Keys/);
       expect(res.body.protected.phases.map((p) => p.phase)).toContain('http_request_late_transform');
+      expect(res.body.protected.editablePhases.map((p) => p.phase)).toEqual(EDITABLE_PHASES.map((p) => p.phase));
+      expect(res.body.protected.ownerOnlySettings.map((s) => s.setting)).toEqual(OWNER_ONLY_SETTINGS.map((s) => s.setting));
       expect(api.fetch).not.toHaveBeenCalled();
     }
   });
@@ -156,7 +171,7 @@ describe('the status route', () => {
     });
     const res = parse(await handlers.getStatus(request(), { warn: vi.fn() }));
     expect(res.body.configured).toBe(true);
-    expect(res.body.zone).toEqual({ id: ZONE, name: 'example.com', status: 'active', plan: 'Free Website' });
+    expect(res.body.zone).toEqual({ id: ZONE, name: ZONE_APEX, status: 'active', plan: 'Free Website' });
     expect(res.body.zoneError).toBeNull();
     expect(Object.fromEntries(res.body.families.map((f) => [f.id, f.readable]))).toEqual({ settings: true, dns: false, rules: true, cache: null });
     expect(JSON.stringify(res.body)).not.toContain('someone@example.com');
@@ -173,7 +188,85 @@ describe('the status route', () => {
   });
 });
 
+describe('the zone check before any change', () => {
+  // Each change, with the Cloudflare routes it would need if the zone were right.
+  const changes = [
+    ['patchSetting', request({ params: { settingId: 'brotli' }, body: { value: 'on' } })],
+    ['purge', request({ body: { everything: true } })],
+    ['createDns', request({ body: { type: 'A', name: 'blog', content: '192.0.2.1' } })],
+    ['patchDns', request({ params: { recordId: RECORD_ID }, body: { proxied: true } })],
+    ['putPhase', request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: null } })],
+  ];
+
+  it.each(changes)('%s refuses with 409 when the zone id points at another zone, reading only the zone', async (name, req) => {
+    const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { [`GET ${ZONE_PATH}`]: zoneReply('example.com') } });
+    const res = parse(await handlers[name](req, { warn: vi.fn() }));
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CLOUDFLARE_WRONG_ZONE');
+    expect(res.body.error).toBe(WRONG_ZONE_MESSAGE);
+    expect(methods(api)).toEqual(['GET ']);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+  });
+
+  it.each(changes)('%s checks the body before it calls Cloudflare at all', async (name, req) => {
+    const { handlers, api } = setup();
+    const broken = { ...req, text: async () => '[1]' };
+    expect(parse(await handlers[name](broken, {})).status).toBe(400);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('the request body', () => {
+  const route = (handlers, req) => handlers.patchSetting({ ...req, params: { settingId: 'brotli' } }, {});
+
+  it('refuses a declared length over the limit without reading the body', async () => {
+    const { handlers, api } = setup();
+    const text = vi.fn(async () => '{"value":"on"}');
+    const res = parse(await route(handlers, { ...request({ headers: { 'content-length': String(MAX_BODY_BYTES + 1) } }), text }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/at most 65536 bytes/);
+    expect(text).not.toHaveBeenCalled();
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('stops reading a stream the moment it passes the limit, and parses nothing', async () => {
+    const { handlers, api } = setup();
+    const chunk = new Uint8Array(16 * 1024).fill(32);
+    let reads = 0;
+    const reader = { read: vi.fn(async () => ((reads += 1), { done: false, value: chunk })), cancel: vi.fn(async () => {}) };
+    const res = parse(await route(handlers, { ...request(), body: { getReader: () => reader } }));
+    expect(res.status).toBe(400);
+    expect(reads).toBe(5);
+    expect(reader.cancel).toHaveBeenCalledTimes(1);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('reads a small stream whole', async () => {
+    const { handlers } = setup({
+      routes: { [`GET ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'off' }), [`PATCH ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'on' }) },
+    });
+    const bytes = new TextEncoder().encode('{"value":"on"}');
+    const chunks = [{ done: false, value: bytes }, { done: true }];
+    const reader = { read: vi.fn(async () => chunks.shift()), cancel: vi.fn() };
+    expect(parse(await route(handlers, { ...request(), body: { getReader: () => reader } })).status).toBe(200);
+  });
+
+  it('refuses a text body over the limit counted in bytes, not characters', async () => {
+    const { handlers, api } = setup();
+    const text = JSON.stringify({ value: 'é'.repeat(MAX_BODY_BYTES / 2) });
+    expect(text.length).toBeLessThan(MAX_BODY_BYTES + 20);
+    expect(parse(await route(handlers, request({ text }))).status).toBe(400);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe('zone settings', () => {
+  const brotli = (patch = ok({ id: 'brotli', value: 'on', editable: true })) => ({
+    [`GET ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'off' }),
+    [`PATCH ${ZONE_PATH}/settings/brotli`]: patch,
+  });
+
   it('lists every setting', async () => {
     const { handlers } = setup({
       routes: { [`GET ${ZONE_PATH}/settings`]: ok([{ id: 'ssl', value: 'strict', editable: true, modified_on: '2026-01-01T00:00:00Z' }]) },
@@ -197,14 +290,13 @@ describe('zone settings', () => {
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it('changes one setting, writes one audit row, and sends nothing to the phone for a person', async () => {
-    const { handlers, api, store, notifier } = setup({
-      routes: { [`PATCH ${ZONE_PATH}/settings/always_use_https`]: ok({ id: 'always_use_https', value: 'on', editable: true }) },
-    });
-    const res = parse(await handlers.patchSetting(request({ params: { settingId: 'always_use_https' }, body: { value: 'on' } }), {}));
+  it('reads the value first, changes it, and writes one audit row with before and after; nothing to the phone for a person', async () => {
+    const { handlers, api, store, notifier } = setup({ routes: brotli() });
+    const res = parse(await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), {}));
     expect(res.status).toBe(200);
-    expect(res.body.setting).toMatchObject({ id: 'always_use_https', value: 'on' });
-    expect(api.calls[0]).toMatchObject({ method: 'PATCH', body: { value: 'on' } });
+    expect(res.body.setting).toMatchObject({ id: 'brotli', value: 'on' });
+    expect(methods(api)).toEqual(['GET ', 'GET /settings/brotli', 'PATCH /settings/brotli']);
+    expect(api.calls[2]).toMatchObject({ method: 'PATCH', body: { value: 'on' } });
     expect(store.upsertDoc).toHaveBeenCalledTimes(1);
     const [container, row] = store.upsertDoc.mock.calls[0];
     expect(container).toBe('admin_audit_logs');
@@ -214,35 +306,75 @@ describe('zone settings', () => {
       resourceType: 'cloudflare',
       userId: 'person-oid',
       userEmail: 'owner@example.com',
-      details: { family: 'settings', settingId: 'always_use_https' },
+      details: { family: 'settings', settingId: 'brotli', before: 'off', after: 'on' },
     });
     expect(row.agent).toBeUndefined();
     expect(notifier.notifyTelegram).not.toHaveBeenCalled();
   });
 
+  it('changes nothing when the read of the current value fails', async () => {
+    const { handlers, api, store } = setup({ routes: { [`GET ${ZONE_PATH}/settings/brotli`]: reply(500, {}) } });
+    const res = await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), { warn: vi.fn() });
+    expect(res.status).toBe(502);
+    expect(WRITES(api)).toEqual([]);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
   it('names the agent key in the audit row and tells the owner’s phone when the caller is one', async () => {
-    const { handlers, store, notifier } = setup({
-      user: NETWORK_GUY,
-      routes: { [`PATCH ${ZONE_PATH}/settings/always_use_https`]: ok({ id: 'always_use_https', value: 'on' }) },
-    });
-    await handlers.patchSetting(request({ params: { settingId: 'always_use_https' }, body: { value: 'on' } }), {});
+    const { handlers, store, notifier } = setup({ user: NETWORK_GUY, routes: brotli() });
+    await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), {});
     expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({ agent: 'claude-network', userId: 'agent:claude-network' });
     expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
     expect(notifier.notifyTelegram.mock.calls[0][0]).toMatchObject({
-      source: 'cloudflare-change:claude-network',
-      message: 'Claude Network Guy changed the Cloudflare zone setting always_use_https.',
+      source: 'cloudflare-change:claude-network:audit-1',
+      message: 'Claude Network Guy changed the Cloudflare zone setting brotli.',
     });
+  });
+
+  it('sends every one of an agent’s changes to the phone under its own source, so no cooldown swallows one', async () => {
+    const { handlers, notifier } = setup({ user: NETWORK_GUY, routes: brotli() });
+    for (let i = 0; i < 3; i += 1) await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), {});
+    const sources = notifier.notifyTelegram.mock.calls.map(([sent]) => sent.source);
+    expect(sources).toEqual(['cloudflare-change:claude-network:audit-1', 'cloudflare-change:claude-network:audit-2', 'cloudflare-change:claude-network:audit-3']);
+  });
+
+  it('shows every per-change source as the Cloudflare page on the phone', () => {
+    const text = formatTelegramText({ title: 't', message: 'm', severity: 'info', source: 'cloudflare-change:claude-network:audit-7' });
+    expect(text).toContain('Reported by the Cloudflare page.');
+    expect(text).not.toContain('audit-7');
+  });
+
+  it.each(OWNER_ONLY_SETTINGS.map((entry) => entry.setting))('refuses an agent key the owner-only setting %s with 403 and the reason, calling nothing', async (settingId) => {
+    const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY });
+    const res = parse(await handlers.patchSetting(request({ params: { settingId }, body: { value: 'off' } }), {}));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('CLOUDFLARE_OWNER_ONLY');
+    expect(res.body.error).toMatch(/Change it on the Cloudflare page yourself/);
+    expect(res.body.reason).toBe(OWNER_ONLY_SETTINGS.find((entry) => entry.setting === settingId).reason);
+    expect(api.fetch).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+  });
+
+  it('lets a super_admin person change an owner-only setting', async () => {
+    const { handlers, store } = setup({
+      routes: { [`GET ${ZONE_PATH}/settings/ssl`]: ok({ id: 'ssl', value: 'full' }), [`PATCH ${ZONE_PATH}/settings/ssl`]: ok({ id: 'ssl', value: 'strict' }) },
+    });
+    const res = parse(await handlers.patchSetting(request({ params: { settingId: 'ssl' }, body: { value: 'strict' } }), {}));
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'settings', settingId: 'ssl', before: 'full', after: 'strict' });
   });
 });
 
 describe('cache purge', () => {
   const purgeRoute = (calls) => ({ [`POST ${ZONE_PATH}/purge_cache`]: (url, init) => (calls.push(JSON.parse(init.body)), ok({ id: ZONE })) });
 
-  it('purges everything', async () => {
+  it('purges everything, after the zone check', async () => {
     const sent = [];
-    const { handlers, store } = setup({ routes: purgeRoute(sent) });
+    const { handlers, api, store } = setup({ routes: purgeRoute(sent) });
     const res = parse(await handlers.purge(request({ body: { everything: true } }), {}));
     expect(res.body.purged).toBe('everything');
+    expect(methods(api)).toEqual(['GET ', 'POST /purge_cache']);
     expect(sent).toEqual([{ purge_everything: true }]);
     expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'cache', purge: 'everything' });
   });
@@ -250,7 +382,7 @@ describe('cache purge', () => {
   it('purges up to thirty https addresses on the zone’s own names', async () => {
     const sent = [];
     const { handlers, store } = setup({ routes: purgeRoute(sent) });
-    const files = ['https://example.com/a.css', 'https://www.example.com/b.js?v=1'];
+    const files = [`https://${ZONE_APEX}/a.css`, `https://www.${ZONE_APEX}/b.js?v=1`];
     const res = parse(await handlers.purge(request({ body: { files } }), {}));
     expect(res.body.purged).toBe(2);
     expect(sent).toEqual([{ files }]);
@@ -259,45 +391,58 @@ describe('cache purge', () => {
 
   it.each([
     [{ files: [] }],
-    [{ files: Array.from({ length: MAX_PURGE_FILES + 1 }, (_, i) => `https://example.com/${i}`) }],
-    [{ files: ['http://example.com/a'] }],
+    [{ files: Array.from({ length: MAX_PURGE_FILES + 1 }, (_, i) => `https://${ZONE_APEX}/${i}`) }],
+    [{ files: [`http://${ZONE_APEX}/a`] }],
     [{ files: ['https://example.org/a'] }],
-    [{ files: ['https://notexample.com/a'] }],
-    [{ files: ['https://user:pass@example.com/a'] }],
+    [{ files: [`https://not${ZONE_APEX}/a`] }],
+    [{ files: [`https://user:pass@${ZONE_APEX}/a`] }],
+    [{ files: [`https://${ZONE_APEX}/${'a'.repeat(2048)}`] }],
     [{ files: ['not a url'] }],
     [{ files: [42] }],
     [{ everything: false }],
-    [{ everything: true, files: ['https://example.com/a'] }],
+    [{ everything: true, files: [`https://${ZONE_APEX}/a`] }],
     [{ everything: 'yes' }],
     [{ purge_everything: true }],
-  ])('refuses %j and purges nothing', async (body) => {
+  ])('refuses %j and calls nothing', async (body) => {
     const sent = [];
-    const { handlers, store } = setup({ routes: purgeRoute(sent) });
+    const { handlers, api, store } = setup({ routes: purgeRoute(sent) });
     expect(parse(await handlers.purge(request({ body }), {})).status).toBe(400);
-    expect(sent).toEqual([]);
+    expect(api.fetch).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 });
 
 describe('DNS records', () => {
-  const record = (over = {}) => ({ id: RECORD_ID, type: 'A', name: 'blog.example.com', content: '192.0.2.1', proxied: true, ttl: 1, comment: null, ...over });
+  const record = (over = {}) => ({ id: RECORD_ID, type: 'A', name: `blog.${ZONE_APEX}`, content: '192.0.2.1', proxied: true, ttl: 1, comment: null, ...over });
+  const created = { [`POST ${ZONE_PATH}/dns_records`]: (url, init) => ok(record(JSON.parse(init.body))) };
 
   it('lists every page, and marks the protected ones with their reason', async () => {
     const { handlers, api } = setup({
       routes: {
         [`GET ${ZONE_PATH}/dns_records`]: (url) =>
           url.searchParams.get('page') === '1'
-            ? ok([record(), record({ id: 'b', name: 'www.hybridcloudworks.com' })], { result_info: { page: 1, total_pages: 2 } })
-            : ok([record({ id: 'c', name: '_acme-challenge.hybridcloudworks.com', type: 'TXT' })], { result_info: { page: 2, total_pages: 2 } }),
+            ? ok([record(), record({ id: 'b', name: `www.${ZONE_APEX}` })], { result_info: { page: 1, total_pages: 2 } })
+            : ok([record({ id: 'c', name: `_acme-challenge.${ZONE_APEX}`, type: 'TXT' })], { result_info: { page: 2, total_pages: 2 } }),
       },
     });
     const res = parse(await handlers.listDns(request(), {}));
     expect(api.calls.map((call) => call.query.get('page'))).toEqual(['1', '2']);
     expect(res.body.records.map((r) => [r.id, r.locked])).toEqual([[RECORD_ID, false], ['b', true], ['c', true]]);
     expect(res.body.records[1].lockedReason).toMatch(/Static Web App/);
+    expect(res.body.truncated).toBe(false);
   });
 
-  it.each(['@', 'hybridcloudworks.com', 'www', 'www.hybridcloudworks.com', 'api-azure', 'docs.hybridcloudworks.com', '_acme-challenge.blog', 'x.lab.hybridcloudworks.com', 'lab'])(
+  it('stops at the page cap and says the list is cut', async () => {
+    const { handlers, api } = setup({
+      routes: { [`GET ${ZONE_PATH}/dns_records`]: (url) => ok([record({ id: url.searchParams.get('page') })], { result_info: { total_pages: DNS_MAX_PAGES + 10 } }) },
+    });
+    const res = parse(await handlers.listDns(request(), {}));
+    expect(api.calls).toHaveLength(DNS_MAX_PAGES);
+    expect(res.body.records).toHaveLength(DNS_MAX_PAGES);
+    expect(res.body.truncated).toBe(true);
+  });
+
+  it.each(['@', ZONE_APEX, 'www', `www.${ZONE_APEX}`, 'api-azure', `docs.${ZONE_APEX}`, '_acme-challenge.blog', `x.lab.${ZONE_APEX}`, 'lab', '*', `*.${ZONE_APEX}`, '*.api-azure', '*.www', '*._acme-challenge', '*.lab', '*.x.lab', 'WWW'])(
     'refuses to add a record named %j, with the reason, and calls nothing',
     async (name) => {
       const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY });
@@ -311,6 +456,16 @@ describe('DNS records', () => {
     }
   );
 
+  it.each(['.blog', 'blog.', 'a..b', '..', '.', 'blog@', '@.blog', 'a.@', 'blog.*', 'a*', '*a.blog', '**', `${'a'.repeat(64)}.blog`, `api-azure.${ZONE_APEX}.`])(
+    'refuses the badly formed name %j with 400, and calls nothing',
+    async (name) => {
+      const { handlers, api } = setup();
+      const res = parse(await handlers.createDns(request({ body: { type: 'A', name, content: '192.0.2.1' } }), {}));
+      expect(res.status).toBe(400);
+      expect(api.fetch).not.toHaveBeenCalled();
+    }
+  );
+
   it.each([
     [{ type: 'NS', name: 'blog', content: 'ns.example.net' }],
     [{ type: 'A', name: 'blog' }],
@@ -319,6 +474,7 @@ describe('DNS records', () => {
     [{ type: 'A', name: 'blog', content: '192.0.2.1', ttl: 30 }],
     [{ type: 'A', name: 'blog', content: '192.0.2.1', proxied: 'yes' }],
     [{ type: 'A', name: 'blog', content: '192.0.2.1', comment: 'x'.repeat(101) }],
+    [{ type: 'A', name: 'blog', content: '192.0.2.1', priority: -1 }],
     [{ type: 'A', name: 'blog', content: '192.0.2.1', id: 'x' }],
   ])('refuses the record %j', async (body) => {
     const { handlers, api } = setup();
@@ -326,31 +482,56 @@ describe('DNS records', () => {
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it('adds a record that is not protected, and records it', async () => {
-    const { handlers, api, store, notifier } = setup({
-      user: NETWORK_GUY,
-      routes: { [`POST ${ZONE_PATH}/dns_records`]: (url, init) => ok(record({ ...JSON.parse(init.body), name: 'blog.example.com' })) },
-    });
-    const res = parse(await handlers.createDns(request({ body: { type: 'a', name: 'blog', content: '192.0.2.1', ttl: 300, proxied: false } }), {}));
+  it('adds a record that is not protected, sending the full name that was checked, and records it without its content', async () => {
+    const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: created });
+    const res = parse(await handlers.createDns(request({ body: { type: 'a', name: 'Blog', content: '192.0.2.1', ttl: 300, proxied: false } }), {}));
     expect(res.status).toBe(201);
-    expect(api.calls[0].body).toEqual({ type: 'A', name: 'blog', content: '192.0.2.1', ttl: 300, proxied: false });
-    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'dns', change: 'create', recordType: 'A', name: 'blog.example.com' });
-    expect(notifier.notifyTelegram.mock.calls[0][0].message).toBe('Claude Network Guy added the A record blog.example.com in Cloudflare.');
+    expect(methods(api)).toEqual(['GET ', 'POST /dns_records']);
+    expect(api.calls[1].body).toEqual({ type: 'A', name: `blog.${ZONE_APEX}`, content: '192.0.2.1', ttl: 300, proxied: false });
+    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({
+      family: 'dns',
+      change: 'create',
+      recordType: 'A',
+      name: `blog.${ZONE_APEX}`,
+      before: null,
+      after: { proxied: false, ttl: 300 },
+    });
+    expect(JSON.stringify(store.upsertDoc.mock.calls)).not.toContain('192.0.2.1');
+    expect(notifier.notifyTelegram.mock.calls[0][0].message).toBe(`Claude Network Guy added the A record blog.${ZONE_APEX} in Cloudflare.`);
   });
 
+  it.each([['@', ZONE_APEX], ['*.blog', `*.blog.${ZONE_APEX}`], [`shop.${ZONE_APEX}`, `shop.${ZONE_APEX}`], ['_dmarc.shop', `_dmarc.shop.${ZONE_APEX}`]])(
+    'reads %j as %j',
+    async (name, full) => {
+      if (name === '@') return; // the apex is protected; checked above
+      const { handlers, api } = setup({ routes: created });
+      expect(parse(await handlers.createDns(request({ body: { type: 'TXT', name, content: 'v=example' } }), {})).status).toBe(201);
+      expect(api.calls[1].body.name).toBe(full);
+    }
+  );
+
   it('refuses an edit when the record’s current name is protected, after reading it', async () => {
-    const { handlers, api, store } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ name: 'api-azure.hybridcloudworks.com' })) } });
+    const { handlers, api, store } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ name: `api-azure.${ZONE_APEX}` })) } });
     const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false } }), {}));
     expect(res.status).toBe(409);
-    expect(api.calls.map((call) => call.method)).toEqual(['GET']);
+    expect(methods(api)).toEqual(['GET ', `GET /dns_records/${RECORD_ID}`]);
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 
-  it('refuses an edit that would rename a record onto a protected name', async () => {
-    const { handlers, api } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()) } });
-    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { name: 'www' } }), {}));
+  it.each(['NS', 'CAA', 'SRV', 'HTTPS', ''])('refuses an edit to a record whose current type is %j, after reading it', async (type) => {
+    const { handlers, api, store } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ type })) } });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { type: 'A', content: '192.0.2.9' } }), {}));
     expect(res.status).toBe(409);
-    expect(api.calls.map((call) => call.method)).toEqual(['GET']);
+    expect(res.body.reason).toMatch(/Cloudflare dashboard/);
+    expect(WRITES(api)).toEqual([]);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it.each(['www', '*.api-azure', '*'])('refuses an edit that would rename a record onto %j, before calling Cloudflare', async (name) => {
+    const { handlers, api } = setup({ routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()) } });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { name } }), {}));
+    expect(res.status).toBe(409);
+    expect(api.fetch).not.toHaveBeenCalled();
   });
 
   it.each(['', 'abc', '../settings', 'g'.repeat(32)])('refuses the record id %j before calling Cloudflare', async (recordId) => {
@@ -365,94 +546,290 @@ describe('DNS records', () => {
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it('edits a record that is not protected, and records it', async () => {
+  it('edits a record that is not protected, and records the type, name, proxied and ttl before and after, never the content', async () => {
     const { handlers, api, store } = setup({
       routes: {
         [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()),
-        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ proxied: false })),
+        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ proxied: false, ttl: 300, content: '192.0.2.7' })),
       },
     });
-    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false } }), {}));
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false, ttl: 300, content: '192.0.2.7' } }), {}));
     expect(res.status).toBe(200);
-    expect(api.calls[1]).toMatchObject({ method: 'PATCH', body: { proxied: false } });
-    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'dns', change: 'edit', recordType: 'A', name: 'blog.example.com' });
+    expect(api.calls[2]).toMatchObject({ method: 'PATCH', body: { proxied: false, ttl: 300, content: '192.0.2.7' } });
+    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({
+      family: 'dns',
+      change: 'edit',
+      recordType: 'A',
+      name: `blog.${ZONE_APEX}`,
+      before: { proxied: true, ttl: 1 },
+      after: { proxied: false, ttl: 300 },
+    });
+    expect(JSON.stringify(store.upsertDoc.mock.calls)).not.toMatch(/192\.0\.2\.[17]/);
+  });
+
+  it('sends a new name in full, and records the old one', async () => {
+    const { handlers, api, store } = setup({
+      routes: {
+        [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()),
+        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: (url, init) => ok(record(JSON.parse(init.body))),
+      },
+    });
+    await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { name: 'Shop' } }), {});
+    expect(api.calls[2].body).toEqual({ name: `shop.${ZONE_APEX}` });
+    expect(store.upsertDoc.mock.calls[0][1].details).toMatchObject({ name: `shop.${ZONE_APEX}`, previousName: `blog.${ZONE_APEX}` });
   });
 });
 
 describe('rules', () => {
-  it('lists the zone’s rulesets, with the protected phases locked', async () => {
+  const LATE = 'http_request_late_transform';
+  const ORIGIN_RULE = {
+    id: 'origin-1',
+    description: 'Origin secret',
+    expression: `(http.host eq "api-azure.${ZONE_APEX}")`,
+    action: 'rewrite',
+    enabled: true,
+    version: '4',
+    action_parameters: { headers: { 'x-hcw-origin-secret': { operation: 'set', value: ORIGIN_SECRET } } },
+    logging: { enabled: true },
+  };
+  const LATE_RULESET = { id: 'r1', name: 'origin', phase: LATE, kind: 'zone', version: '7', rules: [ORIGIN_RULE] };
+  const SECRETISH = {
+    id: 'h1',
+    expression: 'true',
+    action: 'rewrite',
+    action_parameters: {
+      headers: {
+        'x-api-key': { operation: 'set', value: ORIGIN_SECRET },
+        'X-Auth-Token': { operation: 'set', value: ORIGIN_SECRET },
+        'x-cache-hint': { operation: 'set', value: 'warm' },
+      },
+    },
+  };
+  const entrypoint = (phase, ruleset) => ({ [`GET ${PHASES}/${phase}/entrypoint`]: ok(ruleset) });
+  const put = (phase) => ({ [`PUT ${PHASES}/${phase}/entrypoint`]: (url, init) => ok({ id: 'r2', phase, version: '9', ...JSON.parse(init.body) }) });
+  const replace = (phase, body) => request({ params: { phase }, body: { expectedVersion: '3', ...body } });
+  const current = (phase, version = '3') => entrypoint(phase, { id: 'r2', phase, version, rules: [] });
+
+  it('lists the zone’s rulesets, locked unless on the allow-list, with no rules in the answer', async () => {
     const { handlers } = setup({
       routes: {
         [`GET ${ZONE_PATH}/rulesets`]: ok([
-          { id: 'r1', name: 'origin', phase: 'http_request_late_transform', kind: 'zone' },
-          { id: 'r2', name: 'redirects', phase: 'http_request_dynamic_redirect', kind: 'zone' },
+          LATE_RULESET,
+          { id: 'r2', name: 'redirects', phase: REDIRECT, kind: 'zone', version: '2', rules: [SECRETISH] },
+          { id: 'r3', name: 'origin rules', phase: 'http_request_origin', kind: 'zone' },
+          { id: 'r4', name: 'custom', phase: 'http_request_firewall_custom', kind: 'zone' },
         ]),
       },
     });
     const res = parse(await handlers.listRulesets(request(), {}));
     expect(res.body.rulesets.map((r) => [r.phase, r.locked])).toEqual([
-      ['http_request_late_transform', true],
-      ['http_request_dynamic_redirect', false],
+      [LATE, true],
+      [REDIRECT, false],
+      ['http_request_origin', true],
+      ['http_request_firewall_custom', false],
     ]);
+    expect(res.body.rulesets[2].lockedReason).toBe(READ_ONLY_PHASE_REASON);
+    expect(res.body.rulesets[1].version).toBe('2');
+    for (const ruleset of res.body.rulesets) expect(ruleset.rules).toBeUndefined();
+    expect(JSON.stringify(res.body)).not.toContain(ORIGIN_SECRET);
   });
 
-  it('reads one phase, and answers null for a phase with no rules yet', async () => {
-    const { handlers } = setup({
-      routes: {
-        [`GET ${ZONE_PATH}/rulesets/phases/http_request_dynamic_redirect/entrypoint`]: ok({ id: 'r2', phase: 'http_request_dynamic_redirect', rules: [{ id: 'x' }] }),
-      },
-    });
-    const found = parse(await handlers.getPhase(request({ params: { phase: 'http_request_dynamic_redirect' } }), {}));
-    expect(found.body.ruleset).toMatchObject({ id: 'r2', rules: [{ id: 'x' }], locked: false });
+  it('reads a phase that may not be replaced as a summary of each rule only, never its parameters', async () => {
+    const { handlers } = setup({ routes: entrypoint(LATE, LATE_RULESET) });
+    const res = parse(await handlers.getPhase(request({ params: { phase: LATE } }), {}));
+    expect(res.body.ruleset.rules).toEqual([
+      { id: 'origin-1', description: 'Origin secret', expression: ORIGIN_RULE.expression, action: 'rewrite', enabled: true },
+    ]);
+    expect(res.body).toMatchObject({ editable: false, locked: true, version: '7' });
+    expect(JSON.stringify(res.body)).not.toContain(ORIGIN_SECRET);
+    expect(JSON.stringify(res.body)).not.toContain('action_parameters');
+  });
+
+  it('reads an editable phase in full, with every secret-sounding header value hidden', async () => {
+    const { handlers } = setup({ routes: entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, version: '3', rules: [SECRETISH] }) });
+    const found = parse(await handlers.getPhase(request({ params: { phase: REDIRECT } }), {}));
+    expect(found.body).toMatchObject({ editable: true, locked: false, version: '3' });
+    const headers = found.body.ruleset.rules[0].action_parameters.headers;
+    expect(headers['x-api-key'].value).toBe(REDACTED_VALUE);
+    expect(headers['X-Auth-Token'].value).toBe(REDACTED_VALUE);
+    expect(headers['x-cache-hint'].value).toBe('warm');
+    expect(JSON.stringify(found.body)).not.toContain(ORIGIN_SECRET);
+  });
+
+  it('answers null for a phase with no rules yet', async () => {
+    const { handlers } = setup();
     const none = parse(await handlers.getPhase(request({ params: { phase: 'http_request_cache_settings' } }), {}));
     expect(none.status).toBe(200);
-    expect(none.body.ruleset).toBeNull();
+    expect(none.body).toMatchObject({ ruleset: null, version: null, editable: false });
+  });
+
+  it('never lets the origin secret out of any route, whatever it reads', async () => {
+    const routes = {
+      [`GET ${ZONE_PATH}/rulesets`]: ok([LATE_RULESET]),
+      [`GET ${ZONE_PATH}/rulesets/phases/${LATE}/entrypoint`]: ok(LATE_RULESET),
+      [`GET ${ZONE_PATH}/rulesets/phases/${REDIRECT}/entrypoint`]: ok({ id: 'r2', phase: REDIRECT, version: '3', rules: [SECRETISH] }),
+      [`PUT ${ZONE_PATH}/rulesets/phases/${REDIRECT}/entrypoint`]: ok({ id: 'r2', phase: REDIRECT, version: '4', rules: [SECRETISH] }),
+      [`GET ${ZONE_PATH}/settings/ssl`]: ok({ id: 'ssl', value: 'strict' }),
+      [`GET ${ZONE_PATH}/dns_records`]: ok([]),
+      [`GET ${ZONE_PATH}/settings`]: ok([]),
+    };
+    const reqs = [
+      ['getStatus', request()],
+      ['getSettings', request()],
+      ['listDns', request()],
+      ['listRulesets', request()],
+      ['getPhase', request({ params: { phase: LATE } })],
+      ['getPhase', request({ params: { phase: REDIRECT } })],
+      ['putPhase', replace(REDIRECT, { rules: [RULE] })],
+      ['putPhase', request({ params: { phase: LATE }, body: { rules: [ORIGIN_RULE], expectedVersion: '7' } })],
+    ];
+    for (const user of [PERSON, NETWORK_GUY]) {
+      for (const [name, req] of reqs) {
+        const { handlers, store, notifier, context } = setup({ user, routes });
+        const res = await handlers[name](req, context);
+        expect(res.body, name).not.toContain(ORIGIN_SECRET);
+        expect(JSON.stringify([store.upsertDoc.mock.calls, notifier.notifyTelegram.mock.calls]), name).not.toContain(ORIGIN_SECRET);
+        expect(logs(context), name).not.toContain(ORIGIN_SECRET);
+      }
+    }
   });
 
   it.each(['', 'HTTP', 'http-request', '../x', 'a'.repeat(65)])('refuses the phase %j before calling Cloudflare', async (phase) => {
     const { handlers, api } = setup();
     expect(parse(await handlers.getPhase(request({ params: { phase } }), {})).status).toBe(400);
-    expect(parse(await handlers.putPhase(request({ params: { phase }, body: { rules: [] } }), {})).status).toBe(400);
+    expect(parse(await handlers.putPhase(request({ params: { phase }, body: { rules: [RULE], expectedVersion: null } }), {})).status).toBe(400);
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it.each(['http_request_late_transform', 'http_ratelimit'])('refuses to replace the protected phase %s, and calls nothing', async (phase) => {
+  it.each([LATE, 'http_ratelimit'])('refuses to replace the Terraform phase %s, with its own reason, and calls nothing', async (phase) => {
     const { handlers, api, store } = setup({ user: NETWORK_GUY });
-    const res = parse(await handlers.putPhase(request({ params: { phase }, body: { rules: [] } }), {}));
+    const res = parse(await handlers.putPhase(replace(phase, { rules: [RULE] }), {}));
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
+    expect(res.body.reason).not.toBe(READ_ONLY_PHASE_REASON);
     expect(api.fetch).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 
-  it.each([[{}], [{ rules: 'x' }], [{ rules: [1] }], [{ rules: [], kind: 'zone' }], [{ rules: Array.from({ length: 101 }, () => ({})) }]])(
-    'refuses the rules %j',
-    async (body) => {
-      const { handlers, api } = setup();
-      expect(parse(await handlers.putPhase(request({ params: { phase: 'http_request_dynamic_redirect' }, body }), {})).status).toBe(400);
+  it.each([
+    'http_request_origin',
+    'http_request_cache_settings',
+    'http_request_cloud_connector',
+    'http_request_snippets',
+    'http_request_firewall_managed',
+    'ddos_l7',
+    'http_request_a_phase_cloudflare_adds_later',
+  ])('refuses to replace %s, which is not on the allow-list, for a person too', async (phase) => {
+    for (const user of [PERSON, NETWORK_GUY]) {
+      const { handlers, api, store } = setup({ user });
+      const res = parse(await handlers.putPhase(replace(phase, { rules: [RULE] }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body.reason).toBe(READ_ONLY_PHASE_REASON);
+      expect(res.body.error).toMatch(/can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard/);
       expect(api.fetch).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
     }
-  );
+  });
 
-  it('replaces a phase’s rules and records it', async () => {
-    const rules = [{ expression: 'true', action: 'redirect', action_parameters: {} }];
-    const { handlers, api, store } = setup({
-      routes: { [`PUT ${ZONE_PATH}/rulesets/phases/http_request_dynamic_redirect/entrypoint`]: (url, init) => ok({ id: 'r2', phase: 'http_request_dynamic_redirect', ...JSON.parse(init.body) }) },
-    });
-    const res = parse(await handlers.putPhase(request({ params: { phase: 'http_request_dynamic_redirect' }, body: { rules, description: 'Redirects' } }), {}));
+  it.each([
+    [{}],
+    [{ rules: 'x' }],
+    [{ rules: [1] }],
+    [{ rules: [RULE], kind: 'zone' }],
+    [{ rules: Array.from({ length: 101 }, () => ({})) }],
+    [{ rules: [] }],
+    [{ rules: [RULE], expectedVersion: 3 }],
+    [{ rules: [RULE], expectedVersion: '' }],
+  ])('refuses the rules %j before calling Cloudflare', async (body) => {
+    const { handlers, api } = setup();
+    const res = parse(await handlers.putPhase(request({ params: { phase: REDIRECT }, body: { expectedVersion: '3', ...body } }), {}));
+    expect(res.status).toBe(400);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty list for everyone, saying it would delete every rule', async () => {
+    for (const user of [PERSON, NETWORK_GUY]) {
+      const { handlers } = setup({ user });
+      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules: [] }), {}));
+      expect(res.body.error).toMatch(/deletes every rule in the phase/);
+    }
+  });
+
+  it('refuses a body with no expectedVersion', async () => {
+    const { handlers, api } = setup();
+    const res = parse(await handlers.putPhase(request({ params: { phase: REDIRECT }, body: { rules: [RULE] } }), {}));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/expectedVersion/);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['skip', 'SKIP'])('refuses a custom security rule whose action is %s', async (action) => {
+    const { handlers, api } = setup({ user: NETWORK_GUY });
+    const rules = [{ expression: 'true', action: 'block' }, { expression: 'true', action, action_parameters: { ruleset: 'current' } }];
+    const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules }), {}));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/may not skip/);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a replacement that sends a hidden value back', async () => {
+    const { handlers, api } = setup();
+    const rules = [{ ...SECRETISH, action_parameters: { headers: { 'x-api-key': { operation: 'set', value: REDACTED_VALUE } } } }];
+    const res = parse(await handlers.putPhase(replace('http_request_transform', { rules }), {}));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/hidden value/);
+    expect(api.fetch).not.toHaveBeenCalled();
+  });
+
+  it('replaces an editable phase’s rules when the version still matches, and records it', async () => {
+    const rules = [{ expression: 'true', action: 'block' }];
+    const { handlers, api, store } = setup({ routes: { ...current('http_request_firewall_custom'), ...put('http_request_firewall_custom') } });
+    const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules, description: 'Custom' }), {}));
     expect(res.status).toBe(200);
-    expect(api.calls[0].body).toEqual({ rules, description: 'Redirects' });
-    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: 'http_request_dynamic_redirect', count: 1 });
+    expect(methods(api)).toEqual(['GET ', 'GET /rulesets/phases/http_request_firewall_custom/entrypoint', 'PUT /rulesets/phases/http_request_firewall_custom/entrypoint']);
+    expect(api.calls[2].body).toEqual({ rules, description: 'Custom' });
+    expect(res.body.ruleset.version).toBe('9');
+    expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: 'http_request_firewall_custom', count: 1 });
+  });
+
+  it('refuses with 409, writing nothing, when the phase changed since it was read', async () => {
+    const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...current(REDIRECT, '4'), ...put(REDIRECT) } });
+    const res = parse(await handlers.putPhase(replace(REDIRECT, { rules: [RULE] }), {}));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'CLOUDFLARE_STALE', error: STALE_MESSAGE });
+    expect(WRITES(api)).toEqual([]);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+  });
+
+  it('uses last_updated as the version when Cloudflare gives no version', async () => {
+    const stamp = '2026-11-01T00:00:00Z';
+    const { handlers } = setup({ routes: { ...entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, last_updated: stamp, rules: [] }), ...put(REDIRECT) } });
+    const read = parse(await handlers.getPhase(request({ params: { phase: REDIRECT } }), {}));
+    expect(read.body.version).toBe(stamp);
+    expect(parse(await handlers.putPhase(request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: stamp } }), {})).status).toBe(200);
+  });
+
+  it('accepts expectedVersion null for a phase with no rules yet, and refuses it once the phase has some', async () => {
+    const fresh = setup({ routes: put(REDIRECT) });
+    expect(parse(await fresh.handlers.putPhase(request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: null } }), {})).status).toBe(200);
+    const taken = setup({ routes: { ...current(REDIRECT, '1'), ...put(REDIRECT) } });
+    const res = parse(await taken.handlers.putPhase(request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: null } }), {}));
+    expect(res.status).toBe(409);
+    expect(WRITES(taken.api)).toEqual([]);
   });
 
   it('drops Cloudflare’s own version and last_updated stamps from a rule sent back, and keeps the rest', async () => {
     const stamped = [{ id: 'x1', ref: 'r1', version: '3', last_updated: '2026-11-01T00:00:00Z', expression: 'true', action: 'redirect' }];
-    const { handlers, api } = setup({
-      routes: { [`PUT ${ZONE_PATH}/rulesets/phases/http_request_dynamic_redirect/entrypoint`]: (url, init) => ok({ id: 'r2', phase: 'http_request_dynamic_redirect', ...JSON.parse(init.body) }) },
-    });
-    const res = parse(await handlers.putPhase(request({ params: { phase: 'http_request_dynamic_redirect' }, body: { rules: stamped } }), {}));
+    const { handlers, api } = setup({ routes: { ...current(REDIRECT), ...put(REDIRECT) } });
+    const res = parse(await handlers.putPhase(replace(REDIRECT, { rules: stamped }), {}));
     expect(res.status).toBe(200);
-    expect(api.calls[0].body).toEqual({ rules: [{ id: 'x1', ref: 'r1', expression: 'true', action: 'redirect' }] });
+    expect(api.calls[2].body).toEqual({ rules: [{ id: 'x1', ref: 'r1', expression: 'true', action: 'redirect' }] });
+  });
+
+  it.each(EDITABLE_PHASES.map((entry) => entry.phase))('lets the editable phase %s be replaced', async (phase) => {
+    const { handlers } = setup({ routes: { ...current(phase), ...put(phase) } });
+    expect(parse(await handlers.putPhase(replace(phase, { rules: [{ expression: 'true', action: 'block' }] }), {})).status).toBe(200);
   });
 });
 
@@ -462,23 +839,33 @@ describe('a refusal from Cloudflare', () => {
     [401, 502, /refused the token/],
     [403, 502, /refused the token/],
     [404, 404, /no such item/],
+    [409, 409, /conflicts/],
     [429, 429, /limiting requests/],
     [500, 502, /HTTP 500/],
   ])('answers Cloudflare’s %i as %i with a sentence of its own, no audit row and no phone message', async (upstream, answer, sentence) => {
     const { handlers, store, notifier, context } = setup({
       user: NETWORK_GUY,
-      routes: { [`PATCH ${ZONE_PATH}/settings/ssl`]: reply(upstream, { success: false, errors: [{ code: 1007, message: `far-end words ${TOKEN}` }] }) },
+      routes: {
+        [`GET ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'off' }),
+        [`PATCH ${ZONE_PATH}/settings/brotli`]: reply(upstream, { success: false, errors: [{ code: 1007, message: `far-end words ${TOKEN}` }] }),
+      },
     });
-    const res = await handlers.patchSetting(request({ params: { settingId: 'ssl' }, body: { value: 'flexible' } }), context);
+    const res = await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), context);
     const body = JSON.parse(res.body);
     expect(res.status).toBe(answer);
     expect(body.error).toMatch(sentence);
     expect(res.body).not.toMatch(/far-end words/);
     expect(res.body).not.toContain(TOKEN);
     expect(logs(context)).not.toContain(TOKEN);
-    expect(logs(context)).not.toMatch(/far-end words|ssl/);
+    expect(logs(context)).not.toMatch(/far-end words|brotli/);
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+  });
+
+  it('answers 502 when a 2xx answer says it failed', async () => {
+    const { handlers } = setup({ routes: { [`GET ${ZONE_PATH}/settings`]: reply(200, { success: false, errors: [] }) } });
+    const res = await handlers.getSettings(request(), { warn: vi.fn() });
+    expect(res.status).toBe(502);
   });
 
   it('answers 502 when Cloudflare cannot be reached, without the transport’s words', async () => {
@@ -498,12 +885,14 @@ describe('the token', () => {
   it('goes in the Authorization header of an https call to Cloudflare, and nowhere else', async () => {
     const { handlers, api, store, context } = setup({
       user: NETWORK_GUY,
-      routes: { [`PATCH ${ZONE_PATH}/settings/ssl`]: ok({ id: 'ssl', value: 'strict' }) },
+      routes: { [`GET ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'off' }), [`PATCH ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'on' }) },
     });
-    const res = await handlers.patchSetting(request({ params: { settingId: 'ssl' }, body: { value: 'strict' } }), context);
-    expect(api.calls[0].url.startsWith(`${CLOUDFLARE_API_BASE}/zones/${ZONE}/`)).toBe(true);
-    expect(api.calls[0].headers.Authorization).toBe(`Bearer ${TOKEN}`);
-    expect(api.calls[0].url).not.toContain(TOKEN);
+    const res = await handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), context);
+    for (const call of api.calls) {
+      expect(call.url.startsWith(`${CLOUDFLARE_API_BASE}/zones/${ZONE}`)).toBe(true);
+      expect(call.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+      expect(call.url).not.toContain(TOKEN);
+    }
     expect(res.body).not.toContain(TOKEN);
     expect(JSON.stringify(store.upsertDoc.mock.calls)).not.toContain(TOKEN);
     expect(logs(context)).not.toContain(TOKEN);
@@ -512,7 +901,8 @@ describe('the token', () => {
 
 describe('no delete', () => {
   it('registers no DELETE route and makes no DELETE call', () => {
-    for (const file of ['client.js', 'handlers.js', '../../functions/cloudflare-http.js']) {
+    const files = ['client.js', 'handlers.js', 'input.js', 'record.js', 'zone-routes.js', 'dns-routes.js', 'rules-routes.js', '../../functions/cloudflare-http.js'];
+    for (const file of files) {
       const source = readFileSync(join(HERE, file), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
       expect(source, file).not.toMatch(/DELETE/);
     }

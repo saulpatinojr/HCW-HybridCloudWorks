@@ -102,7 +102,8 @@ export function formatTelegramText({ title, message, severity, source }) {
     if (raw.startsWith('forge_ready:')) displayName = 'ContentForge';
     else if (raw.startsWith('job_failed:')) displayName = 'the job worker';
     else if (raw.startsWith('reminder:')) displayName = 'the reminders sheet';
-    // 'cloudflare-change:{agentId}' (per-key cooldown, lib/cloudflare/handlers.js).
+    // 'cloudflare-change:{agentId}:{auditRowId}' (one source per change, so
+    // the cooldown never swallows an agent key's change; lib/cloudflare/record.js).
     else if (raw.startsWith('cloudflare-change:')) displayName = 'the Cloudflare page';
   }
   return `${severityPrefix(severity)} ${title}\n\n${message}\n\nReported by ${displayName}.`;

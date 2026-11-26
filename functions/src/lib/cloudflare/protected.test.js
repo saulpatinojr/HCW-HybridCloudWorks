@@ -10,11 +10,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { terraformSource } from '../../../test/terraform-source.js';
 import {
+  APEX_WILDCARD_REASON,
+  EDITABLE_PHASES,
+  OWNER_ONLY_SETTINGS,
   PROTECTED_DNS_NAMES,
   PROTECTED_PHASES,
+  READ_ONLY_PHASE_REASON,
   ZONE_APEX,
+  checkDnsName,
   dnsNameProtection,
+  isEditablePhase,
   normalizeDnsName,
+  ownerOnlySettingReason,
   phaseProtection,
 } from './protected.js';
 
@@ -92,6 +99,96 @@ describe('the protected rule phases', () => {
     expect(PROTECTED_PHASES.map((entry) => entry.phase)).toEqual(['http_request_late_transform', 'http_ratelimit']);
     expect(phaseProtection('HTTP_RATELIMIT')).not.toBeNull();
     expect(phaseProtection('http_request_dynamic_redirect')).toBeNull();
+  });
+});
+
+describe('the allow-list of rule phases', () => {
+  it('names exactly the five phases that may be replaced, each with a plain description', () => {
+    expect(EDITABLE_PHASES.map((entry) => entry.phase)).toEqual([
+      'http_request_dynamic_redirect',
+      'http_request_transform',
+      'http_response_headers_transform',
+      'http_config_settings',
+      'http_request_firewall_custom',
+    ]);
+    for (const entry of EDITABLE_PHASES) {
+      expect(entry.description.length, entry.phase).toBeGreaterThan(20);
+      expect(isEditablePhase(entry.phase)).toBe(true);
+      expect(phaseProtection(entry.phase)).toBeNull();
+    }
+  });
+
+  it('never lists a Terraform phase as editable', () => {
+    for (const entry of PROTECTED_PHASES) expect(isEditablePhase(entry.phase), entry.phase).toBe(false);
+  });
+
+  it.each([
+    'http_request_origin',
+    'http_request_cache_settings',
+    'http_request_cloud_connector',
+    'http_request_snippets',
+    'http_request_firewall_managed',
+    'ddos_l7',
+    'http_request_something_new',
+    '',
+  ])('reads %j as read-only, with the sentence about traffic', (phase) => {
+    expect(isEditablePhase(phase)).toBe(false);
+    expect(phaseProtection(phase)).toBe(READ_ONLY_PHASE_REASON);
+  });
+
+  it('says why in plain words', () => {
+    expect(READ_ONLY_PHASE_REASON).toMatch(/can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard/);
+  });
+});
+
+describe('the owner-only settings', () => {
+  it('lists the five settings an agent key may not change, each with a reason telling the owner what to do', () => {
+    expect(OWNER_ONLY_SETTINGS.map((entry) => entry.setting)).toEqual(['ssl', 'min_tls_version', 'always_use_https', 'security_header', 'tls_client_auth']);
+    for (const entry of OWNER_ONLY_SETTINGS) {
+      expect(ownerOnlySettingReason(entry.setting)).toMatch(/Change it on the Cloudflare page yourself/);
+    }
+    expect(ownerOnlySettingReason('SSL')).not.toBeNull();
+    expect(ownerOnlySettingReason('brotli')).toBeNull();
+  });
+});
+
+describe('a name a caller sends', () => {
+  it.each([
+    ['@', ZONE_APEX],
+    ['blog', `blog.${ZONE_APEX}`],
+    ['Blog', `blog.${ZONE_APEX}`],
+    [ZONE_APEX, ZONE_APEX],
+    [`shop.${ZONE_APEX}`, `shop.${ZONE_APEX}`],
+    ['*', `*.${ZONE_APEX}`],
+    ['*.blog', `*.blog.${ZONE_APEX}`],
+    ['_dmarc', `_dmarc.${ZONE_APEX}`],
+  ])('reads %j as %j', (name, full) => {
+    expect(checkDnsName(name)).toEqual({ name: full });
+  });
+
+  it.each(['', '.', '..', '.blog', 'blog.', 'a..b', '@.blog', 'blog.@', 'a@b', 'blog.*', '*a', 'a.*.b', '**', 'a b', `${'a'.repeat(64)}`])(
+    'refuses %j with a sentence',
+    (name) => {
+      expect(checkDnsName(name).problem).toMatch(/\w/);
+    }
+  );
+
+  it('refuses a name longer than 253 characters in full', () => {
+    const long = Array.from({ length: 5 }, () => 'a'.repeat(50)).join('.');
+    expect(checkDnsName(long).problem).toMatch(/253/);
+  });
+});
+
+describe('wildcards', () => {
+  it('protects the zone-wide wildcard and any wildcard over a protected name', () => {
+    expect(dnsNameProtection('*')).toBe(APEX_WILDCARD_REASON);
+    expect(dnsNameProtection(`*.${ZONE_APEX}`)).toBe(APEX_WILDCARD_REASON);
+    for (const name of ['*.api-azure', '*.www', '*.docs', '*._acme-challenge', '*.lab', '*.x.lab', `*.asuid.api-azure.${ZONE_APEX}`]) {
+      expect(dnsNameProtection(name), name).not.toBeNull();
+    }
+    for (const name of ['*.blog', '*.shop.blog', `*.api-azure2.${ZONE_APEX}`]) {
+      expect(dnsNameProtection(name), name).toBeNull();
+    }
   });
 });
 
