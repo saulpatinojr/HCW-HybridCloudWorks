@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Zone WAF:Edit (the API rate limit), Account Rulesets:Read and (for the Web Analytics site) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1124,12 +1124,6 @@ variable "cloudflare_account_id" {
 # observed. The widening is accepted for this resource only: a Web Analytics
 # site holds no secret and serves no visitor-facing path, so the trade the
 # Turnstile note in frontend.tf refused still stands for anything that does.
-#
-# AND, SINCE #1903, ZONE WAF WRITE (the dashboard's Zone -> Zone WAF -> Edit).
-# cloudflare_ruleset.api_rate_limit (frontend.tf) is a zone rule in the
-# http_ratelimit phase, and Cloudflare's Terraform page lists Zone WAF Write
-# for it. It stays inside this zone, like Transform Rules:Edit. Without it
-# that one resource fails and everything else applies.
 variable "cloudflare_origin_secret" {
   description = "Shared secret Cloudflare injects as x-hcw-origin-secret; MUST equal the CF-ORIGIN-SECRET value in Key Vault"
   type        = string
@@ -1166,25 +1160,6 @@ variable "cloudflare_origin_secret" {
 
 variable "functions_origin_lock_enabled" {
   description = "Restrict the Function App to Cloudflare IP ranges. Requires cloudflare_origin_secret to match Key Vault"
-  type        = bool
-  default     = true
-}
-
-# The rate limit on the API (cloudflare_ruleset.api_rate_limit
-# in frontend.tf, #1903). false removes the rule in one apply, the rollback if
-# it ever blocks a legitimate caller. It needs Zone WAF Write on the token;
-# see the permission paragraph beside cloudflare_origin_secret.
-#
-# The plan check (tfc-plan-check.yml) reports that rollback's one delete,
-# cloudflare_ruleset.api_rate_limit[0], as UNEXPECTED, on purpose: a delete
-# is declared only for the run that makes it, never in advance, so a delete
-# nobody asked for can never pass quietly. Flipping this variable in the
-# workspace has no pull request, so the person rolling back reads that one
-# line as the expected result; a rollback made by pull request adds the
-# delete to DECLARED in scripts/assert-expected-plan.mjs, as any intended
-# change does.
-variable "api_rate_limit_enabled" {
-  description = "Rate-limit every /api/ path at Cloudflare (200 requests per 10 seconds per address, counted per Cloudflare data centre). Needs Zone WAF Write on cloudflare_api_token"
   type        = bool
   default     = true
 }

@@ -378,8 +378,8 @@ moved {
 #      this configuration holds no secret value anywhere, and that is the
 #      property worth keeping.
 #   2. It needs `account_id` and an account-level Turnstile permission.
-#      cloudflare_api_token is scoped to this zone (DNS, Transform Rules,
-#      Zone WAF and Rulesets:Read); widening the one production-DNS credential to account
+#      cloudflare_api_token is scoped to this zone (DNS, Transform Rules and
+#      Rulesets:Read); widening the one production-DNS credential to account
 #      scope for a resource created once is the wrong trade. (#1302 added
 #      Account Settings:Write to that token for the Web Analytics site at
 #      the end of this file, which holds no secret; reason 1 is what keeps
@@ -504,86 +504,6 @@ resource "cloudflare_ruleset" "origin_secret" {
             value     = var.cloudflare_origin_secret
           }
         }
-      }
-    }
-  ]
-}
-
-# =============================================================================
-# API rate limit at the edge (#1903)
-#
-# Before a request is signed in, the API compares anything that looks like an
-# agent key with each key's record: one Cosmos point read per key, uncounted,
-# because the per-minute limit belongs to a key and a made-up value has none.
-# Every admin route does this, whatever its path (the key-aware guard wraps
-# the default role guard, functions/src/lib/auth/default-guard.js), so the
-# rule counts every API path, not only /api/cms/. It stops a loop of made-up
-# keys at Cloudflare, before the function app or Cosmos does any work. The
-# origin lock above means every request to the API comes through Cloudflare,
-# so nothing can go around it.
-#
-# FREE PLAN LIMITS (https://developers.cloudflare.com/waf/rate-limiting-rules/,
-# read 2026-11-26): one rule per zone, the expression may use the path only
-# (no host), counting is per IP over 10 seconds, and the block lasts 10
-# seconds. A regex (`matches`) needs the Business plan, so the rule uses
-# `contains`. The path is lowered first because the Functions host matches
-# routes regardless of case, so `/API/...` must count too. Two hosts are
-# proxied in this zone, api-azure and notes (Obsidian Publish); the apex and
-# www are DNS-only. A path containing /api/ is the API in practice, and at
-# this limit a notes visitor would never meet it.
-#
-# THE LIMIT: 200 requests per 10 seconds from one address, about twenty a
-# second. It sits above everything legitimate, so signed-in use and real keys
-# never meet it: an agent key is held to 120 a minute by the app itself
-# (REQUESTS_PER_MINUTE in functions/src/lib/agent-content/keys.js), so even a
-# key spending its whole minute in one burst stays under 200; the busiest
-# admin moment found is Health -> "Run all", 30 to 40 calls at once; polling
-# is every 5 seconds at fastest. A caller over the limit gets Cloudflare's 429
-# for 10 seconds. A made-up key costs two point reads, so the most one address
-# can make the app spend is about 40 small reads a second, instead of as many
-# as it can send.
-#
-# COUNTED PER DATA CENTRE, NOT GLOBALLY. cf.colo.id is mandatory in the
-# characteristics, so the count is per address at each Cloudflare data
-# centre: an address whose traffic lands on two data centres gets a window at
-# each. That is the Free plan's design and it is enough here: the aim is to
-# bound a loop, not to give an exact global figure.
-#
-# ONE RULE PER ZONE. If a rate limiting rule was ever made by hand in the
-# dashboard (Security -> WAF -> Rate limiting rules), this create fails until
-# that one is deleted there. None is recorded anywhere in this repository.
-#
-# THE TOKEN NEEDS Zone WAF Write (the dashboard's Zone -> Zone WAF -> Edit),
-# the permission Cloudflare's Terraform page lists for a zone rate limiting
-# rule (https://developers.cloudflare.com/terraform/additional-configurations/rate-limiting-rules/).
-# Without it this resource alone fails to apply. The permission paragraph
-# beside cloudflare_origin_secret in variables.tf carries the full list.
-#
-# Set api_rate_limit_enabled to false to remove the rule in one step.
-# =============================================================================
-resource "cloudflare_ruleset" "api_rate_limit" {
-  count = var.api_rate_limit_enabled ? 1 : 0
-
-  zone_id = var.cloudflare_zone_id
-  name    = "Rate limit for the API"
-  kind    = "zone"
-  phase   = "http_ratelimit"
-
-  rules = [
-    {
-      ref         = "api_key_paths_per_ip"
-      description = "Block an address sending more than 200 requests in 10 seconds to the API (counted per Cloudflare data centre)"
-      enabled     = true
-      action      = "block"
-      expression  = "(lower(http.request.uri.path) contains \"/api/\")"
-
-      ratelimit = {
-        # cf.colo.id is mandatory beside ip.src: Cloudflare counts per data
-        # centre (https://developers.cloudflare.com/waf/rate-limiting-rules/parameters/).
-        characteristics     = ["cf.colo.id", "ip.src"]
-        period              = 10
-        requests_per_period = 200
-        mitigation_timeout  = 10
       }
     }
   ]
