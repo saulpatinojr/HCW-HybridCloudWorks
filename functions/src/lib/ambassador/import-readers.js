@@ -5,6 +5,7 @@
  * source said at link time.
  */
 import { isHttpUrl, toCalendarDate } from './model.js';
+import { SQL_NOT_SOFT_DELETED, SQL_PUBLIC_CLAUSE, isPublicDocument } from '../public-read-rules.js';
 import { parseCsv } from './csv.js';
 
 export { parseCsv } from './csv.js';
@@ -27,8 +28,9 @@ const NO_METRICS = () => ({ reach: null, attendees: null, views: null, credits: 
 /** The live-content predicate public-reads.js uses, so an import offers only what visitors can see. */
 const LIVE_CONTENT_QUERY =
   'SELECT TOP 500 c.id, c.title, c.Title, c.publishedAt, c.publishedDate, c.cp_sortDate, c.publishedUrl, c.publicUrl, c.slugPageUrl, c.curatedSubpagePath, c.cloudProvider, c.type FROM c ' +
-  'WHERE (c.Live = true OR c.Status = "Live" OR c.contentStatus = "published") ' +
-  'AND (NOT IS_DEFINED(c.softDeletedAt) OR IS_NULL(c.softDeletedAt) OR c.softDeletedAt = "" OR c.softDeletedAt = false)';
+  // What visitors can open is what can be recorded (#1897): the public
+  // site's own clauses, not a copy of them.
+  `WHERE ${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED}`;
 
 /**
  * LIVE_CONTENT_QUERY's test, for one document read by id: the import may
@@ -36,9 +38,9 @@ const LIVE_CONTENT_QUERY =
  * naming an unpublished id was filed as evidence).
  */
 export function isLiveContent(doc) {
-  const live = doc?.Live === true || doc?.Status === 'Live' || doc?.contentStatus === 'published';
-  const deleted = ![undefined, null, '', false].includes(doc?.softDeletedAt);
-  return live && !deleted;
+  // The public site's rule (public-read-rules.js), so a piece can be recorded
+  // exactly when a visitor can open it (#1897).
+  return isPublicDocument(doc || null);
 }
 
 function speakingToEvidence(doc) {
