@@ -41,14 +41,18 @@ describe('the next-step list', () => {
 });
 
 describe('nextStepFor', () => {
+  it('links a live Ambassador piece to its program', () => {
+    const ref = { page: 'ambassador', id: 'program-example' };
+    const step = nextStepFor(live(ref.page, ref.id));
+    expect(step).toMatchObject({ page: 'ambassador', label: 'Open the program' });
+    expect(step.href).toBe(ORIGIN_RECORD_PATHS.ambassador(ref));
+  });
+
   it.each([
-    ['ambassador', 'program-example', 'File as evidence'],
-    ['speaking', 'talk-example', 'Back to the talk'],
-    ['certifications', 'cert-example', 'Back to the certification'],
-  ])('links a live %s piece to its record', (page, id, label) => {
-    const step = nextStepFor(live(page, id));
-    expect(step).toMatchObject({ page, label });
-    expect(step.href).toBe(ORIGIN_RECORD_PATHS[page]({ page, id }));
+    ['speaking', 'talk-example'],
+    ['certifications', 'cert-example'],
+  ])('offers nothing for a live %s piece, whose chip already links back', (page, id) => {
+    expect(nextStepFor(live(page, id))).toBeNull();
   });
 
   it('opens the program details for an Ambassador piece, where filing happens', () => {
@@ -67,7 +71,10 @@ describe('nextStepFor', () => {
   });
 
   it('offers nothing for a deleted piece', () => {
-    const item = { ...live('speaking', 'talk-example'), softDeletedAt: '2026-11-20T00:00:00.000Z' };
+    const item = {
+      ...live('ambassador', 'program-example'),
+      softDeletedAt: '2026-11-20T00:00:00.000Z',
+    };
     expect(nextStepFor(item)).toBeNull();
   });
 

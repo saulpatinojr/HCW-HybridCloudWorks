@@ -49,10 +49,8 @@ export function evidenceStateByContent(evidenceRows, programId) {
 /**
  * Whether a piece can be filed: the one live rule (lib/nextSteps.js), the
  * same test the server's import applies, so the button shows exactly when
- * the import would accept the piece (reviews of #1891). Re-exported for the
- * Page's own callers.
+ * the import would accept the piece (reviews of #1891).
  */
-export { isLivePiece };
 
 /** The program's reference, as the hand-off sends it. */
 export const programRef = (program) => ({ page: AMBASSADOR_PAGE, id: program.id });

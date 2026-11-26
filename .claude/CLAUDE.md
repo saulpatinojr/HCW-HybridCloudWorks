@@ -522,10 +522,12 @@ and under a saved certification's editor, with "Draft a piece" and the
 record's pieces; both Pages are in `ORIGIN_PAGES` behind the Spotlight switch,
 and `?talk=` and `?certification=` open the record the chip links back to.
 Phase 4 built the next step: once a piece another Page sent is live, a link
-beside its "sent from" chip offers that Page's follow-up ("File as evidence",
-which opens the program's details where the piece is filed; "Back to the
-talk"; "Back to the certification"), from one list (`NEXT_STEPS`) and one
-live rule (`isLivePiece`). The second way, related items, is met by what
+beside its "sent from" chip offers that Page's follow-up ("Open the
+program" for Ambassador, which opens the program's details where the piece is
+recorded as evidence), from one list (`NEXT_STEPS`) and one live rule
+(`isLivePiece`). Speaking and Certifications are in `NO_NEXT_STEP`: once
+their piece is live nothing is left to do on the record, and a link to the
+same place as the "sent from" chip would save nothing. The second way, related items, is met by what
 already exists: each Page lists its pieces, each piece names the Page and
 record it came from, and Ambassador's evidence links published pieces to
 programs. No separate "related" panels were added, because they would save

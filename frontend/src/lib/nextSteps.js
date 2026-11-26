@@ -3,8 +3,8 @@
  *
  * A piece another admin Page sent into the Pipeline carries `originRef`
  * (lib/pageLinks.js). Once it is live, the Pipeline offers the natural next
- * Page for it: the program it was written for, to file it as evidence; the
- * talk or certification it was written about. The link only opens that Page
+ * Page for it: today, the program it was written for, where it is recorded as
+ * evidence. The link only opens that Page
  * at the record; the Page does the work itself (one engine per kind of work),
  * so nothing here creates, files or stores anything.
  *
@@ -22,25 +22,25 @@ import { originLink } from '@/lib/pageLinks';
  *   hint   its tooltip: where it goes and what the owner does there
  */
 export const NEXT_STEPS = Object.freeze({
+  // Worded for every case: the piece may be filed already, or under another
+  // program, and the Pipeline cannot tell which (review of #1886 phase 4).
   ambassador: Object.freeze({
-    label: 'File as evidence',
-    hint: 'Opens the program on Ambassador, where a published piece is recorded as evidence.',
-  }),
-  speaking: Object.freeze({
-    label: 'Back to the talk',
-    hint: 'Opens the talk on Speaking, where the pieces written for it are listed.',
-  }),
-  certifications: Object.freeze({
-    label: 'Back to the certification',
-    hint: 'Opens the certification, where the pieces written for it are listed.',
+    label: 'Open the program',
+    hint: 'Opens the program on Ambassador: record this published piece as evidence there, if it is not recorded yet.',
   }),
 });
 
 /**
- * Sending Pages that deliberately offer no next step, with the reason. Empty
- * today: every Page that sends work has one.
+ * Sending Pages that deliberately offer no next step, with the reason. A step
+ * that only opens the record would repeat the "sent from" chip beside it and
+ * save the owner nothing (CLAUDE.md: join only where it helps the owner).
  */
-export const NO_NEXT_STEP = Object.freeze({});
+export const NO_NEXT_STEP = Object.freeze({
+  speaking:
+    'Nothing is left to do on the talk once its piece is live; the "sent from" chip already links back to it.',
+  certifications:
+    'Nothing is left to do on the certification once its piece is live; the "sent from" chip already links back to it.',
+});
 
 /**
  * Whether a piece is live, as the Pipeline's next step reads it. The same
