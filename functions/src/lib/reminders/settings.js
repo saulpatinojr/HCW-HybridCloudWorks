@@ -165,9 +165,33 @@ export const isCredentialRow = (row) =>
  * entry here plus its sync in REMINDER_PROVIDERS (reminders/providers.js).
  */
 export const PROVIDED_ROWS = Object.freeze([
-  Object.freeze({ prefix: CREDENTIAL_ROW_PREFIX, reserved: REGISTER_RESERVED_ROWS, keeper: 'the credential register' }),
-  Object.freeze({ prefix: 'ambassador-', reserved: 20, keeper: 'Ambassador' }),
+  Object.freeze({
+    prefix: CREDENTIAL_ROW_PREFIX,
+    reserved: REGISTER_RESERVED_ROWS,
+    keeper: 'the credential register',
+    agentSection: 'admin.platform',
+    ownDashboardSource: false,
+  }),
+  Object.freeze({
+    prefix: 'ambassador-',
+    reserved: 20,
+    keeper: 'Ambassador',
+    agentSection: 'admin.spotlight',
+    ownDashboardSource: true,
+  }),
 ]);
+
+/*
+ * Each provider also names:
+ *   agentSection        the agent key's switch for the Page the rows come
+ *                       from. While it is off, the key's reads of the sheet
+ *                       and of the alert log leave the rows out
+ *                       (reminders/agent-visibility.js), because a row names
+ *                       a record on that Page.
+ *   ownDashboardSource  true when the Page already puts the same items on the
+ *                       Dashboard itself, so the reminders source there skips
+ *                       the rows instead of listing each item twice.
+ */
 
 /** The rows kept for every provider together. */
 export const PROVIDED_RESERVED_ROWS = PROVIDED_ROWS.reduce((sum, provider) => sum + provider.reserved, 0);

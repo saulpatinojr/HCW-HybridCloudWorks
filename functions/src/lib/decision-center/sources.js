@@ -29,7 +29,7 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { isContainerMissing } from '../calendar/collectors.js';
 import { getWorkflowAlertStatus } from '../ops-health.js';
 import { splitUnresolved, unresolvedSecretNames } from '../secrets-health.js';
-import { REMINDERS_CONFIG_ID, dateOnly, daysUntil, readStoredReminders } from '../reminders/settings.js';
+import { PROVIDED_ROWS, REMINDERS_CONFIG_ID, dateOnly, daysUntil, readStoredReminders } from '../reminders/settings.js';
 import { STATUS as PODCAST_STATUS, TRANSCRIPT_CONTAINER } from '../podcast/store.js';
 import { EPISODE_CONTAINER, STATUS as CHAPTER_STATUS } from '../listen-and-learn/publish.js';
 import { isSoftDeleted } from '../listen-and-learn/handlers-shared.js';
@@ -395,6 +395,10 @@ const cost = Object.freeze({
 
 // ── reminders ────────────────────────────────────────────────────────────────
 
+const OWN_SOURCE_PREFIXES = PROVIDED_ROWS.filter((p) => p.ownDashboardSource).map((p) => p.prefix);
+const hasOwnDashboardSource = (reminder) =>
+  typeof reminder?.id === 'string' && OWN_SOURCE_PREFIXES.some((prefix) => reminder.id.startsWith(prefix));
+
 /** Due today or overdue and not done: the reminders the daily Telegram check is saying now. */
 const reminders = Object.freeze({
   id: 'reminders',
@@ -405,7 +409,10 @@ const reminders = Object.freeze({
     const doc = await store.readDoc('admin_config', REMINDERS_CONFIG_ID, ADMIN_CONFIG_PARTITION);
     const today = dateOnly(now());
     const items = readStoredReminders(doc)
-      .reminders.map((reminder) => ({ reminder, days: daysUntil(reminder.dueDate, today) }))
+      // Rows a Page keeps for items it already lists here itself (Ambassador's)
+      // are skipped, so one date is not shown twice.
+      .reminders.filter((reminder) => !hasOwnDashboardSource(reminder))
+      .map((reminder) => ({ reminder, days: daysUntil(reminder.dueDate, today) }))
       .filter(({ reminder, days }) => !reminder.done && days !== null && days <= 0)
       .map(({ reminder, days }) =>
         decisionItem({

@@ -31,6 +31,7 @@ import {
   satisfiesIfMatch,
 } from './platform-settings.js';
 import { pickDefaultHero, DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
+import { AGENT_USER, KEY_RECORD_ID } from './agent-content/keys.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
 import {
   MAIN_FEED_PROVIDER,
@@ -1926,5 +1927,35 @@ describe('change history', () => {
       setting: 'podcast-feeds',
       summary: { feeds: 0, mainFeed: false },
     });
+  });
+});
+
+describe('the reminders sheet as the agent key reads it (#1886)', () => {
+  const SHEET = {
+    id: 'reminders',
+    reminders: [
+      { id: 'my-own-row', title: 'Own', dueDate: '2026-12-01', leadDays: 7 },
+      { id: 'ambassador-0123456789abcdef', title: 'Submit: Example Program', dueDate: '2026-12-10', leadDays: 14 },
+    ],
+  };
+  const storeFor = (spotlight) =>
+    makeStore({
+      readDoc: vi.fn(async (_c, id) =>
+        id === KEY_RECORD_ID ? { id, capabilities: { 'admin.spotlight': spotlight } } : structuredClone(SHEET)
+      ),
+    });
+  const as = (user) => ({ requireRole: vi.fn(async () => ({ user, role: 'editor', error: null })) });
+  const rowIds = async (user, spotlight) =>
+    parse(
+      await createPlatformSettingsHandlers({ guard: as(user), store: storeFor(spotlight), ...fixed }).getSetting(
+        makeRequest({ params: { setting: 'reminders' } }),
+        context
+      )
+    ).value.reminders.map((row) => row.id);
+
+  it('leaves out the rows of a Page whose switch is off on the key, and nothing for a person', async () => {
+    expect(await rowIds(AGENT_USER, false)).toEqual(['my-own-row']);
+    expect(await rowIds(AGENT_USER, true)).toEqual(['my-own-row', 'ambassador-0123456789abcdef']);
+    expect(await rowIds({ oid: 'u1' }, false)).toEqual(['my-own-row', 'ambassador-0123456789abcdef']);
   });
 });

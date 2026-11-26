@@ -34,15 +34,17 @@
  * Each reminder is its own notifier source (`reminder:<id>`), so the
  * notifier's fifteen-minute cooldown never lets one reminder silence another.
  *
- * Since #1026 a run first brings the credential register's rows in line
- * (`syncCredentials`, lib/credentials/reminders.js): a Key Vault secret
- * rotated on the Keys tab since yesterday has moved its reminder before
- * anything is said, so no message is built from a stale due date. A sync
- * that fails is a warning and the run goes on with the sheet as it stands.
+ * A run first brings every row provider's rows in line (`syncProviders`,
+ * lib/reminders/providers.js; the credential register since #1026, and
+ * Ambassador since #1886): a Key Vault secret rotated on the Keys tab since
+ * yesterday has moved its reminder before anything is said, so no message
+ * is built from a stale due date. A sync that fails is a warning and the
+ * run goes on with the sheet as it stands.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { dateOnly, daysUntil, stageDue } from '../reminders/calendar.js';
 import {
+  PROVIDED_ROWS,
   REMINDERS_CONFIG_ID,
   RemindersValidationError,
   mergeStamps,
@@ -66,6 +68,22 @@ export function describeDistance(days) {
 }
 
 /** The Telegram text for one reminder at one stage. */
+/**
+ * The message's last line. A kept row (PROVIDED_ROWS) cannot be marked done
+ * on the sheet, so it says where it goes away instead.
+ */
+function closingLine(reminder, stage) {
+  const provider = PROVIDED_ROWS.find(({ prefix }) => reminder.id?.startsWith(prefix));
+  if (provider) {
+    return stage === 'overdue'
+      ? `Said again weekly until it is handled in ${provider.keeper}, which keeps this reminder.`
+      : `Kept by ${provider.keeper}: it goes once it is handled there.`;
+  }
+  return stage === 'overdue'
+    ? 'Said again weekly until it is marked done on Platform Settings → Reminders.'
+    : 'Mark it done on Platform Settings → Reminders once it is handled.';
+}
+
 export function reminderMessage(reminder, stage, today) {
   const days = daysUntil(reminder.dueDate, today);
   const lines = [`Due ${reminder.dueDate} (${describeDistance(days)}).`];
@@ -77,12 +95,7 @@ export function reminderMessage(reminder, stage, today) {
     lines.push('', notes);
   }
   if (reminder.url) lines.push('', reminder.url);
-  lines.push(
-    '',
-    stage === 'overdue'
-      ? 'Said again weekly until it is marked done on Platform Settings → Reminders.'
-      : 'Mark it done on Platform Settings → Reminders once it is handled.'
-  );
+  lines.push('', closingLine(reminder, stage));
   return { title: `${TITLE_PREFIX[stage]}: ${reminder.title}`, message: lines.join('\n') };
 }
 
@@ -190,28 +203,10 @@ async function sayDue(deps, reminders, today, at) {
 }
 
 /**
- * The credential rows first; a failure is said and never stops the run. The
- * line carries a reason or an error code, never the store's message, which
- * can name a document.
- */
-async function syncFirst(syncCredentials, at, log) {
-  try {
-    const summary = await syncCredentials(at);
-    if (summary && !summary.synced) {
-      log.warn?.(`[sendReminders] credential reminders not synced (${summary.reason || 'unknown'})`);
-    }
-  } catch (error) {
-    log.warn?.(`[sendReminders] credential reminders sync threw (${error?.code ?? 'error'})`);
-  }
-}
-
-/**
  * @param {object} deps
  * @param {{ readDoc: Function, replaceDocIfMatch: Function }} deps.store
  * @param {{ notifyTelegram: Function }|null} [deps.notifier]
  * @param {() => Date} [deps.now]
- * @param {((at: Date) => Promise<{ synced: boolean, reason?: string }>)|null} [deps.syncCredentials]
- *        the credential register's sync, run before the sheet is read
  * @param {((at: Date) => Promise<unknown>)|null} [deps.syncProviders]
  *        every row provider's sync (reminders/providers.js, #1886), run before
  *        the sheet is read; it says its own failures and never throws
@@ -221,13 +216,11 @@ export function createReminderCheck({
   notifier = null,
   now = () => new Date(),
   log = {},
-  syncCredentials = null,
   syncProviders = null,
 }) {
   async function run() {
     const at = now();
     const today = dateOnly(at);
-    if (syncCredentials) await syncFirst(syncCredentials, at, log);
     if (syncProviders) await syncProviders(at);
     const doc = await store.readDoc('admin_config', REMINDERS_CONFIG_ID, ADMIN_CONFIG_PARTITION);
     if (!doc) return { checked: 0, sent: 0 };

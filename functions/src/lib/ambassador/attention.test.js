@@ -50,13 +50,13 @@ describe("upkeep: a held membership whose activity requirement is not yet met", 
       expect.objectContaining({
         key: "program-example:upkeep:2026-10-01",
         kind: "upkeep",
-        title: "Example Program: Q4 2026 activity (1 of 2 recorded)",
+        title: "Example Program: Q4 2026 activity requirement not yet met",
         due: "2026-12-31",
         leadDays: 45,
         daysLeft: 36,
         href: "/admin/ambassador?tab=programs&program=program-example",
         detail:
-          "Activity requirement not yet met for Q4 2026; the period ends 2026-12-31",
+          "1 of 2 recorded for Q4 2026; the period ends 2026-12-31",
       }),
     ]);
     expect(isDueSoon(items[0])).toBe(true);
@@ -84,7 +84,7 @@ describe("upkeep: a held membership whose activity requirement is not yet met", 
       ],
       today: TODAY,
     });
-    expect(items[0].title).toContain("0 of 2");
+    expect(items[0].detail).toContain("0 of 2");
   });
 
   it("is not asked of a membership that is not held, a disabled or a deleted program", () => {

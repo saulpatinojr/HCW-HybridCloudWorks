@@ -12,6 +12,7 @@ import {
   reminderMessage,
 } from './reminders.js';
 import { REMINDERS_CONFIG_ID } from '../reminders/settings.js';
+import { syncReminderProviders } from '../reminders/providers.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { formatTelegramText } from '../notify.js';
 
@@ -269,7 +270,7 @@ describe('createReminderCheck', () => {
   });
 });
 
-describe('the credential register’s rows (#1026)', () => {
+describe('the row providers run first (#1026, #1886)', () => {
   it('syncs them first, at the run’s own time, then reads the sheet the sync left', async () => {
     const order = [];
     const s = {
@@ -279,32 +280,44 @@ describe('the credential register’s rows (#1026)', () => {
       }),
       replaceDocIfMatch: vi.fn(async (_c, d) => d),
     };
-    const syncCredentials = vi.fn(async () => {
+    const syncProviders = vi.fn(async () => {
       order.push('sync');
-      return { synced: true, changed: true, reminders: 1 };
     });
-    const result = await createReminderCheck({ store: s, notifier: sending(), now, syncCredentials }).run();
+    const result = await createReminderCheck({ store: s, notifier: sending(), now, syncProviders }).run();
     expect(order).toEqual(['sync', 'read']);
-    expect(syncCredentials).toHaveBeenCalledWith(NOW);
+    expect(syncProviders).toHaveBeenCalledWith(NOW);
     expect(result).toMatchObject({ checked: 1, sent: 1 });
   });
 
-  it('goes on with the sheet as it stands when the sync throws, and says so', async () => {
+  it('goes on with the sheet as it stands when a provider throws or declines, and says so', async () => {
     const s = store(doc([{ id: 'x', title: 'T', dueDate: '2026-12-28' }]));
     const log = { warn: vi.fn(), log: vi.fn() };
-    const syncCredentials = vi.fn(async () => {
-      throw Object.assign(new Error('Entity admin_config/reminders is unavailable'), { code: 503 });
-    });
-    const result = await createReminderCheck({ store: s, notifier: sending(), now, log, syncCredentials }).run();
+    const providers = [
+      {
+        id: 'credentials',
+        sync: vi.fn(async () => {
+          throw Object.assign(new Error('Entity admin_config/reminders is unavailable'), { code: 503 });
+        }),
+      },
+      { id: 'ambassador', sync: vi.fn(async () => ({ synced: false, reason: 'truncated' })) },
+    ];
+    const syncProviders = (at) => syncReminderProviders({ store: s, at, log, providers });
+    const result = await createReminderCheck({ store: s, notifier: sending(), now, log, syncProviders }).run();
     expect(result).toMatchObject({ checked: 1, sent: 1 });
-    // The code, never the store's sentence, which names a document.
-    expect(log.warn.mock.calls[0][0]).toBe('[sendReminders] credential reminders sync threw (503)');
+    // The code or reason, never the store's sentence, which names a document.
+    expect(log.warn.mock.calls.map(([line]) => line)).toEqual([
+      '[sendReminders] credentials reminders sync threw (503)',
+      '[sendReminders] ambassador reminders not synced (truncated)',
+    ]);
   });
+});
 
-  it('says when the sync declined, with its reason and nothing else', async () => {
-    const log = { warn: vi.fn(), log: vi.fn() };
-    const syncCredentials = vi.fn(async () => ({ synced: false, reason: 'invalid' }));
-    await createReminderCheck({ store: store(doc([])), notifier: sending(), now, log, syncCredentials }).run();
-    expect(log.warn.mock.calls[0][0]).toBe('[sendReminders] credential reminders not synced (invalid)');
+describe('a kept row says where it goes away, not "mark it done" (#1886)', () => {
+  it('names the keeper for a kept row and keeps the sheet line for the owner’s own', () => {
+    const kept = { id: 'ambassador-0123456789abcdef', title: 'Submit: Example Program', dueDate: '2026-12-10' };
+    expect(reminderMessage(kept, 'ahead', '2026-12-01').message).toMatch(/Kept by Ambassador: it goes once it is handled there\.$/);
+    expect(reminderMessage(kept, 'overdue', '2026-12-20').message).toMatch(/until it is handled in Ambassador/);
+    const own = { id: 'my-own-row', title: 'Own', dueDate: '2026-12-10' };
+    expect(reminderMessage(own, 'ahead', '2026-12-01').message).toMatch(/Mark it done on Platform Settings/);
   });
 });

@@ -109,11 +109,13 @@ const FULL = {
       { id: 'r-today', title: 'Re-verify', dueDate: '2026-10-08', leadDays: 7 },
       { id: 'r-later', title: 'Later', dueDate: '2026-10-20', leadDays: 7 },
       { id: 'r-done', title: 'Done', dueDate: '2026-09-01', leadDays: 7, done: true },
+      // Kept by Ambassador, which lists the same date on the Dashboard itself.
+      { id: 'ambassador-0123456789abcdef', title: 'Submit: Example Program', dueDate: '2026-10-01', leadDays: 7 },
     ],
   },
   ambassador: [
-    { id: 'app1', programName: 'MVP', status: 'preparing', submissionDeadline: '2026-10-10' },
-    { id: 'app2', programName: 'Hero', status: 'active', renewalDate: '2026-12-31' },
+    { id: 'app1', programName: 'Example Program', status: 'preparing', submissionDeadline: '2026-10-10' },
+    { id: 'app2', programName: 'Second Program', status: 'active', renewalDate: '2026-12-31' },
   ],
 };
 
@@ -203,6 +205,7 @@ describe('collectDecisions — categories and order', () => {
     expect(found).toContain('alert:a3');
     expect(found).not.toContain('reminder:r-later');
     expect(found).not.toContain('reminder:r-done');
+    expect(found).not.toContain('reminder:ambassador-0123456789abcdef');
     expect(found).not.toContain('ambassador:app2:renewalDate');
   });
 

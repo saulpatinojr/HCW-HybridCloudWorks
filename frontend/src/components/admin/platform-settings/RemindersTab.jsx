@@ -292,7 +292,7 @@ export const ROW_KEEPERS = Object.freeze([
     prefix: 'ambassador-',
     label: 'Ambassador',
     href: '/admin/ambassador',
-    how: 'It moves with the deadline, and goes once the period’s activity requirement is met',
+    how: 'It moves with the deadline, and goes once the application moves on or the period’s activity requirement is met',
   }),
 ]);
 

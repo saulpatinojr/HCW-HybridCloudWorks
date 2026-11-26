@@ -14,9 +14,11 @@
  *             (Settings tab; defaults 14 and 30).
  *   upkeep    a held membership whose upkeep rule is not met yet for the
  *             current period (for example, two published pieces a quarter). Due on the
- *             period's last day, said from `daysBeforeRenewal`, because
- *             keeping a membership is its renewal. It disappears as soon as
- *             the requirement is met.
+ *             period's last day, said from `daysBeforeRenewal`, the program's
+ *             longer lead time. It disappears as soon as the requirement is
+ *             met. The title stays the same while the count changes (the
+ *             count is in `detail`), so a reminder already sent is not sent
+ *             again for each new piece.
  *
  * Pure: the caller reads the records. Deleted records are skipped here, so a
  * caller cannot forget to.
@@ -133,12 +135,12 @@ export function ambassadorAttention({
       kind: "upkeep",
       programId: program.id,
       recordId: program.id,
-      title: `${program.name}: ${current.label} activity (${current.count} of ${minCount} recorded)`,
+      title: `${program.name}: ${current.label} activity requirement not yet met`,
       due: current.end,
       leadDays: leadDays(program, "renewal"),
       daysLeft: current.daysLeft,
       href: ambassadorProgramHref(program.id),
-      detail: `Activity requirement not yet met for ${current.label}; the period ends ${current.end}`,
+      detail: `${current.count} of ${minCount} recorded for ${current.label}; the period ends ${current.end}`,
     });
   }
   return items;

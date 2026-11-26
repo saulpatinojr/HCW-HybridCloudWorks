@@ -57,13 +57,15 @@ export const isAmbassadorRow = (row) =>
 export function wantedAmbassadorRows(items) {
   return items
     .filter(
-      (item) => item.daysLeft === null || item.daysLeft >= -OVERDUE_DROP_DAYS,
+      (item) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(item.due ?? "") &&
+        (item.daysLeft === null || item.daysLeft >= -OVERDUE_DROP_DAYS),
     )
     .sort((a, b) => a.due.localeCompare(b.due) || a.key.localeCompare(b.key))
     .slice(0, MAX_AMBASSADOR_ROWS)
     .map((item) => ({
       id: ambassadorRowId(item.key),
-      title: clip(item.title, MAX_TITLE_LENGTH),
+      title: clip(item.title.trim(), MAX_TITLE_LENGTH),
       dueDate: item.due,
       leadDays: Math.min(item.leadDays, MAX_LEAD_DAYS),
       notes: clip(

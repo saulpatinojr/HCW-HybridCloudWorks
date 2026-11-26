@@ -86,8 +86,10 @@ trips. The session is the orchestrator of a team of agents and does the work.
   ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)),
   the third on 2026-11-22 on the App's
   [`Protect main` ruleset](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/rules/25778324),
-  and the fourth on 2026-11-23 while cutting the App's
-  [v0.4.3 release](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/releases/tag/v0.4.3).
+  the fourth on 2026-11-23 while cutting the App's
+  [v0.4.3 release](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/releases/tag/v0.4.3),
+  and the fifth on 2026-11-25 while cleaning up a closed pull request's
+  branch.
   - **GraphQL is refused.** GraphQL is GitHub's second API, which many `gh`
     commands use under the hood; `gh api graphql`, `gh pr view --json` and
     `gh pr list` were all refused with HTTP 403 (not allowed) "GitHub
@@ -497,7 +499,7 @@ stays in code; the owner does not want it editable from the portal.
 | Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
 | Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
-| Telegram reminders | A row provider: an entry in `REMINDER_PROVIDERS`, its id prefix and reserved rows in `PROVIDED_ROWS`, the same prefix in the Reminders tab's `ROW_KEEPERS` (a test holds the two lists together), and a sync built on `syncProvidedRows`, which keeps the timer's stamps, writes under `ifMatch` and never lets an editor's save change a kept row. Today: the credential register and Ambassador | `functions/src/lib/reminders/providers.js`, `functions/src/lib/reminders/provided-rows.js`, `functions/src/lib/reminders/settings.js`, `frontend/src/components/admin/platform-settings/RemindersTab.jsx` |
+| Telegram reminders | A row provider: an entry in `REMINDER_PROVIDERS`, its id prefix and reserved rows in `PROVIDED_ROWS`, the same prefix in the Reminders tab's `ROW_KEEPERS` (a test holds the two lists together), and a sync built on `syncProvidedRows`, which keeps the timer's stamps, writes under `ifMatch` and never lets an editor's save change a kept row. Each `PROVIDED_ROWS` entry also names its `agentSection` (an agent key with that switch off does not see the rows, or the alerts sent for them, `reminders/agent-visibility.js`) and `ownDashboardSource` (true when the Page lists the same items on the Dashboard itself, so the reminders source skips them). Today: the credential register and Ambassador | `functions/src/lib/reminders/providers.js`, `functions/src/lib/reminders/provided-rows.js`, `functions/src/lib/reminders/settings.js`, `frontend/src/components/admin/platform-settings/RemindersTab.jsx` |
 | What a Page needs from the owner, worked out once | One pure function that turns the Page's records into dated items, read by both its Dashboard source and its reminder rows, so the two cannot disagree (Ambassador's is `ambassadorAttention`) | `functions/src/lib/ambassador/attention.js` |
 | Telegram alerts | `createNotifier().notifyTelegram` with a `source` per thing, so its 15-minute cooldown is per thing | `functions/src/lib/notify.js` |
 | Background work | A job type through `registerJobType` | `functions/src/lib/job-model.js` |

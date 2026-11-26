@@ -89,6 +89,12 @@ describe("wantedAmbassadorRows", () => {
     expect(rows[0].dueDate).toBe("2027-01-01");
   });
 
+  it("leaves out an item without a whole date, and trims a title", () => {
+    expect(wantedAmbassadorRows([item({ due: "2026-12" })])).toEqual([]);
+    const [row] = wantedAmbassadorRows([item({ title: "  Submit: Second Program " })]);
+    expect(row.title).toBe("Submit: Second Program");
+  });
+
   it("gives an item the same id every day, so the timer's stamps are kept", () => {
     expect(ambassadorRowId("x")).toBe(ambassadorRowId("x"));
     expect(ambassadorRowId("x")).not.toBe(ambassadorRowId("y"));
@@ -118,7 +124,7 @@ describe("syncAmbassadorReminders", () => {
     const [kept, row] = store.doc.reminders;
     expect(kept).toEqual(own);
     expect(row.title).toBe(
-      "Example Program: Q4 2026 activity (0 of 2 recorded)",
+      "Example Program: Q4 2026 activity requirement not yet met",
     );
 
     // The timer says the "ahead" stage and stamps it; the next sync keeps it.
