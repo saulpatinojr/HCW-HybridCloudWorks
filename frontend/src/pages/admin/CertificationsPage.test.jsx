@@ -20,6 +20,7 @@ const postJSON = vi.fn();
 const sendJSON = vi.fn();
 const fetchPublicSnapshot = vi.fn();
 const setSearchParams = vi.fn();
+const navigate = vi.fn();
 let searchParams = '';
 
 vi.mock('@/lib/api', () => ({
@@ -36,6 +37,13 @@ vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
   // The header reads the route for its title (the registry's label).
   useLocation: () => ({ pathname: '/admin/certifications', search: '' }),
+  // The editor's "In the pipeline" box links its pieces and opens a new draft.
+  useNavigate: () => navigate,
+  Link: ({ to, children, ...rest }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString();
@@ -88,8 +96,10 @@ afterEach(() => {
 beforeEach(() => {
   searchParams = '';
   setSearchParams.mockReset();
+  navigate.mockReset();
   getJSON.mockReset().mockImplementation(async (route) => {
     if (route === 'cms/certifications') return { items: ITEMS };
+    if (route.startsWith('cms/content?')) return { success: true, items: [] };
     throw new Error(`unexpected route ${route}`);
   });
   postJSON.mockReset();
@@ -222,6 +232,81 @@ describe('Catalog', () => {
     fireEvent.click(within(cardFor('Azure Administrator')).getByRole('button', { name: /Edit/ }));
     expect(screen.getByRole('heading', { name: 'Edit Certification' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('AZ-104')).toBeInTheDocument();
+  });
+});
+
+describe('a certification in the Pipeline (#1886)', () => {
+  const PIECE = {
+    id: 'piece-1',
+    title: 'Example Certification study notes',
+    contentStatus: 'drafting',
+    originRef: { page: 'certifications', id: 'saa', part: null, label: 'Solutions Architect' },
+  };
+
+  it('opens the linked certification in its editor, with its pieces', async () => {
+    searchParams = 'certification=saa';
+    getJSON.mockImplementation(async (route) => {
+      if (route === 'cms/certifications') return { items: ITEMS };
+      if (route.startsWith('cms/content?')) return { success: true, items: [PIECE] };
+      throw new Error(`unexpected route ${route}`);
+    });
+    render(<CertificationsPage />);
+    expect(await screen.findByRole('heading', { name: 'Edit Certification' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Name *')).toHaveValue('Solutions Architect');
+    const pipeline = screen.getByTestId('record-pipeline');
+    expect(await within(pipeline).findByText(PIECE.title)).toBeInTheDocument();
+    expect(getJSON).toHaveBeenCalledWith(
+      'cms/content?originPage=certifications&originId=saa&sort=updatedAt&limit=500'
+    );
+  });
+
+  it('drops the parameter when the linked editor closes, and opens nothing for an unknown id', async () => {
+    searchParams = 'certification=saa';
+    const { unmount } = render(<CertificationsPage />);
+    await screen.findByRole('heading', { name: 'Edit Certification' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const [update] = setSearchParams.mock.calls.at(-1);
+    expect(update(new URLSearchParams('tab=catalog&certification=saa')).toString()).toBe(
+      'tab=catalog'
+    );
+    unmount();
+
+    searchParams = 'certification=no-such-cert';
+    render(<CertificationsPage />);
+    await screen.findByText('Solutions Architect');
+    expect(screen.queryByRole('heading', { name: 'Edit Certification' })).toBeNull();
+  });
+
+  it('starts a draft from the editor, with the certification as its origin', async () => {
+    postJSON.mockResolvedValue({ ok: true, draft: { id: 'draft-1' } });
+    render(<CertificationsPage />);
+    await screen.findByText('Solutions Architect');
+    fireEvent.click(within(cardFor('Solutions Architect')).getByRole('button', { name: /Edit/ }));
+    const pipeline = screen.getByTestId('record-pipeline');
+    fireEvent.click(
+      within(pipeline).getByRole('button', { name: 'Draft a piece for Solutions Architect' })
+    );
+    fireEvent.change(screen.getByLabelText('Working title'), {
+      target: { value: 'Example Certification study notes' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() =>
+      expect(postJSON).toHaveBeenCalledWith('cms/drafts', {
+        fields: { title: 'Example Certification study notes', tags: [] },
+        originRef: { page: 'certifications', id: 'saa' },
+      })
+    );
+    expect(navigate).toHaveBeenCalledWith('/admin/drafts?draft=draft-1');
+    // The hand-off's own submit did not save the certification.
+    expect(sendJSON).not.toHaveBeenCalled();
+  });
+
+  it('shows no pipeline box while adding a new certification', async () => {
+    render(<CertificationsPage />);
+    await screen.findByText('Solutions Architect');
+    fireEvent.click(screen.getByRole('button', { name: /Add cert/ }));
+    expect(screen.getByRole('heading', { name: 'Add Certification' })).toBeInTheDocument();
+    expect(screen.queryByTestId('record-pipeline')).toBeNull();
   });
 });
 

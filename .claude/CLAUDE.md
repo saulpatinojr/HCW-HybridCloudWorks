@@ -496,7 +496,7 @@ stays in code; the owner does not want it editable from the portal.
 
 | Service | What a Page adds | Where |
 |---|---|---|
-| Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
+| Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page, or `RecordPipeline` (the two in one box) when the Page adds nothing of its own to a piece; kept outside any `<form>`, because the button's dialog has a form whose submit React passes up through the component tree | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
 | Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
 | Telegram reminders | A row provider: an entry in `REMINDER_PROVIDERS`, its id prefix and reserved rows in `PROVIDED_ROWS`, the same prefix in the Reminders tab's `ROW_KEEPERS` (a test holds the two lists together), and a sync built on `syncProvidedRows`, which keeps the timer's stamps, writes under `ifMatch` and never lets an editor's save change a kept row. Each `PROVIDED_ROWS` entry also names its `agentSection` (an agent key with that switch off does not see the rows, or the alerts sent for them, `reminders/agent-visibility.js`) and `ownDashboardSource` (true when the Page lists the same items on the Dashboard itself, so the reminders source skips them). Today: the credential register and Ambassador | `functions/src/lib/reminders/providers.js`, `functions/src/lib/reminders/provided-rows.js`, `functions/src/lib/reminders/settings.js`, `frontend/src/components/admin/platform-settings/RemindersTab.jsx` |
@@ -514,9 +514,15 @@ and the "sent from" chip across the Pipeline. Phase 2 put Ambassador's dates
 and activity requirements on the Dashboard (from each program's own lead
 times), the Calendar (each item opening its application) and Telegram
 (through the list of reminder-row providers, with the credential register as
-the first). Still to come, in later phases of #1886: hand-offs from the other
-Pages, next-step suggestions, and related items. Until a phase is merged, do
-not describe its part as working.
+the first). Phase 3 joined Speaking and Certifications to the Pipeline
+hand-off: an "In the pipeline" box (`RecordPipeline`, the shared box for a
+Page that adds nothing of its own to a piece) under a stored talk's edit form
+and under a saved certification's editor, with "Draft a piece" and the
+record's pieces; both Pages are in `ORIGIN_PAGES` behind the Spotlight switch,
+and `?talk=` and `?certification=` open the record the chip links back to.
+Still to come, in later phases of #1886: hand-offs from the other Pages,
+next-step suggestions, and related items. Until a phase is merged, do not
+describe its part as working.
 
 **Checklist: adding a Page, program or request type to the flow.** Go down
 it in the pull request and say for each line *done* (with the file), *already

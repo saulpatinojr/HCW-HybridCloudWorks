@@ -17,6 +17,9 @@
  *
  * Deep links are `?tab=`; the old view ids (all, featured, expiring, hidden)
  * and anything unknown land where their content went (certifications/tabs.js).
+ * `?certification=<id>` opens that certification's editor, with its pieces in
+ * the Pipeline, once the list has loaded (#1886); closing it drops the
+ * parameter.
  *
  * The certification list is read once, here on the page, because four tabs
  * show it and an edit on one must be on all of them (useCertifications, with
@@ -27,7 +30,7 @@
  * tab's card can open them.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Award } from 'lucide-react';
 import { useAuthReady } from '@/hooks/useAuthReady';
@@ -45,6 +48,8 @@ import { DeleteCertDialog } from '@/components/admin/certifications/shared';
 import useCertifications from '@/components/admin/certifications/useCertifications';
 import { emptyForm } from '@/components/admin/certifications/certView';
 import { TABS, resolveTab } from '@/components/admin/certifications/tabs';
+import { linkedCert } from '@/components/admin/certifications/CertPipeline';
+import { LINK_PARAMS } from '@/lib/itemLinks';
 
 /**
  * Each tab's panel, by id. With TABS in certifications/tabs.js this is the
@@ -68,6 +73,31 @@ function useNowMs() {
   return nowMs;
 }
 
+/**
+ * The editor a `?certification=` link opens: once, when the list has loaded.
+ * Returns `close`, which also drops the parameter so the editor does not
+ * reopen from the address.
+ */
+function useLinkedCertEditor(certs, setEditing, [searchParams, setSearchParams]) {
+  const linkedId = searchParams.get(LINK_PARAMS.certification);
+  const handled = useRef(null);
+  useEffect(() => {
+    if (!linkedId || !certs.loaded || handled.current === linkedId) return;
+    handled.current = linkedId;
+    const cert = linkedCert(certs.items, linkedId);
+    if (cert) setEditing(cert);
+  }, [linkedId, certs.loaded, certs.items, setEditing]);
+  return () => {
+    setEditing(null);
+    if (!linkedId) return;
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete(LINK_PARAMS.certification);
+      return next;
+    });
+  };
+}
+
 function headerStatus(certs) {
   if (certs.loading) return 'checking';
   return !certs.error;
@@ -76,11 +106,13 @@ function headerStatus(certs) {
 export default function CertificationsPage() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const params = useSearchParams();
+  const [searchParams, setSearchParams] = params;
   const activeTab = resolveTab(searchParams.get('tab'));
   const certs = useCertifications(authReady, { toast });
   const nowMs = useNowMs();
   const [editing, setEditing] = useState(null);
+  const closeEditor = useLinkedCertEditor(certs, setEditing, params);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const setTab = (id) => {
@@ -149,7 +181,7 @@ export default function CertificationsPage() {
         <CertEditor
           cert={editing}
           allCerts={items}
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
           onSaved={certs.upsertLocal}
         />
       )}

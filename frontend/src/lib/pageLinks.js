@@ -25,6 +25,11 @@ const enc = encodeURIComponent;
  */
 export const ORIGIN_RECORD_PATHS = Object.freeze({
   ambassador: (ref) => `/admin/ambassador?tab=programs&${LINK_PARAMS.program}=${enc(ref.id)}`,
+  // No tab: whether a talk is on Upcoming or Past depends on its date, which
+  // the Page works out when it opens the talk (useLinkedTalk).
+  speaking: (ref) => `/admin/speaking?${LINK_PARAMS.talk}=${enc(ref.id)}`,
+  // The editor is a dialog over every tab, so none is named.
+  certifications: (ref) => `/admin/certifications?${LINK_PARAMS.certification}=${enc(ref.id)}`,
 });
 
 /** The nav ids of the Pages above, for the mirror test. */

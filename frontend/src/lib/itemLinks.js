@@ -48,6 +48,8 @@ export function contentItemHref(item) {
  *   chapter      Listen & Learn → Review, with the book's `platform` and `exam`
  *   application  Ambassador Hub → Applications
  *   program      Ambassador Hub → Programs, with the program's details open (#1886)
+ *   talk         Speaking → the stored talk's edit form open, on Upcoming or Past (#1886)
+ *   certification  Certifications → the certification's editor open (#1886)
  */
 export const LINK_PARAMS = Object.freeze({
   transcript: 'transcript',
@@ -59,6 +61,8 @@ export const LINK_PARAMS = Object.freeze({
   exam: 'exam',
   application: 'application',
   program: 'program',
+  talk: 'talk',
+  certification: 'certification',
 });
 
 /** An address inside the admin, and nothing that could leave it. */

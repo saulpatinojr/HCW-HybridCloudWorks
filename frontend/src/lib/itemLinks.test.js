@@ -160,6 +160,19 @@ describe('the API’s deep links name a tab and a parameter each page reads', ()
   });
 });
 
+describe('LINK_PARAMS', () => {
+  it('names each parameter once, and never the tab parameter', () => {
+    const names = Object.values(LINK_PARAMS);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).not.toContain('tab');
+  });
+
+  it('has a parameter for a talk on Speaking and a certification on Certifications (#1886)', () => {
+    expect(LINK_PARAMS.talk).toBe('talk');
+    expect(LINK_PARAMS.certification).toBe('certification');
+  });
+});
+
 describe('the review set agrees everywhere it is listed', () => {
   it('Frameworks and Coder Corner ask for the statuses the queue and the counters use', () => {
     expect(statusParamFor('needs_review')).toBe(REVIEW_DECISION_STATUSES.join(','));

@@ -18,6 +18,7 @@ const getJSON = vi.fn();
 const postJSON = vi.fn();
 const fetchPublicSnapshotItems = vi.fn();
 const setSearchParams = vi.fn();
+const navigate = vi.fn();
 let searchParams = '';
 
 vi.mock('@/lib/api', () => ({
@@ -45,6 +46,7 @@ vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() 
 vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
   useLocation: () => ({ pathname: '/admin/speaking' }),
+  useNavigate: () => navigate,
   Link: ({ to, children, ...rest }) => (
     <a href={to} {...rest}>
       {children}
@@ -90,9 +92,11 @@ afterEach(() => {
 beforeEach(() => {
   searchParams = '';
   setSearchParams.mockReset();
+  navigate.mockReset();
   postJSON.mockReset().mockResolvedValue({ ok: true });
   getJSON.mockReset().mockImplementation(async (route) => {
     if (route === 'cms/speakerevents') return STORED;
+    if (route.startsWith('cms/content?')) return { success: true, items: [] };
     throw new Error(`unexpected route ${route}`);
   });
   fetchPublicSnapshotItems.mockReset().mockResolvedValue([{ id: 'event-102' }]);
@@ -199,6 +203,63 @@ describe('Upcoming and Past', () => {
     fireEvent.click(await panel().findByRole('button', { name: /Manual Entry/ }));
     expect(panel().getByText('New Manual Entry')).toBeTruthy();
     expect(panel().queryByText('New Override')).toBeNull();
+  });
+});
+
+describe('a talk in the Pipeline (#1886)', () => {
+  const PIECE = {
+    id: 'piece-1',
+    title: 'Example Talk recap',
+    contentStatus: 'drafting',
+    originRef: { page: 'speaking', id: 'event-102', part: null, label: 'Old Conf' },
+  };
+
+  it('opens the linked talk on the tab its date puts it on, with its pieces', async () => {
+    searchParams = 'talk=event-102';
+    getJSON.mockImplementation(async (route) => {
+      if (route === 'cms/speakerevents') return STORED;
+      if (route.startsWith('cms/content?')) return { success: true, items: [PIECE] };
+      throw new Error(`unexpected route ${route}`);
+    });
+    render(<SpeakingEventsPage />);
+    await waitFor(() =>
+      expect(setSearchParams).toHaveBeenCalledWith({ tab: 'past', talk: 'event-102' })
+    );
+    const pipeline = await screen.findByTestId('record-pipeline');
+    expect(await within(pipeline).findByText('Example Talk recap')).toBeTruthy();
+    expect(getJSON).toHaveBeenCalledWith(
+      'cms/content?originPage=speaking&originId=event-102&sort=updatedAt&limit=500'
+    );
+  });
+
+  it('starts a draft for a manual talk, with the talk as its origin', async () => {
+    postJSON.mockResolvedValue({ ok: true, draft: { id: 'draft-1' } });
+    render(<SpeakingEventsPage />);
+    fireEvent.click(await panel().findByRole('button', { name: 'Edit' }));
+    const pipeline = await screen.findByTestId('record-pipeline');
+    fireEvent.click(
+      within(pipeline).getByRole('button', { name: 'Draft a piece for Local Meetup' })
+    );
+    fireEvent.change(screen.getByLabelText('Working title'), {
+      target: { value: 'What the meetup asked' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create draft' }));
+    await waitFor(() =>
+      expect(postJSON).toHaveBeenCalledWith('cms/drafts', {
+        fields: { title: 'What the meetup asked', tags: [] },
+        originRef: { page: 'speaking', id: 'manual-1' },
+      })
+    );
+    expect(navigate).toHaveBeenCalledWith('/admin/drafts?draft=draft-1');
+    // The talk's own form was not saved by the hand-off's submit.
+    expect(postJSON).not.toHaveBeenCalledWith('upsertSpeakerEvent', expect.anything());
+  });
+
+  it('asks for a save first on a talk that has no stored record yet', async () => {
+    render(<SpeakingEventsPage />);
+    fireEvent.click(await panel().findByRole('button', { name: /Enrich/ }));
+    expect(panel().getByText(/Save this talk first/)).toBeTruthy();
+    expect(screen.queryByTestId('record-pipeline')).toBeNull();
   });
 });
 

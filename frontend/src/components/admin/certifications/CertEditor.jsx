@@ -18,6 +18,10 @@
  * `DELETE cms/certifications/images`, best-effort. Cancel is disabled while
  * an upload is in flight so there is never a blob the editor does not know
  * about.
+ *
+ * A saved certification also lists its pieces in the Pipeline below the form
+ * (CertPipeline, #1886), outside the <form> so the hand-off dialog's own
+ * submit never reaches this form's save.
  */
 import React, { useRef, useState } from 'react';
 import { postJSON, sendJSON } from '@/lib/api';
@@ -52,6 +56,7 @@ import {
   IssuerField,
   VisibilityFlags,
 } from './editorFields';
+import CertPipeline from './CertPipeline';
 
 const linkRows = (value) =>
   Array.isArray(value)
@@ -563,6 +568,7 @@ export default function CertEditor({ cert, allCerts, onClose, onSaved }) {
             </Button>
           </DialogFooter>
         </form>
+        <CertPipeline cert={cert} />
       </DialogContent>
     </Dialog>
   );

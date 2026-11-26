@@ -18,6 +18,28 @@ export const trimmedLabel = (value) =>
     .slice(0, MAX_LABEL_CHARS);
 
 /**
+ * Whether a stored record counts as deleted. Speaking and Certifications
+ * delete a record outright today, so a missing record is the usual case;
+ * a `softDeletedAt` stamp (from a restore or a hand edit) is refused the
+ * same way, as the Pipeline and Ambassador treat it.
+ */
+const isDeleted = (doc) => ![undefined, null, "", false].includes(doc?.softDeletedAt);
+
+/**
+ * A check for a Page whose records have a name and no parts: refuses a
+ * missing or deleted record and any `part`, and labels the reference with
+ * the first non-empty name field.
+ */
+function namedRecordCheck({ missing, noParts, nameFields }) {
+  return (doc, part) => {
+    if (!doc || isDeleted(doc)) return { refusal: missing };
+    if (part) return { refusal: noParts };
+    const name = nameFields.map((field) => trimmedLabel(doc[field])).find(Boolean);
+    return { label: name || doc.id };
+  };
+}
+
+/**
  * The Pages that may send work into the Pipeline, by nav id.
  *
  *   container    the Cosmos container the record lives in (partition key /id)
@@ -49,6 +71,31 @@ export const ORIGIN_PAGES = Object.freeze({
       }
       return { label: trimmedLabel(doc.name) || doc.id };
     },
+  }),
+  // A talk (a stored speaking event, from Sessionize or entered by hand):
+  // its recap or write-up. The names are the ones the Speaking Page shows
+  // and the evidence import reads (ambassador/import-readers.js).
+  speaking: Object.freeze({
+    container: "speakerevents",
+    agentSection: "admin.spotlight",
+    ideaOrigin: "speaker-engagement",
+    check: namedRecordCheck({
+      missing: "No stored talk has that id.",
+      noParts: "A talk has no parts to name.",
+      nameFields: ["eventName", "name", "title"],
+    }),
+  }),
+  // A certification: study notes, or what was learned for it. `name` is the
+  // one field the Certifications Page requires (admin-crud/certification-rules.js).
+  certifications: Object.freeze({
+    container: "certifications",
+    agentSection: "admin.spotlight",
+    ideaOrigin: "certification-objective",
+    check: namedRecordCheck({
+      missing: "No certification has that id.",
+      noParts: "A certification has no parts to name.",
+      nameFields: ["name"],
+    }),
   }),
 });
 

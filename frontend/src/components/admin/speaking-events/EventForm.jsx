@@ -6,7 +6,8 @@
  * kept. Rendered by whichever tab is open while an edit is.
  *
  * It is a real <form>: the URL inputs validate on submit, Enter saves, and
- * Cancel goes through the editor's unsaved-changes guard.
+ * Cancel goes through the editor's unsaved-changes guard. Below it, outside
+ * the form, a stored talk lists its pieces in the Pipeline (TalkPipeline).
  */
 
 import React from 'react';
@@ -20,6 +21,7 @@ import {
   formatShortDate,
   speakingStatusInfo,
 } from './eventModel';
+import TalkPipeline from './TalkPipeline';
 
 const INPUT = 'w-full text-sm border border-border rounded-md px-3 py-1.5 bg-background';
 
@@ -358,6 +360,9 @@ export default function EventForm({ editor }) {
             {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
           </div>
         </form>
+        <div className="mt-4">
+          <TalkPipeline editor={editor} />
+        </div>
       </CardContent>
     </Card>
   );
