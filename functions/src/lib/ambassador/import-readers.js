@@ -12,8 +12,15 @@ import {
   isPublicDocument,
 } from '../public-read-rules.js';
 
-/** isPublicDocument's "never public" statuses, in SQL, so the picker lists no draft the import would refuse. */
-const SQL_NOT_NEVER_PUBLIC = `(NOT IS_DEFINED(c.contentStatus) OR IS_NULL(c.contentStatus) OR c.contentStatus NOT IN (${[...NEVER_PUBLIC_STATUSES].map((s) => `"${s}"`).join(', ')}))`;
+/**
+ * isPublicDocument's "never public" statuses, in SQL, so the picker lists no
+ * draft the import would refuse. The same shape as public-content-manifest.js
+ * SQL_NOT_OFF_SITE: `NOT IS_STRING` first (IN on a missing field is undefined
+ * in Cosmos), then `NOT (… IN …)`.
+ */
+const SQL_NOT_NEVER_PUBLIC =
+  '(NOT IS_STRING(c.contentStatus) OR NOT (c.contentStatus IN ' +
+  `(${[...NEVER_PUBLIC_STATUSES].map((s) => `"${s}"`).join(', ')})))`;
 import { parseCsv } from './csv.js';
 
 export { parseCsv } from './csv.js';

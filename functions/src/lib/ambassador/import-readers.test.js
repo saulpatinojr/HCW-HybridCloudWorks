@@ -13,7 +13,10 @@ describe('the content reader', () => {
   it('lists live content with the public site clauses', () => {
     expect(reader.listQuery).toContain(`WHERE ${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED}`);
     // A draft is never public, so the picker does not list one the import would refuse.
-    expect(reader.listQuery).toContain('c.contentStatus NOT IN ("drafting")');
+    expect(reader.listQuery).toContain(
+      '(NOT IS_STRING(c.contentStatus) OR NOT (c.contentStatus IN ("drafting")))',
+    );
+    expect(reader.listQuery).not.toMatch(/NOT IN/);
   });
 
   it('accepts by id exactly what the public site shows', () => {
