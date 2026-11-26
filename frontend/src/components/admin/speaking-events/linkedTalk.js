@@ -50,10 +50,41 @@ const OPENERS = {
  *   clearLink: () => void,
  * }} input
  */
+/**
+ * The link's own state, apart from the editor's: what it asked to open, and
+ * whether another talk with unsaved edits held the open back. `editingId`
+ * is the open editor's stored id, the same id the link names.
+ */
+function followLink(state, editingId, retry, clearLink) {
+  if (state.phase === 'opening') {
+    if (editingId === state.target) state.phase = 'open';
+    else if (editingId) state.held = true;
+    else if (state.held) retry(); // the other talk closed without the link's opening
+    return;
+  }
+  if (state.phase === 'open' && editingId !== state.target) {
+    state.phase = 'idle';
+    clearLink();
+  }
+}
+
 export default function useLinkedTalk({ talkId, listable, rows, editor, showTab, clearLink }) {
   const handled = useRef(null);
-  // 'opening' until the editor shows the linked talk, then 'open' until it closes.
-  const linkState = useRef('idle');
+  const linkState = useRef({ phase: 'idle' });
+  // The editor shows the linked talk, or another talk with unsaved edits held
+  // the open back (the discard prompt was cancelled): then the link waits and
+  // opens its talk once that other one closes. When the linked talk's editor
+  // closes, or moves to another talk, the parameter is dropped.
+  const { editingId } = editor;
+  useEffect(() => {
+    const retry = () => {
+      linkState.current = { phase: 'idle' };
+      handled.current = null;
+    };
+    followLink(linkState.current, editingId, retry, clearLink);
+  }, [editingId, clearLink]);
+
+  // Runs after the effect above, so a retry it asks for is acted on in the same pass.
   useEffect(() => {
     // Once the parameter is gone the same link may open the talk again.
     if (!talkId) {
@@ -65,16 +96,9 @@ export default function useLinkedTalk({ talkId, listable, rows, editor, showTab,
     const found = findLinkedTalk(rows, talkId);
     if (!found) return;
     OPENERS[found.kind](editor, found.row);
-    linkState.current = 'opening';
+    // Another talk already open may hold the open back (unsaved edits).
+    const held = Boolean(editor.editingId) && editor.editingId !== talkId;
+    linkState.current = { phase: 'opening', target: talkId, held };
     showTab(found.tab);
   }, [talkId, listable, rows, editor, showTab]);
-
-  const { editingId } = editor;
-  useEffect(() => {
-    if (linkState.current === 'opening' && editingId) linkState.current = 'open';
-    else if (linkState.current === 'open' && !editingId) {
-      linkState.current = 'idle';
-      clearLink();
-    }
-  }, [editingId, clearLink]);
 }

@@ -2,8 +2,9 @@
  * Opening one talk from a `?talk=` link (#1886): which row a stored id
  * names, and the tab its date puts it on.
  */
-import { describe, expect, it } from 'vitest';
-import { findLinkedTalk, tabForDate } from './linkedTalk';
+import { describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import useLinkedTalk, { findLinkedTalk, tabForDate } from './linkedTalk';
 
 const NOW = new Date(2026, 10, 26);
 const ROWS = {
@@ -40,5 +41,38 @@ describe('tabForDate', () => {
     expect(tabForDate(null, NOW)).toBe('upcoming');
     expect(tabForDate('2026-11-25', NOW)).toBe('past');
     expect(tabForDate('2026-11-26', NOW)).toBe('upcoming');
+  });
+});
+
+describe('useLinkedTalk', () => {
+  const rows = { mergedEvents: [], manualEntries: [{ _docId: 'manual-1', date: '2026-12-01' }] };
+  const setup = (editingId) => {
+    const editor = { editingId, openEnrich: vi.fn(), openEditManual: vi.fn() };
+    const clearLink = vi.fn();
+    const props = { talkId: 'manual-1', listable: true, rows, editor, showTab: vi.fn(), clearLink };
+    const hook = renderHook((p) => useLinkedTalk(p), { initialProps: props });
+    const editAs = (id) => hook.rerender({ ...props, editor: { ...editor, editingId: id } });
+    return { editor, clearLink, editAs };
+  };
+
+  it('drops the link once the talk it opened closes', () => {
+    const { editor, clearLink, editAs } = setup(null);
+    expect(editor.openEditManual).toHaveBeenCalledTimes(1);
+    editAs('manual-1');
+    expect(clearLink).not.toHaveBeenCalled();
+    editAs(null);
+    expect(clearLink).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits while another talk with unsaved edits holds the open back, then opens it', () => {
+    const { editor, clearLink, editAs } = setup('other-talk');
+    expect(editor.openEditManual).toHaveBeenCalledTimes(1);
+    // The discard prompt was cancelled: the other talk stays open, nothing is dropped.
+    editAs('other-talk');
+    expect(clearLink).not.toHaveBeenCalled();
+    // The other talk closes: the link opens its own talk.
+    editAs(null);
+    expect(clearLink).not.toHaveBeenCalled();
+    expect(editor.openEditManual).toHaveBeenCalledTimes(2);
   });
 });
