@@ -658,7 +658,23 @@ describe('the two admin routes', () => {
     // Without that report, the same facts do not start: the report is its own condition.
     const noReport = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
     expect(body(await noReport.handlers.getStatus({}, {}))).toMatchObject({ wouldStart: false, blockers: ['report-missing'] });
-    expect(body(await there.handlers.getStatus({}, {}))).toMatchObject({ archiveContainerExists: true, archived: false, wouldStart: true, blockers: [] });
+    expect(body(await there.handlers.getStatus({}, {}))).toMatchObject({ archiveContainerExists: true, archived: false, wouldStart: true, blockers: [], cutShort: [] });
+  });
+
+  it('GET: a report that met a record too large to search whole names the container and the count, and nothing else', async () => {
+    const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1' }] }));
+    const id = '20270207T2000Z';
+    blobs.files.set(reportNames(id).latest, { reportId: id });
+    blobs.files.set(reportNames(id).report, {
+      reportId: id,
+      sourceBackup: { runId: SUNDAY },
+      rules: classificationFingerprint(),
+      totals: {},
+      containers: [{ container: 'blogs', decision: 'archive', reason: null, read: 1, matchesBackup: true, sensitive: { remaining: [], flagged: 0, cutShort: 1 } }],
+      leftOutWhole: [],
+    });
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ exists: true }), blobs });
+    expect(body(await handlers.getStatus({}, {}))).toMatchObject({ wouldStart: false, blockers: ['report-cut-short'], cutShort: [{ container: 'blogs', records: 1 }] });
   });
 
   it('GET: an archive container that cannot be asked about or read is "not known", and the far end\'s words are not logged', async () => {
@@ -770,11 +786,11 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
     expect(sensitiveNamesIn(null).names.size).toBe(0);
   });
 
-  it('stops at its limits on a very deep or very large record, and says so', () => {
+  it('stops at its limits on a very deep or very large record, and says so (the exact edges are in archive-report-limits.test.js)', () => {
     let deep = { token: 'made-up' };
-    for (let i = 0; i < 50; i += 1) deep = { next: deep };
+    for (let i = 0; i < 200; i += 1) deep = { next: deep };
     expect(sensitiveNamesIn(deep)).toMatchObject({ cutShort: true });
-    const wide = { items: Array.from({ length: 20000 }, () => ({ a: 1 })) };
+    const wide = { items: Array.from({ length: 1100000 }, () => ({})) };
     expect(sensitiveNamesIn(wide).cutShort).toBe(true);
   });
 

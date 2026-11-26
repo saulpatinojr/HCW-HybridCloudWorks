@@ -83,7 +83,7 @@ function ArchiveStatus({ status, starting, onDryRun }) {
           : ''}
         {status.wouldStart
           ? `Every condition for the archive of ${status.year} is met today.`
-          : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
+          : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers, { cutShort: status.cutShort })}.`}
       </p>
       {status.jobBuilt === false ? null : <ArchiveProgress status={status} />}
       <ReportBody latest={status.latest} ownerAccepted={status.classification?.ownerAccepted} />
