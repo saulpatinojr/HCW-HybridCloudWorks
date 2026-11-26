@@ -30,7 +30,9 @@ export default function CloudflareCache({ status = null }) {
   const { files, problems } = parsePurgeList(text, { zoneName, max: MAX_PURGE_FILES });
   const typed = text.trim().length > 0;
 
-  if (status?.configured === false) return <NotConfigured />;
+  if (status?.configured === false) {
+    return <NotConfigured missing={status.missing} message={status.message} />;
+  }
 
   return (
     <div className="space-y-6">

@@ -31,6 +31,7 @@ import PageHeader from '@/components/admin/shared/PageHeader';
 import HubTabs from '@/components/admin/HubTabs';
 import { readCloudflareStatus } from '@/lib/cloudflare';
 import { TABS, resolveTab } from '@/components/admin/cloudflare/tabs';
+import { notConfiguredHeadline } from '@/components/admin/cloudflare/cloudflareView';
 import { useCloudflareRead } from '@/components/admin/cloudflare/CloudflareParts';
 import CloudflareOverview from '@/components/admin/cloudflare/CloudflareOverview';
 import CloudflareSettings from '@/components/admin/cloudflare/CloudflareSettings';
@@ -65,7 +66,7 @@ export default function CloudflarePage() {
           status ? (
             <span className="text-muted-foreground">
               {status.configured === false
-                ? 'Not set up yet: the admin token is missing.'
+                ? notConfiguredHeadline(status)
                 : `Zone ${zone || 'unknown'}${status.zone?.status ? `, ${status.zone.status}` : ''}`}
             </span>
           ) : null

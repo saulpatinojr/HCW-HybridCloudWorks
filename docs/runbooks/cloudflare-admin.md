@@ -140,7 +140,9 @@ token and the two audit and analytics tokens, so each can be revoked alone.
 The Function App also needs the zone's id in its `CF_ZONE_ID` setting. That
 comes from the `cloudflare_zone_id` variable Terraform already has, and is set
 by the next `hcw-azure` apply after this change merges. Until then the page
-says **not configured** even with the token pasted.
+says **not configured** even with the token pasted, and says that the zone id
+is what is missing. There is nothing to paste for it: it is never entered on
+the Keys tab.
 
 When you read that run's plan, the plan check (`tfc-plan-check.yml`, which
 you start by hand) lists one line as unexpected on purpose:
@@ -181,10 +183,25 @@ points to. Rotating and revoking work as for any agent key (the
 [Agent Content API runbook](agent-content-api.md), parts 3 and 5, on the
 Agents page's tab).
 
+Two kinds of change send you a warning (a yellow Telegram message headed
+"Check this Cloudflare change") whoever made it, you or an agent key:
+
+- **The change was made but its audit row could not be written.** The
+  change is real in Cloudflare; only the audit log is missing it. The page
+  also shows a warning instead of the usual "Saved", and the route's answer
+  says `audited: false`. Check the change on the Cloudflare page, and look in
+  the function app's log for `[cloudflare] audit row failed` around that time.
+- **A DNS edit came back with a protected name.** Cloudflare's DNS edit has
+  no "only if nothing changed" option, so if someone renamed the record onto
+  a protected name (such as `www`) between the page reading it and saving
+  your change, the change still lands. It is recorded, the answer says
+  `protectedAfterWrite: true`, and the record should be checked in the
+  Cloudflare dashboard.
+
 ## What is refused, and why
 
-The server refuses each of these before it calls Cloudflare, whoever asks.
-Two rows apply to an agent key only, and say so.
+The server refuses each of these before it changes anything in Cloudflare,
+whoever asks. Three rows apply to an agent key only, and say so.
 
 | Refused | Why | Change it in |
 | --- | --- | --- |
@@ -200,11 +217,12 @@ Two rows apply to an agent key only, and say so.
 | Every other rule phase except five (origin rules, cache rules, cloud connector, snippets, managed rules, DDoS and any phase Cloudflare adds later) | "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard." Only redirects, URL rewrites, response headers, configuration rules and custom security rules can be replaced from the page | The Cloudflare dashboard |
 | A custom security rule whose action is `skip` | It would let matching requests past the other security checks | The Cloudflare dashboard |
 | An empty list of rules | It would delete every rule in the phase, and deleting is done in the dashboard | The Cloudflare dashboard |
+| Agent key only: a list of rules that leaves out a rule the phase has now | An agent key may add rules and change existing ones, but every current rule's id must still be in its list. "An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself (it asks you to type the phase's name before a custom security rule is removed) |
 | A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
 | A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
 | Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
 | Any change, when the zone id points at another zone | The protected list names this zone's records, so it would protect nothing elsewhere | `CF_ZONE_ID`, which Terraform sets on the function app |
-| Any delete | No agent key deletes anything (ADR 0038), and the page offers none. Replacing a phase's rules does remove the ones left out of the new list | The Cloudflare dashboard |
+| Any delete | No agent key deletes anything (ADR 0038), and the page offers none. When you (not an agent key) replace a phase's rules, the ones left out of the new list are removed | The Cloudflare dashboard |
 
 What the page shows is limited too. The rules of a phase that cannot be
 changed here are shown without what they carry (only each rule's id,
@@ -227,7 +245,9 @@ the issue once you have checked the change was yours or Network Guy's.
 
 | You see | It means | Do this |
 | --- | --- | --- |
-| **Not configured** on the Cloudflare page | The token or the zone id is missing | Part 2, steps 4 and the `CF_ZONE_ID` note |
+| **Not configured** on the Cloudflare page | The token or the zone id is missing; the page says which | The token: paste it on Integrations → Keys (Part 2, step 4). The zone id (`CF_ZONE_ID`): nothing to paste, Terraform sets it on the next `hcw-azure` apply (the `CF_ZONE_ID` note in Part 2) |
+| "An agent key may add or change rules but not remove one" | Network Guy sent a list of rules that left one out | Remove the rule yourself on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules), if it should go |
+| "Check this Cloudflare change" on Telegram | A change landed but its audit row failed, or a DNS edit came back with a protected name | See the two warnings under Part 3 |
 | A part of the page says the token cannot read it | The token lacks that permission | Edit the token in Cloudflare and add it (Part 2, step 2) |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |

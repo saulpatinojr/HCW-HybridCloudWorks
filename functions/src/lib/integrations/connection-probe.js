@@ -87,6 +87,25 @@ const CLOUDFLARE_API_BASE = CLOUDFLARE_PROBE.apiBase;
 const CLOUDFLARE_TOKEN_SETTING = CLOUDFLARE_PROBE.tokenSetting;
 const CLOUDFLARE_ZONE_SETTING = CLOUDFLARE_PROBE.zoneSetting;
 
+/** Each Cloudflare setting when it is missing: its short name, and what it is and where it comes from. */
+const CLOUDFLARE_UNSET = Object.freeze({
+  [CLOUDFLARE_TOKEN_SETTING]: [
+    'No token yet',
+    'the Cloudflare admin token has not been pasted on the Keys tab (CLOUDFLARE-ADMIN-TOKEN). Make it in the Cloudflare dashboard for this one zone, paste it there and press Test again',
+  ],
+  [CLOUDFLARE_ZONE_SETTING]: [
+    'No zone id yet',
+    'the zone id (CF_ZONE_ID) is not set on the function app. Terraform sets it on the next apply of the hcw-azure workspace; it is not pasted on the Keys tab',
+  ],
+});
+
+/** The Cloudflare probe's "not set" sentence, naming exactly which of its two settings is missing. */
+export function cloudflareNotConfigured(unset) {
+  const found = unset.map((setting) => CLOUDFLARE_UNSET[setting]).filter(Boolean);
+  if (found.length === 1) return `${found[0][0]}: ${found[0][1]}`;
+  return `Not set up yet. Two things are missing: ${found.map(([, sentence]) => sentence).join('; and ')}`;
+}
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -185,7 +204,9 @@ export function createProbe({
     // Three optional refinements, for a probe that can say more than the
     // defaults (the Community Days probe is the first):
     //   notConfigured    the sentence for "the key is not set", in place of
-    //                    the default that only names the setting
+    //                    the default that only names the setting; or a
+    //                    function of the settings that are not set, for a
+    //                    probe with more than one (the Cloudflare probe)
     //   failureSentence  (status) => this module's own sentence for a refusal
     //                    with that HTTP status, or null for the default
     //   summarize        (data) => the few fields a success relays to the
@@ -526,8 +547,7 @@ export const PROBES = Object.freeze({
         Accept: 'application/json',
       },
     }),
-    notConfigured:
-      'No token yet: the Cloudflare admin token has not been pasted on the Keys tab (CLOUDFLARE-ADMIN-TOKEN). Make it in the Cloudflare dashboard for this one zone, paste it there and press Test again',
+    notConfigured: cloudflareNotConfigured,
     failureSentence: (status) => {
       if (status === 400) return 'Cloudflare did not accept the zone id (CF_ZONE_ID, set by Terraform). Check the cloudflare_zone_id workspace variable';
       if (status === 401 || status === 403) {
@@ -598,12 +618,9 @@ function probeAndValues(body, env, readKey) {
   }
   const probe = PROBES[requested];
   /** @type {Record<string,string>} */
-  const values = {};
-  for (const setting of probe.settings) {
-    const value = readKey(env, setting);
-    if (!value) return { answer: notConfigured(probe, setting) };
-    values[setting] = value;
-  }
+  const values = Object.fromEntries(probe.settings.map((setting) => [setting, readKey(env, setting)]));
+  const unset = probe.settings.filter((setting) => !values[setting]);
+  if (unset.length) return { answer: notConfigured(probe, unset) };
   return { probe, values };
 }
 
@@ -611,12 +628,18 @@ function probeAndValues(body, env, readKey) {
  * 200 with ok:false, like the proxies: an unseeded key is a configuration
  * state the page renders as "not connected", not a fault to page anyone about.
  */
-const notConfigured = (probe, setting) =>
+const notConfigured = (probe, unset) =>
   json(200, {
     ok: false,
-    error: probe.notConfigured ? `${probe.notConfigured}.` : `${probe.service} is not configured: ${setting} is not set`,
+    error: notConfiguredSentence(probe, unset),
     code: 'INTEGRATION_NOT_CONFIGURED',
   });
+
+/** The probe's own "not set" sentence (a fixed one, or one built from the unset settings), else the default naming the first. */
+function notConfiguredSentence(probe, unset) {
+  const own = typeof probe.notConfigured === 'function' ? probe.notConfigured(unset) : probe.notConfigured;
+  return own ? `${own}.` : `${probe.service} is not configured: ${unset[0]} is not set`;
+}
 
 /**
  * @param {object} deps

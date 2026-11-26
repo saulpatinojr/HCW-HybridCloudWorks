@@ -353,7 +353,7 @@ export default function CloudflareRules({ status = null }) {
   const openRuleset = entrypoints.find((ruleset) => ruleset.phase === open) ?? null;
 
   return (
-    <ReadGate read={read} label="The rules">
+    <ReadGate read={read} label="The rules" status={status}>
       <div className="space-y-6">
         <EditableCard status={status} onOpen={setOpen} />
         <RulesetsCard entrypoints={entrypoints} status={status} onOpen={setOpen} />

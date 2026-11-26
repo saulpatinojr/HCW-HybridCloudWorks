@@ -28,7 +28,13 @@
  *
  * Every change that Cloudflare accepted writes one admin_audit_logs row
  * (`cloudflare_change`). When the caller is an agent key it is also sent to
- * the owner's phone. A refused change writes neither.
+ * the owner's phone. When the row could not be written, the owner's phone is
+ * told whoever made the change, and the answer says `audited: false`. A
+ * refused change writes neither.
+ *
+ * "Not set up" names what is missing (`missing`: `token`, `zoneId` or both)
+ * and where it comes from: the token is pasted on Integrations → Keys; the
+ * zone id is set by Terraform and never pasted.
  *
  * Log lines are content-free: the route's name, a status and a code, never
  * a record name, a value, a URL or the token.
@@ -38,11 +44,13 @@ import { authoredMessage, codeShaped, errorCode, errorResponse } from '../http/e
 import { CloudflareError, TOKEN_SETTING, ZONE_ID_PATTERN, ZONE_SETTING, createCloudflareClient } from './client.js';
 import { Refusal, fail } from './input.js';
 import { clockOf } from './record.js';
-import { NOT_CONFIGURED_MESSAGE, getSettings, getStatus, patchSetting, purge } from './zone-routes.js';
+import { getSettings, getStatus, patchSetting, purge } from './zone-routes.js';
+import { notConfiguredMessage } from './prerequisites.js';
 import { createDns, listDns, patchDns } from './dns-routes.js';
 import { getPhase, listRulesets, putPhase } from './rules-routes.js';
 
-export { MAX_PURGE_FILES, SETTING_ID_PATTERN, FAMILIES, NOT_CONFIGURED_MESSAGE, PROTECTED_VIEW } from './zone-routes.js';
+export { MAX_PURGE_FILES, SETTING_ID_PATTERN, FAMILIES, PROTECTED_VIEW } from './zone-routes.js';
+export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 export { DNS_TYPES, RECORD_ID_PATTERN } from './dns-routes.js';
 export { PHASE_PATTERN, REDACTED_VALUE } from './rules-routes.js';
 export { MAX_BODY_BYTES } from './input.js';
@@ -64,12 +72,17 @@ const ROUTES = Object.freeze([
   ['putPhase', 'phase-replace', WRITE_ROLE, putPhase],
 ]);
 
-/** The client, or null when the token or the zone id is not set. */
-function clientOrNull(deps) {
+/**
+ * The client, or null with the list of what is missing: `token` when the
+ * admin token is not set, `zoneId` when the zone id is not set or is not a
+ * zone id.
+ */
+function clientOf(deps) {
   const token = readSetting(deps.env, TOKEN_SETTING);
   const zoneId = readSetting(deps.env, ZONE_SETTING).toLowerCase();
-  if (!token || !ZONE_ID_PATTERN.test(zoneId)) return null;
-  return createCloudflareClient({ token, zoneId, ...deps.doubles });
+  const missing = [...(token ? [] : ['token']), ...(ZONE_ID_PATTERN.test(zoneId) ? [] : ['zoneId'])];
+  if (missing.length) return { client: null, missing };
+  return { client: createCloudflareClient({ token, zoneId, ...deps.doubles }), missing };
 }
 
 /**
@@ -94,9 +107,9 @@ function route(deps, [label, role, work, { needsClient = true } = {}]) {
   return async (request, context) => {
     const auth = await deps.guard.requireRole(request, role);
     if (auth.error) return auth.error;
-    const client = clientOrNull(deps);
-    if (needsClient && !client) return fail(503, 'CLOUDFLARE_NOT_CONFIGURED', NOT_CONFIGURED_MESSAGE);
-    return work({ deps, request, context, client, user: auth.user }).catch((error) => answerError({ error, label, request, context }));
+    const { client, missing } = clientOf(deps);
+    if (needsClient && !client) return fail(503, 'CLOUDFLARE_NOT_CONFIGURED', notConfiguredMessage(missing), { missing });
+    return work({ deps, request, context, client, missing, user: auth.user }).catch((error) => answerError({ error, label, request, context }));
   };
 }
 

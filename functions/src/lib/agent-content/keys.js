@@ -133,7 +133,7 @@ export const CAPABILITIES = Object.freeze([
     id: 'admin.cloudflare.rules',
     label: 'Cloudflare: edit rules',
     description:
-      'Replace the rules of five kinds of phase: redirects, URL rewrites, response headers, configuration rules and custom security rules (never one that skips the other checks). Every other phase is read-only, an empty list is refused, and a rule left out of a replacement is removed. These rules can still redirect or change requests to the API, so turn this on only for a task that needs it.',
+      'Add rules and change existing ones in five kinds of phase: redirects, URL rewrites, response headers, configuration rules and custom security rules (never one that skips the other checks). It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. Every other phase is read-only. These rules can still redirect or change requests to the API, so turn this on only for a task that needs it.',
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));

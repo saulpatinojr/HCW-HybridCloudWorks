@@ -14,6 +14,7 @@ import { isAgentUser } from '../agent-content/agent-keys.js';
 import { CloudflareError } from './client.js';
 import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './input.js';
 import { recordChange, requireOurZone } from './record.js';
+import { notConfiguredMessage } from './prerequisites.js';
 import {
   EDITABLE_PHASES,
   OWNER_ONLY_SETTINGS,
@@ -23,6 +24,8 @@ import {
   ZONE_APEX,
   ownerOnlySettingReason,
 } from './protected.js';
+
+export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 
 export const SETTING_ID_PATTERN = /^[a-z0-9_]{1,64}$/;
 export const MAX_PURGE_FILES = 30;
@@ -35,9 +38,6 @@ export const FAMILIES = Object.freeze([
   Object.freeze({ id: 'rules', label: 'Rules' }),
   Object.freeze({ id: 'cache', label: 'Cache settings (purging needs its own permission, which cannot be tested without a purge)' }),
 ]);
-
-export const NOT_CONFIGURED_MESSAGE =
-  'Cloudflare is not set up yet: paste the Cloudflare admin token on Integrations → Keys (CLOUDFLARE-ADMIN-TOKEN). The zone id comes from Terraform.';
 
 /** What `protected.js` holds, as the status route shows it. */
 export const PROTECTED_VIEW = Object.freeze({
@@ -60,16 +60,22 @@ async function zoneSummary(client) {
   }
 }
 
-/** GET cms/cloudflare/status. 200 even when not set up. Never holds a rule, a record or a value. */
-export async function getStatus({ client }) {
+/**
+ * GET cms/cloudflare/status. 200 even when not set up, with `missing`
+ * naming `token` and/or `zoneId` and a sentence saying where each comes
+ * from. Never holds a rule, a record or a value.
+ */
+export async function getStatus({ client, missing = [] }) {
   if (!client) {
-    return json(200, { ok: true, configured: false, message: NOT_CONFIGURED_MESSAGE, zone: null, families: [], protected: PROTECTED_VIEW });
+    const message = notConfiguredMessage(missing);
+    return json(200, { ok: true, configured: false, missing, message, zone: null, families: [], protected: PROTECTED_VIEW });
   }
   const { zone, zoneError } = await zoneSummary(client);
   const readable = await Promise.all(FAMILIES.map((family) => client.canRead(family.id)));
   return json(200, {
     ok: true,
     configured: true,
+    missing: [],
     zone,
     zoneError,
     families: FAMILIES.map((family, index) => ({ ...family, readable: readable[index] })),
@@ -121,8 +127,8 @@ export async function patchSetting(call) {
   const before = (await client.getSetting(settingId))?.value ?? null;
   const result = await client.patchSetting(settingId, body.value);
   const saved = settingView({ ...result, id: result?.id ?? settingId, value: result?.value ?? body.value });
-  await recordChange(call, { family: 'settings', settingId, before, after: saved.value }, `changed the Cloudflare zone setting ${settingId}.`);
-  return json(200, { ok: true, setting: saved });
+  const audited = await recordChange(call, { family: 'settings', settingId, before, after: saved.value }, `changed the Cloudflare zone setting ${settingId}.`);
+  return json(200, { ok: true, setting: saved, audited });
 }
 
 /** Whether a host is the zone or one of its names. */
@@ -173,6 +179,6 @@ export async function purge(call) {
   const everything = sent.purge_everything === true;
   const details = everything ? { family: 'cache', purge: 'everything' } : { family: 'cache', purge: 'files', count: sent.files.length };
   const sentence = everything ? 'purged the whole Cloudflare cache.' : `purged ${sent.files.length} address(es) from the Cloudflare cache.`;
-  await recordChange(call, details, sentence);
-  return json(200, { ok: true, purged: everything ? 'everything' : sent.files.length });
+  const audited = await recordChange(call, details, sentence);
+  return json(200, { ok: true, purged: everything ? 'everything' : sent.files.length, audited });
 }

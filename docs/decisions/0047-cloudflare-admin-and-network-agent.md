@@ -97,6 +97,10 @@ decision widens that for one system, Cloudflare, in a narrow way.
      snippet, a cloud connector). An empty list is refused (it would delete
      every rule), a custom security rule may not `skip`, and a replacement
      must carry the version it read, so it cannot overwrite a newer change.
+     An agent key may add rules and change existing ones but never remove
+     one: its new list must keep the id of every rule the phase has now,
+     or it is refused with 403 `CLOUDFLARE_OWNER_ONLY`. Removing a rule is
+     the owner's, on the Cloudflare page, after typing a confirmation.
      A read-only phase's rules are answered without what they carry, and a
      secret-looking header value in an editable phase is hidden, so the
      origin secret never leaves the server.
@@ -123,7 +127,14 @@ decision widens that for one system, Cloudflare, in a narrow way.
    value before and after, or the DNS record's type, name, proxied flag and
    TTL before and after (never what it points to). A change made by an
    agent key also sends the owner a Telegram message under a source of its
-   own, so the 15-minute cooldown never swallows one.
+   own, so the 15-minute cooldown never swallows one. A change whose audit
+   row could not be written is never silent: the owner gets a Telegram
+   warning for it whoever made it, and the route's answer says
+   `audited: false`. A DNS edit whose saved record comes back under a
+   protected name (Cloudflare's DNS edit cannot be made conditional, so a
+   rename between our read and our write is caught only afterwards) is
+   recorded too, warned about the same way, and answered with
+   `protectedAfterWrite: true`.
 7. **The agents get their own page.** An **Agents** page in the Platform
    group explains what an agent key is and has one tab per key; the key
    tabs move there from the AI Engine page, and the old links still land on
@@ -134,9 +145,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
 ## Consequences and accepted risks
 
 - **A stolen Network Guy key with every switch on could change zone
-  settings, add or edit DNS records and replace the rules of the five
+  settings, add or edit DNS records and add or change rules in the five
   editable phases,** within the token's own Cloudflare permissions. It
-  could not delete a record or a ruleset, touch the site's own address,
+  could not delete a record or a ruleset, remove a rule, touch the site's own address,
   Terraform's records or phases, the owner-only settings or any other
   phase, or reach anything outside the zone. The owner limits this by
   turning on only the switches a task needs, by the token's own permission
@@ -153,10 +164,14 @@ decision widens that for one system, Cloudflare, in a narrow way.
   manage; it is why the rules switch starts off and each change reaches
   the owner's phone. Narrowing it further (refusing any rule whose
   expression names the API host) is the next step if it is ever needed.
-- **Replacing a phase removes the rules left out.** There is no delete
-  route, and an empty list is refused, but a shorter list is still a
-  removal; the page asks for the phase's name to be typed before a custom
-  security rule is removed, and the audit row records the count.
+- **When the owner replaces a phase, the rules left out are removed.**
+  There is no delete route, and an empty list is refused, but a shorter
+  list from a person is still a removal; the page asks for the phase's
+  name to be typed before a custom security rule is removed, and the audit
+  row records the count. An agent key's shorter list is refused: every
+  rule the phase has now must keep its id in the new list. An agent key
+  can still change a kept rule into one that matches nothing, which is
+  why each of its changes reaches the owner's phone.
 - **The DNS audit will call a Network Guy DNS change unexpected.**
   `cloudflare-dns-audit.yml` opens an issue for any DNS change made by
   something it does not know, and this token is not on its list. That is

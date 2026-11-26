@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { NOT_CONFIGURED } from '@/lib/cloudflare';
 import { tabHref as integrationsTabHref } from '@/components/admin/integrations/tabs';
+import { changeWarning, notConfiguredNote } from './cloudflareView';
 
 /** The sentence every write control shows to someone below the role. */
 export const WRITE_REASON =
@@ -41,21 +42,28 @@ export function ExternalLink({ href, children }) {
   );
 }
 
-/** What to do while the token or the zone id is not set: one place to paste it, and why. */
-export function NotConfigured({ compact = false }) {
+/**
+ * What to do while the token or the zone id is not set. It names only what
+ * is missing (the server's `missing` list, or its sentence): the token is
+ * pasted on the Keys tab, which it links; the zone id comes from Terraform.
+ */
+export function NotConfigured({ missing, message, compact = false }) {
+  const note = notConfiguredNote({ missing, message });
   return (
     <EmptyState
       icon={Settings2}
       compact={compact}
       title="Cloudflare is not set up here yet"
-      description="The page needs the Cloudflare admin token: an account-owned API token limited to this one zone. Make it in the Cloudflare dashboard, then paste it on Integrations → Keys (the row CLOUDFLARE-ADMIN-TOKEN). The site never shows it again."
+      description={note.description}
       action={
-        <Link
-          to={integrationsTabHref('keys')}
-          className="text-sm font-medium text-primary underline underline-offset-2"
-        >
-          Open Integrations → Keys
-        </Link>
+        note.keysLink ? (
+          <Link
+            to={integrationsTabHref('keys')}
+            className="text-sm font-medium text-primary underline underline-offset-2"
+          >
+            Open Integrations → Keys
+          </Link>
+        ) : null
       }
     />
   );
@@ -76,10 +84,13 @@ const describeReadError = (err) => err?.message || 'Cloudflare could not be read
 
 /**
  * The tab's body once its read has landed; until then the spinner, the
- * failure with a retry, or the "not set up" note.
+ * failure with a retry, or the "not set up" note (from the page's status
+ * when it has one, else from the server's sentence).
  */
-export function ReadGate({ read, label, children }) {
-  if (read.errorCode === NOT_CONFIGURED) return <NotConfigured />;
+export function ReadGate({ read, label, status = null, children }) {
+  if (read.errorCode === NOT_CONFIGURED) {
+    return <NotConfigured missing={status?.missing} message={read.error} />;
+  }
   if (read.error && !read.loaded) {
     return (
       <EmptyState
@@ -104,7 +115,9 @@ export function ReadGate({ read, label, children }) {
  * The writes' runner. `run(id, work, success)` claims `id` (a second call
  * while the first is out does nothing), runs the request, re-reads the tab,
  * and says what happened; a refusal is a toast with the server's sentence
- * and changes nothing on screen.
+ * and changes nothing on screen. A change the server accepted but flagged
+ * (its audit row failed, or a DNS record came back under a protected name)
+ * is a warning toast instead of "Saved".
  */
 export function useCloudflareWrite(refresh) {
   const { toast } = useToast();
@@ -114,7 +127,16 @@ export function useCloudflareWrite(refresh) {
       if (!claim(id)) return false;
       try {
         const answer = await work();
-        toast({ title: 'Saved', description: success });
+        const warning = changeWarning(answer);
+        toast(
+          warning
+            ? {
+                title: 'Saved, but check it',
+                description: `${success} ${warning}`,
+                variant: 'warning',
+              }
+            : { title: 'Saved', description: success }
+        );
         await refresh?.();
         return answer ?? true;
       } catch (err) {

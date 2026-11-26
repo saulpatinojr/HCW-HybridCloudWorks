@@ -14,6 +14,13 @@
  * The audit row names the record's type and name and its `proxied` and
  * `ttl` before and after. It never holds the content (an address, or text
  * that may prove ownership of something).
+ *
+ * After an edit, the saved record's name is checked against the protected
+ * list once more. Cloudflare's DNS edit cannot be made conditional, so a
+ * record someone renamed onto a protected name between our read and our
+ * write would otherwise pass unnoticed: the change is still recorded, the
+ * owner's phone is told whoever made it, and the answer says
+ * `protectedAfterWrite: true`.
  */
 import { bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
 import { recordChange, requireOurZone } from './record.js';
@@ -124,8 +131,8 @@ export async function createDns(call) {
   const created = await client.createDns(fields);
   const name = created?.name || fields.name;
   const details = { family: 'dns', change: 'create', recordType: fields.type, name, before: null, after: routing(created) };
-  await recordChange(call, details, `added the ${fields.type} record ${name} in Cloudflare.`);
-  return json(201, { ok: true, record: pickDns(created) });
+  const audited = await recordChange(call, details, `added the ${fields.type} record ${name} in Cloudflare.`);
+  return json(201, { ok: true, record: pickDns(created), audited });
 }
 
 /** The record id in the path, checked. */
@@ -160,9 +167,22 @@ function editDetails(current, changes, updated) {
   };
 }
 
+/**
+ * The sentence for a record that came back from the edit under a protected
+ * name, or null. Cloudflare's DNS edit has no "only if unchanged" option, so
+ * a record renamed onto a protected name between our read and our write is
+ * caught here, after the fact: the change is still recorded, and the owner
+ * is told to check it.
+ */
+function protectedAfterWriteNote(updated) {
+  const name = updated?.name;
+  if (dnsNameProtection(name) === null) return null;
+  return `The record now carries the protected name ${name}, which this page never edits. Check it in the Cloudflare dashboard.`;
+}
+
 /** PATCH cms/cloudflare/dns/{recordId}. */
 export async function patchDns(call) {
-  const { request, client } = call;
+  const { request, client, context } = call;
   const recordId = recordIdOf(request);
   const changes = dnsFields(await bodyOf(request), { partial: true });
   if (changes.name !== undefined) refuseProtectedName('That name is protected', changes.name);
@@ -170,7 +190,9 @@ export async function patchDns(call) {
   const current = await client.getDns(recordId);
   refuseCurrent(current);
   const updated = await client.patchDns(recordId, changes);
-  const details = editDetails(current, changes, updated);
-  await recordChange(call, details, `edited the ${details.recordType} record ${details.name} in Cloudflare.`);
-  return json(200, { ok: true, record: pickDns(updated) });
+  const note = protectedAfterWriteNote(updated);
+  if (note) context?.warn?.('[cloudflare] dns-edit: the saved record carries a protected name');
+  const details = { ...editDetails(current, changes, updated), ...(note ? { protectedAfterWrite: true } : {}) };
+  const audited = await recordChange(call, details, `edited the ${details.recordType} record ${details.name} in Cloudflare.`, note ? [note] : []);
+  return json(200, { ok: true, record: pickDns(updated), audited, protectedAfterWrite: Boolean(note) });
 }

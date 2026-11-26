@@ -228,7 +228,7 @@ export default function CloudflareSettings({ status = null }) {
     run(id, () => saveCloudflareSetting(id, value), `${settingLabel(id)} is saved in Cloudflare.`);
 
   return (
-    <ReadGate read={read} label="The zone settings">
+    <ReadGate read={read} label="The zone settings" status={status}>
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Zone settings</CardTitle>

@@ -15,6 +15,7 @@ import {
   PROBE_FAILURE_FIELDS,
   PROBE_NAMES,
   assertUrlSafe,
+  cloudflareNotConfigured,
   createConnectionProbe,
   createTokenExchange,
   redactSecrets,
@@ -729,6 +730,27 @@ describe('the Cloudflare probe (#1905)', () => {
     expect(body).toMatchObject({ ok: false, code: 'INTEGRATION_NOT_CONFIGURED' });
     expect(body.error).toMatch(/^No token yet: .*Keys tab/);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('says "no zone id yet" when only the zone id is missing, and that Terraform sets it, not the Keys tab', async () => {
+    const fetchImpl = vi.fn();
+    const body = bodyOf(await run(fetchImpl, { ...ENV, CF_ZONE_ID: '' }));
+    expect(body).toMatchObject({ ok: false, code: 'INTEGRATION_NOT_CONFIGURED' });
+    expect(body.error).toMatch(/^No zone id yet: the zone id \(CF_ZONE_ID\) .*Terraform sets it on the next apply of the hcw-azure workspace; it is not pasted on the Keys tab\.$/);
+    expect(body.error).not.toMatch(/token/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('names both when the token and the zone id are missing', async () => {
+    const fetchImpl = vi.fn();
+    const body = bodyOf(await run(fetchImpl, {}));
+    expect(body.error).toMatch(/^Not set up yet\. Two things are missing: the Cloudflare admin token .*Keys tab.*; and the zone id \(CF_ZONE_ID\).*Terraform/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('names only the token when only the token is missing', () => {
+    expect(cloudflareNotConfigured(['CLOUDFLARE_ADMIN_TOKEN'])).toMatch(/^No token yet: /);
+    expect(cloudflareNotConfigured(['CLOUDFLARE_ADMIN_TOKEN'])).not.toMatch(/CF_ZONE_ID/);
   });
 
   it.each([

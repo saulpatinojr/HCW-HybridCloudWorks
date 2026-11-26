@@ -305,8 +305,9 @@ there.
   zone settings and purge the cache**, **add and edit DNS records**, and
   **edit rules**. Turn on only what a task needs.
 - **What it can never do, whatever its switches say:** delete anything,
-  change the site's own address (the apex and `www`), or change a DNS record
-  or rule phase Terraform manages. The list and the reasons are in the
+  remove a rule from a phase (it may add and change rules only), change the
+  site's own address (the apex and `www`), or change a DNS record or rule
+  phase Terraform manages. The list and the reasons are in the
   [Cloudflare admin runbook](cloudflare-admin.md#what-is-refused-and-why).
 - **Every change it makes** writes an audit row and sends a Telegram message
   naming the setting, record or rule phase.

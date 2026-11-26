@@ -278,7 +278,7 @@ export default function CloudflareOverview({ statusRead }) {
     <ReadGate read={statusRead} label="Cloudflare’s status">
       {statusRead.data?.configured === false ? (
         <div className="space-y-6">
-          <NotConfigured />
+          <NotConfigured missing={statusRead.data.missing} message={statusRead.data.message} />
           <LockedCard status={statusRead.data} />
           <WhereCard />
         </div>

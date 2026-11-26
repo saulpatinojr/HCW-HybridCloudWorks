@@ -26,11 +26,14 @@
  * opened earlier cannot quietly overwrite a newer change.
  *
  * WHAT A REPLACEMENT MAY BE. Only an editable phase; never an empty list
- * (that deletes every rule in the phase); and, in the custom security rules,
+ * (that deletes every rule in the phase); in the custom security rules,
  * never a rule whose action is `skip` (it lets requests past the other
- * checks).
+ * checks); and, from an agent key, never a list that leaves out a rule the
+ * phase has now (an agent key adds and changes rules; only the owner
+ * removes one, 403 CLOUDFLARE_OWNER_ONLY).
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
+import { isAgentUser } from '../agent-content/agent-keys.js';
 import { recordChange, requireOurZone } from './record.js';
 import { REDACTED_VALUE, REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
 
@@ -138,10 +141,32 @@ function refuseVersionShape(body) {
   }
 }
 
-/** Refuses (409, nothing written) when the phase changed since the caller read it. */
+/** Refuses (409, nothing written) when the phase changed since the caller read it; else answers the phase as it is now. */
 async function refuseStale(client, phase, expectedVersion) {
   const current = await client.getPhase(phase);
   if (versionOf(current) !== expectedVersion) throw new Refusal(STALE_MESSAGE, { status: 409, code: 'CLOUDFLARE_STALE' });
+  return current;
+}
+
+export const AGENT_REMOVAL_MESSAGE =
+  'An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page.';
+
+/** The ids of a list of rules, leaving out any rule without one. */
+const idsOf = (rules) => (Array.isArray(rules) ? rules : []).map((rule) => rule?.id).filter((id) => typeof id === 'string' && id);
+
+/**
+ * Refuses (403, nothing written) an agent key's list that leaves out a rule
+ * the phase has now. Every current rule's id must be in the new list, so an
+ * agent key may add rules and change existing ones but never drop one. A
+ * person (super_admin) may remove rules; the page asks them to type a
+ * confirmation first.
+ */
+function refuseAgentRemoval(user, current, rules) {
+  if (!isAgentUser(user)) return;
+  const kept = new Set(idsOf(rules));
+  if (idsOf(current?.rules).some((id) => !kept.has(id))) {
+    throw new Refusal(AGENT_REMOVAL_MESSAGE, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY' });
+  }
 }
 
 /** A phase's new rules, checked for shape. Cloudflare checks what each rule says. */
@@ -162,16 +187,17 @@ function rulesBody(phase, body) {
 
 /** PUT cms/cloudflare/rulesets/phases/{phase}. */
 export async function putPhase(call) {
-  const { request, client } = call;
+  const { request, client, user } = call;
   const phase = phaseOf(request);
   const reason = phaseProtection(phase);
   if (reason) throw protectedRefusal('That rule phase may not be changed from here', reason);
   const body = await bodyOf(request);
   const sent = rulesBody(phase, body);
   await requireOurZone(client);
-  await refuseStale(client, phase, body.expectedVersion);
+  const current = await refuseStale(client, phase, body.expectedVersion);
+  refuseAgentRemoval(user, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
-  await recordChange(call, { family: 'rules', phase, count }, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`);
-  return json(200, { ok: true, ruleset: rulesetView(phase, saved) });
+  const audited = await recordChange(call, { family: 'rules', phase, count }, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`);
+  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited });
 }

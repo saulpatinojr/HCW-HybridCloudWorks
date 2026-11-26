@@ -256,7 +256,7 @@ export default function CloudflareDns({ status = null }) {
   };
 
   return (
-    <ReadGate read={read} label="The DNS records">
+    <ReadGate read={read} label="The DNS records" status={status}>
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">

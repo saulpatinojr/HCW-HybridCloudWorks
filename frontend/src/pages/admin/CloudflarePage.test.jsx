@@ -190,6 +190,59 @@ describe('the Cloudflare page', () => {
     expect(await screen.findByText('Cloudflare is not set up here yet')).toBeInTheDocument();
   });
 
+  it('names only the zone id when only the zone id is missing, and sends no one to paste a token', async () => {
+    api.readCloudflareStatus.mockResolvedValue({
+      configured: false,
+      missing: ['zoneId'],
+      message: 'Cloudflare is not set up yet: the zone id (CF_ZONE_ID) is not set.',
+      zone: null,
+      families: [],
+      protected: { dnsNames: [], phases: [] },
+    });
+    api.readCloudflareSettings.mockRejectedValue(
+      Object.assign(
+        new Error('Cloudflare is not set up yet: the zone id (CF_ZONE_ID) is not set.'),
+        {
+          code: 'CLOUDFLARE_NOT_CONFIGURED',
+          status: 503,
+        }
+      )
+    );
+    renderAt();
+    expect(await screen.findByText('Cloudflare is not set up here yet')).toBeInTheDocument();
+    expect(screen.getByText(/the zone id \(CF_ZONE_ID\).*Terraform sets it/)).toBeInTheDocument();
+    expect(screen.queryByText(/paste it on Integrations → Keys/)).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open Integrations → Keys' })).toBeNull();
+    expect(
+      screen.getByText('Not set up yet: the zone id is missing (Terraform sets the zone id).')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(
+      await screen.findByText(/the zone id \(CF_ZONE_ID\).*Terraform sets it/)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open Integrations → Keys' })).toBeNull();
+  });
+
+  it('names both, and links the Keys tab, when the token and the zone id are missing', async () => {
+    api.readCloudflareStatus.mockResolvedValue({
+      configured: false,
+      missing: ['token', 'zoneId'],
+      zone: null,
+      families: [],
+      protected: { dnsNames: [], phases: [] },
+    });
+    renderAt();
+    expect(await screen.findByText(/paste it on Integrations → Keys/)).toHaveTextContent(
+      /CF_ZONE_ID.*Terraform/
+    );
+    expect(screen.getByRole('link', { name: 'Open Integrations → Keys' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Not set up yet: the admin token and the zone id are missing (Terraform sets the zone id).'
+      )
+    ).toBeInTheDocument();
+  });
+
   it('says when a family could not be checked, and shows the server’s sentence for the zone', async () => {
     api.readCloudflareStatus.mockResolvedValue({
       ...STATUS,
@@ -476,6 +529,60 @@ describe('the Rules tab', () => {
     expect(
       within(panel).getByLabelText('Rules for http_request_firewall_custom')
     ).toBeInTheDocument();
+  });
+});
+
+describe('a change the server accepted but flagged', () => {
+  it('shows a warning, not “Saved”, when the audit row could not be written', async () => {
+    api.saveCloudflareSetting.mockResolvedValue({ setting: {}, audited: false });
+    renderAt('/admin/cloudflare?tab=settings');
+    const row = await screen.findByTestId('setting-brotli');
+    fireEvent.click(within(row).getByRole('switch', { name: 'Brotli' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Save Brotli' }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Saved, but check it',
+        variant: 'warning',
+        description: expect.stringMatching(/audit row could not be written/),
+      })
+    );
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Saved' }));
+  });
+
+  it('says “Saved” when the audit row was written', async () => {
+    api.saveCloudflareSetting.mockResolvedValue({ setting: {}, audited: true });
+    renderAt('/admin/cloudflare?tab=settings');
+    const row = await screen.findByTestId('setting-brotli');
+    fireEvent.click(within(row).getByRole('switch', { name: 'Brotli' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Save Brotli' }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Saved' }))
+    );
+    expect(toast.mock.calls[0][0].variant).toBeUndefined();
+  });
+
+  it('warns when a DNS edit came back under a protected name', async () => {
+    api.updateCloudflareDnsRecord.mockResolvedValue({
+      record: {},
+      audited: true,
+      protectedAfterWrite: true,
+    });
+    renderAt('/admin/cloudflare?tab=dns');
+    fireEvent.click(await screen.findByRole('button', { name: 'Change A lab.example.com' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Content'), {
+      target: { value: '192.0.2.11' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save the change/ }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: 'warning',
+          description: expect.stringMatching(/came back with a protected name/),
+        })
+      )
+    );
   });
 });
 

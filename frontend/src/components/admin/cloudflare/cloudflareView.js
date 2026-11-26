@@ -51,6 +51,97 @@ export {
   ttlText,
 } from './cloudflareDnsForm';
 
+// ── Not set up yet ───────────────────────────────────────────────────────────
+
+/**
+ * The two things the page needs, as the server names them in `missing`
+ * (functions/src/lib/cloudflare/zone-routes.js PREREQUISITES), and what each
+ * one is and where it comes from. The token is pasted on the Keys tab; the
+ * zone id is never pasted, Terraform sets it.
+ */
+export const PREREQUISITE_NOTES = Object.freeze({
+  token: Object.freeze({
+    setting: 'CLOUDFLARE_ADMIN_TOKEN',
+    short: 'the admin token',
+    description:
+      'The page needs the Cloudflare admin token: an account-owned API token limited to this one zone. Make it in the Cloudflare dashboard, then paste it on Integrations → Keys (the row CLOUDFLARE-ADMIN-TOKEN). The site never shows it again.',
+  }),
+  zoneId: Object.freeze({
+    setting: 'CF_ZONE_ID',
+    short: 'the zone id',
+    description:
+      'The page needs the zone id (CF_ZONE_ID), which names the site’s zone. It is not pasted anywhere: Terraform sets it on the function app on the next apply of the hcw-azure workspace.',
+  }),
+});
+
+/**
+ * What is missing: the server's `missing` list when it sent one, else read
+ * from its sentence (a 503 answer names each missing setting), else unknown
+ * (an empty list).
+ */
+export function missingPrerequisites({ missing, message } = {}) {
+  const ids = Object.keys(PREREQUISITE_NOTES);
+  if (Array.isArray(missing)) return ids.filter((id) => missing.includes(id));
+  const text = String(message ?? '');
+  return ids.filter((id) => text.includes(PREREQUISITE_NOTES[id].setting));
+}
+
+/**
+ * The "not set up yet" note: its description and whether it offers the Keys
+ * tab. It names only what is missing, so a missing zone id never sends the
+ * owner to paste a token that is already there. When nothing says what is
+ * missing, it shows the server's sentence, or names both.
+ */
+export function notConfiguredNote({ missing, message } = {}) {
+  const found = missingPrerequisites({ missing, message });
+  if (found.length) {
+    return {
+      description: found.map((id) => PREREQUISITE_NOTES[id].description).join(' '),
+      keysLink: found.includes('token'),
+    };
+  }
+  if (message) return { description: message, keysLink: false };
+  return {
+    description: Object.values(PREREQUISITE_NOTES)
+      .map((note) => note.description)
+      .join(' '),
+    keysLink: true,
+  };
+}
+
+/** The page header's one line while the page is not set up. */
+export function notConfiguredHeadline(status) {
+  const found = missingPrerequisites(status ?? {});
+  if (found.length === 0) return 'Not set up yet.';
+  const words = found.map((id) => PREREQUISITE_NOTES[id].short).join(' and ');
+  const verb = found.length > 1 ? 'are' : 'is';
+  const terraform = found.includes('zoneId') ? ' (Terraform sets the zone id)' : '';
+  return `Not set up yet: ${words} ${verb} missing${terraform}.`;
+}
+
+// ── After a change ───────────────────────────────────────────────────────────
+
+/**
+ * The warning a saved change carries, or null. Two answers need one: the
+ * change was made but its audit row could not be written (`audited: false`),
+ * and a DNS edit came back under a protected name (`protectedAfterWrite`).
+ * The server also tells the owner's phone about both.
+ */
+export function changeWarning(answer) {
+  const notes = [];
+  if (answer?.protectedAfterWrite === true) {
+    notes.push(
+      'The record came back with a protected name: someone may have renamed it while you were editing. Check it in the Cloudflare dashboard.'
+    );
+  }
+  if (answer?.audited === false) {
+    notes.push(
+      'The change was made in Cloudflare, but its audit row could not be written, so the audit log does not show it. A warning has been sent to the owner’s Telegram.'
+    );
+  }
+  return notes.length ? notes.join(' ') : null;
+}
+
 // ── Overview ─────────────────────────────────────────────────────────────────
 
 /** What reading each family lets the page do, for the Overview's list. */

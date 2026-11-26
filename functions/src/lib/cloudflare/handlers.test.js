@@ -10,11 +10,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCloudflareHandlers, MAX_BODY_BYTES, MAX_PURGE_FILES, READ_ROLE, REDACTED_VALUE, WRITE_ROLE } from './handlers.js';
+import {
+  createCloudflareHandlers,
+  MAX_BODY_BYTES,
+  MAX_PURGE_FILES,
+  PREREQUISITES,
+  READ_ROLE,
+  REDACTED_VALUE,
+  WRITE_ROLE,
+  notConfiguredMessage,
+} from './handlers.js';
 import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES } from './client.js';
 import { EDITABLE_PHASES, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
-import { WRONG_ZONE_MESSAGE } from './record.js';
-import { STALE_MESSAGE } from './rules-routes.js';
+import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE } from './record.js';
+import { AGENT_REMOVAL_MESSAGE, STALE_MESSAGE } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
@@ -124,21 +133,43 @@ describe('roles', () => {
 });
 
 describe('not set up', () => {
+  // Each setup that is not complete, with what the answers must name as missing.
   const unset = [
-    {},
-    { CF_ZONE_ID: ZONE },
-    { CLOUDFLARE_ADMIN_TOKEN: TOKEN },
-    { CLOUDFLARE_ADMIN_TOKEN: '@Microsoft.KeyVault(SecretUri=https://kv.example/secrets/CLOUDFLARE-ADMIN-TOKEN)', CF_ZONE_ID: ZONE },
-    { CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: 'not-a-zone-id' },
+    [{}, ['token', 'zoneId']],
+    [{ CF_ZONE_ID: ZONE }, ['token']],
+    [{ CLOUDFLARE_ADMIN_TOKEN: TOKEN }, ['zoneId']],
+    [{ CLOUDFLARE_ADMIN_TOKEN: '@Microsoft.KeyVault(SecretUri=https://kv.example/secrets/CLOUDFLARE-ADMIN-TOKEN)', CF_ZONE_ID: ZONE }, ['token']],
+    [{ CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: 'not-a-zone-id' }, ['zoneId']],
   ];
+  const envs = unset.map(([env]) => env);
+
+  it.each(unset)('names exactly what is missing for %j: %j', async (env, missing) => {
+    const { handlers } = setup({ env });
+    const status = parse(await handlers.getStatus(request(), {}));
+    expect(status.body.missing).toEqual(missing);
+    expect(status.body.message).toBe(notConfiguredMessage(missing));
+    const refused = parse(await handlers.getSettings(request(), {}));
+    expect(refused.body).toMatchObject({ code: 'CLOUDFLARE_NOT_CONFIGURED', missing, error: notConfiguredMessage(missing) });
+    expect(JSON.stringify([status.body, refused.body])).not.toContain(TOKEN);
+  });
+
+  it('says where each missing thing comes from: the token from the Keys tab, the zone id from Terraform', () => {
+    const token = notConfiguredMessage(['token']);
+    expect(token).toMatch(/admin token \(CLOUDFLARE_ADMIN_TOKEN\).*Integrations → Keys/);
+    expect(token).not.toMatch(/CF_ZONE_ID|Terraform/);
+    const zone = notConfiguredMessage(['zoneId']);
+    expect(zone).toMatch(/zone id \(CF_ZONE_ID\).*Terraform sets it on the next apply of the hcw-azure workspace, so it is not pasted on the Keys tab/);
+    expect(zone).not.toMatch(/CLOUDFLARE_ADMIN_TOKEN|Integrations → Keys/);
+    expect(notConfiguredMessage(['token', 'zoneId'])).toMatch(/Two things are missing: .*Integrations → Keys.*; and the zone id .*Terraform/);
+    expect(Object.keys(PREREQUISITES)).toEqual(['token', 'zoneId']);
+  });
 
   it('says so on the status route with 200, and lists what is protected and what may be edited', async () => {
-    for (const env of unset) {
+    for (const env of envs) {
       const { handlers, api } = setup({ env });
       const res = parse(await handlers.getStatus(request(), {}));
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({ configured: false, zone: null, families: [] });
-      expect(res.body.message).toMatch(/Integrations → Keys/);
       expect(res.body.protected.phases.map((p) => p.phase)).toContain('http_request_late_transform');
       expect(res.body.protected.editablePhases.map((p) => p.phase)).toEqual(EDITABLE_PHASES.map((p) => p.phase));
       expect(res.body.protected.ownerOnlySettings.map((s) => s.setting)).toEqual(OWNER_ONLY_SETTINGS.map((s) => s.setting));
@@ -147,7 +178,7 @@ describe('not set up', () => {
   });
 
   it('answers 503 CLOUDFLARE_NOT_CONFIGURED on every other route', async () => {
-    for (const env of unset) {
+    for (const env of envs) {
       for (const [name, , req] of ROUTES.filter(([route]) => route !== 'getStatus')) {
         const { handlers, api } = setup({ env });
         const res = parse(await handlers[name](req, {}));
@@ -171,6 +202,7 @@ describe('the status route', () => {
     });
     const res = parse(await handlers.getStatus(request(), { warn: vi.fn() }));
     expect(res.body.configured).toBe(true);
+    expect(res.body.missing).toEqual([]);
     expect(res.body.zone).toEqual({ id: ZONE, name: ZONE_APEX, status: 'active', plan: 'Free Website' });
     expect(res.body.zoneError).toBeNull();
     expect(Object.fromEntries(res.body.families.map((f) => [f.id, f.readable]))).toEqual({ settings: true, dns: false, rules: true, cache: null });
@@ -578,6 +610,56 @@ describe('DNS records', () => {
     expect(api.calls[2].body).toEqual({ name: `shop.${ZONE_APEX}` });
     expect(store.upsertDoc.mock.calls[0][1].details).toMatchObject({ name: `shop.${ZONE_APEX}`, previousName: `blog.${ZONE_APEX}` });
   });
+
+  it('answers protectedAfterWrite: false for an ordinary edit', async () => {
+    const { handlers } = setup({
+      routes: { [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()), [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ proxied: false })) },
+    });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false } }), {}));
+    expect(res.body).toMatchObject({ ok: true, audited: true, protectedAfterWrite: false });
+  });
+
+  it.each([
+    ['a person', PERSON, 'Someone signed in to the admin portal'],
+    ['an agent key', NETWORK_GUY, 'Claude Network Guy'],
+  ])('still records an edit whose saved record came back with a protected name, and warns the owner, for %s', async (label, user, actor) => {
+    // Our read sees an open name; the record was renamed onto a protected one before our write landed.
+    const { handlers, store, notifier, context } = setup({
+      user,
+      routes: {
+        [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()),
+        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ name: `www.${ZONE_APEX}`, proxied: false })),
+      },
+    });
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false } }), context));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, audited: true, protectedAfterWrite: true });
+    expect(res.body.record).toMatchObject({ name: `www.${ZONE_APEX}`, locked: true });
+    expect(store.upsertDoc).toHaveBeenCalledTimes(1);
+    expect(store.upsertDoc.mock.calls[0][1].details).toMatchObject({ name: `www.${ZONE_APEX}`, protectedAfterWrite: true });
+    expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    const sent = notifier.notifyTelegram.mock.calls[0][0];
+    expect(sent).toMatchObject({ severity: 'warning', source: 'cloudflare-check:audit-1' });
+    expect(sent.message).toBe(
+      `${actor} edited the A record www.${ZONE_APEX} in Cloudflare. The record now carries the protected name www.${ZONE_APEX}, which this page never edits. Check it in the Cloudflare dashboard.`
+    );
+    expect(logs(context)).not.toContain(ZONE_APEX);
+    expect(context.warn).toHaveBeenCalledWith('[cloudflare] dns-edit: the saved record carries a protected name');
+  });
+
+  it('puts both warnings in one message when the saved name is protected and the audit row failed', async () => {
+    const { handlers, store, notifier } = setup({
+      routes: {
+        [`GET ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record()),
+        [`PATCH ${ZONE_PATH}/dns_records/${RECORD_ID}`]: ok(record({ name: `api-azure.${ZONE_APEX}` })),
+      },
+    });
+    store.upsertDoc.mockRejectedValue(new Error('down'));
+    const res = parse(await handlers.patchDns(request({ params: { recordId: RECORD_ID }, body: { proxied: false } }), { error: vi.fn(), warn: vi.fn() }));
+    expect(res.body).toMatchObject({ audited: false, protectedAfterWrite: true });
+    expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    expect(notifier.notifyTelegram.mock.calls[0][0].message).toMatch(/protected name api-azure\..*audit row could not be written/);
+  });
 });
 
 describe('rules', () => {
@@ -830,6 +912,121 @@ describe('rules', () => {
   it.each(EDITABLE_PHASES.map((entry) => entry.phase))('lets the editable phase %s be replaced', async (phase) => {
     const { handlers } = setup({ routes: { ...current(phase), ...put(phase) } });
     expect(parse(await handlers.putPhase(replace(phase, { rules: [{ expression: 'true', action: 'block' }] }), {})).status).toBe(200);
+  });
+
+  describe('an agent key may add or change rules, never remove one', () => {
+    const KEPT = { id: 'rule-a', expression: 'true', action: 'block' };
+    const OTHER = { id: 'rule-b', expression: 'false', action: 'block' };
+    const withRules = (rules) => entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, version: '3', rules });
+
+    it.each([
+      ['leaves one out', [KEPT]],
+      ['leaves every one out for new ones', [{ expression: 'true', action: 'redirect' }]],
+      ['keeps the rule but drops its id', [KEPT, { ...OTHER, id: undefined }]],
+    ])('refuses an agent key’s list that %s with 403, writing nothing', async (label, rules) => {
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
+      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_REMOVAL_MESSAGE });
+      expect(res.body.error).toBe('An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page.');
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+      expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['adds a rule and keeps every current one', [KEPT, OTHER, { expression: 'true', action: 'redirect' }]],
+      ['changes a current rule and keeps the rest', [{ ...KEPT, expression: 'http.host eq "blog.example"' }, OTHER]],
+      ['puts the current rules in another order', [OTHER, KEPT]],
+    ])('lets an agent key replace a phase when its list %s', async (label, rules) => {
+      const { handlers, api } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
+      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules }), {}));
+      expect(res.status).toBe(200);
+      expect(WRITES(api)).toHaveLength(1);
+    });
+
+    it('lets an agent key add the first rules to a phase with none', async () => {
+      const { handlers } = setup({ user: NETWORK_GUY, routes: put(REDIRECT) });
+      expect(parse(await handlers.putPhase(replace(REDIRECT, { rules: [RULE], expectedVersion: null }), {})).status).toBe(200);
+    });
+
+    it('lets a super_admin person remove a rule', async () => {
+      const { handlers, api, store } = setup({ routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
+      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules: [KEPT] }), {}));
+      expect(res.status).toBe(200);
+      expect(api.calls[2].body).toEqual({ rules: [KEPT] });
+      expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: REDIRECT, count: 1 });
+    });
+  });
+});
+
+describe('an accepted change whose audit row failed is never silent', () => {
+  const brotli = {
+    [`GET ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'off' }),
+    [`PATCH ${ZONE_PATH}/settings/brotli`]: ok({ id: 'brotli', value: 'on' }),
+  };
+  const STORE_WORDS = 'store said: container admin_audit_logs row audit-1 for owner@example.com';
+  const failingStore = (store) => store.upsertDoc.mockRejectedValue(Object.assign(new Error(STORE_WORDS), { code: 'StoreDown' }));
+  const change = (handlers, context) => handlers.patchSetting(request({ params: { settingId: 'brotli' }, body: { value: 'on' } }), context);
+
+  it('answers audited: true when the row was written', async () => {
+    const { handlers } = setup({ routes: brotli });
+    expect(parse(await change(handlers, {})).body.audited).toBe(true);
+  });
+
+  it.each([
+    ['a person', PERSON, 'Someone signed in to the admin portal'],
+    ['an agent key', NETWORK_GUY, 'Claude Network Guy'],
+  ])('tells the owner’s phone, for %s, and answers audited: false', async (label, user, actor) => {
+    const { handlers, store, notifier, context } = setup({ user, routes: brotli });
+    failingStore(store);
+    const res = parse(await change(handlers, context));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, audited: false });
+    expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    const sent = notifier.notifyTelegram.mock.calls[0][0];
+    expect(sent).toMatchObject({ severity: 'warning', source: 'cloudflare-check:audit-1', title: 'Check this Cloudflare change' });
+    expect(sent.message).toBe(`${actor} changed the Cloudflare zone setting brotli. ${UNAUDITED_NOTE}`);
+    expect(sent.message).toMatch(/made in Cloudflare, but its audit row could not be written/);
+    expect(logs(context)).not.toContain(STORE_WORDS);
+    expect(logs(context)).not.toContain('owner@example.com');
+    expect(formatTelegramText(sent)).toContain('Reported by the Cloudflare page.');
+  });
+
+  it('gives every such change its own source, so no cooldown swallows one', async () => {
+    const { handlers, store, notifier } = setup({ routes: brotli });
+    failingStore(store);
+    for (let i = 0; i < 2; i += 1) await change(handlers, {});
+    expect(notifier.notifyTelegram.mock.calls.map(([sent]) => sent.source)).toEqual(['cloudflare-check:audit-1', 'cloudflare-check:audit-2']);
+  });
+
+  it.each([
+    ['purge', () => request({ body: { everything: true } }), { [`POST ${ZONE_PATH}/purge_cache`]: ok({ id: ZONE }) }],
+    [
+      'createDns',
+      () => request({ body: { type: 'A', name: 'blog', content: '192.0.2.1' } }),
+      { [`POST ${ZONE_PATH}/dns_records`]: ok({ id: RECORD_ID, type: 'A', name: `blog.${ZONE_APEX}` }) },
+    ],
+    [
+      'putPhase',
+      () => request({ params: { phase: REDIRECT }, body: { rules: [RULE], expectedVersion: null } }),
+      { [`PUT ${PHASES}/${REDIRECT}/entrypoint`]: ok({ id: 'r2', phase: REDIRECT, version: '1', rules: [RULE] }) },
+    ],
+  ])('answers audited on %s too, false when the row failed', async (name, req, routes) => {
+    const good = setup({ routes });
+    expect(parse(await good.handlers[name](req(), {})).body.audited, name).toBe(true);
+    const failed = setup({ routes });
+    failingStore(failed.store);
+    expect(parse(await failed.handlers[name](req(), {})).body.audited, name).toBe(false);
+    expect(failed.notifier.notifyTelegram, name).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends no warning for a refused change', async () => {
+    const { handlers, store, notifier } = setup({ user: NETWORK_GUY });
+    failingStore(store);
+    const res = parse(await handlers.patchSetting(request({ params: { settingId: 'ssl' }, body: { value: 'off' } }), {}));
+    expect(res.status).toBe(403);
+    expect(notifier.notifyTelegram).not.toHaveBeenCalled();
   });
 });
 

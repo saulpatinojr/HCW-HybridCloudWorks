@@ -4,9 +4,15 @@
  * server's protected rule phases.
  */
 import { describe, expect, it } from 'vitest';
+import * as server from '../../../../../functions/src/lib/cloudflare/prerequisites.js';
 import {
   APEX_WILDCARD_REASON,
   FAMILY_STATES,
+  PREREQUISITE_NOTES,
+  changeWarning,
+  missingPrerequisites,
+  notConfiguredHeadline,
+  notConfiguredNote,
   READ_ONLY_PHASE_REASON,
   dnsForm,
   dnsNameLock,
@@ -275,5 +281,85 @@ describe('the purge list', () => {
     expect(parsePurgeList(many, { zoneName: ZONE, max: 30 }).problems).toEqual([
       'At most 30 addresses at once; there are 31.',
     ]);
+  });
+});
+
+describe('not set up yet', () => {
+  it('knows the same missing things as the server, by the same names', () => {
+    expect(Object.keys(PREREQUISITE_NOTES)).toEqual(Object.keys(server.PREREQUISITES));
+  });
+
+  it('names only the token, with the Keys tab, when only the token is missing', () => {
+    const note = notConfiguredNote({ missing: ['token'] });
+    expect(note.keysLink).toBe(true);
+    expect(note.description).toMatch(/paste it on Integrations → Keys/);
+    expect(note.description).not.toMatch(/CF_ZONE_ID|Terraform/);
+  });
+
+  it('names only the zone id, from Terraform and with no Keys tab, when only it is missing', () => {
+    const note = notConfiguredNote({ missing: ['zoneId'] });
+    expect(note.keysLink).toBe(false);
+    expect(note.description).toMatch(/CF_ZONE_ID.*not pasted anywhere: Terraform sets it/);
+    expect(note.description).not.toMatch(/admin token/);
+  });
+
+  it('names both when both are missing', () => {
+    const note = notConfiguredNote({ missing: ['token', 'zoneId'] });
+    expect(note.keysLink).toBe(true);
+    expect(note.description).toMatch(/admin token.*CF_ZONE_ID/);
+  });
+
+  it('reads what is missing from the server’s sentence when there is no list', () => {
+    for (const missing of [['token'], ['zoneId'], ['token', 'zoneId']]) {
+      expect(missingPrerequisites({ message: server.notConfiguredMessage(missing) })).toEqual(
+        missing
+      );
+    }
+    expect(notConfiguredNote({ message: server.notConfiguredMessage(['zoneId']) }).keysLink).toBe(
+      false
+    );
+  });
+
+  it('prefers the list to the sentence, and shows a sentence it cannot read as it is', () => {
+    expect(
+      missingPrerequisites({ missing: ['zoneId'], message: 'CLOUDFLARE_ADMIN_TOKEN' })
+    ).toEqual(['zoneId']);
+    expect(notConfiguredNote({ message: 'Something else.' })).toEqual({
+      description: 'Something else.',
+      keysLink: false,
+    });
+    expect(notConfiguredNote().keysLink).toBe(true);
+  });
+
+  it('heads the page with what is missing', () => {
+    expect(notConfiguredHeadline({ missing: ['token'] })).toBe(
+      'Not set up yet: the admin token is missing.'
+    );
+    expect(notConfiguredHeadline({ missing: ['zoneId'] })).toBe(
+      'Not set up yet: the zone id is missing (Terraform sets the zone id).'
+    );
+    expect(notConfiguredHeadline({ missing: [] })).toBe('Not set up yet.');
+    expect(notConfiguredHeadline(null)).toBe('Not set up yet.');
+  });
+});
+
+describe('a saved change that needs checking', () => {
+  it('has no warning when the row was written and the name is open', () => {
+    expect(changeWarning({ audited: true, protectedAfterWrite: false })).toBeNull();
+    expect(changeWarning(true)).toBeNull();
+    expect(changeWarning(undefined)).toBeNull();
+  });
+
+  it('warns when the audit row could not be written', () => {
+    expect(changeWarning({ audited: false })).toMatch(/audit row could not be written/);
+  });
+
+  it('warns when a DNS edit came back under a protected name, and says both when both', () => {
+    expect(changeWarning({ audited: true, protectedAfterWrite: true })).toMatch(
+      /came back with a protected name/
+    );
+    expect(changeWarning({ audited: false, protectedAfterWrite: true })).toMatch(
+      /protected name.*audit row could not be written/
+    );
   });
 });
