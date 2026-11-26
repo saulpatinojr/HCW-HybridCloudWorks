@@ -374,7 +374,9 @@ describe('the list', () => {
   it('shows the read’s own error with a way to try again', async () => {
     getJSON.mockRejectedValueOnce(new Error('HTTP 500'));
     render(<ApplyTab data={hubData()} />);
-    expect(await screen.findByText('The events could not be loaded: HTTP 500')).toBeInTheDocument();
+    expect(
+      await screen.findByText('The Community Days events could not be loaded: HTTP 500')
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
     expect(await screen.findByText('Example Community Day')).toBeInTheDocument();
   });
@@ -819,24 +821,24 @@ describe('the owner’s own ideas', () => {
     expect(getJSON).toHaveBeenCalledWith(EVENTS_ROUTE);
   });
 
-  it('shows the entry the owner recorded on 2026-11-25 with its Dec 14, 2026 deadline (the spec’s acceptance line)', async () => {
-    // The real record, read with the clock set to the day after it was made.
+  it('shows an entry with a Dec 14, 2026 deadline and its days left (the spec’s acceptance line)', async () => {
+    // A made-up entry, read with the clock set to 2026-11-26.
     vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 10, 26, 9) });
     try {
       await show(
         hubData([
           idea({
-            _docId: 'vslive-ailive-mshq-2027',
-            eventName: 'VSLive! & AiLive! @ Microsoft HQ 2027',
+            _docId: 'example-conf-2027',
+            eventName: 'Example Conf 2027',
             date: '2027-08-02',
-            location: 'Redmond, WA',
-            eventUrl: 'https://sessionize.com/VSLAILMSHQ27/',
+            location: 'Exampleton, WA',
+            eventUrl: 'https://example.org/cfp',
             cfpDeadline: '2026-12-14',
           }),
         ])
       );
-      const row = (await screen.findByText('VSLive! & AiLive! @ Microsoft HQ 2027')).closest('li');
-      expect(row).toHaveAttribute('data-event', 'manual-vslive-ailive-mshq-2027');
+      const row = (await screen.findByText('Example Conf 2027')).closest('li');
+      expect(row).toHaveAttribute('data-event', 'manual-example-conf-2027');
       expect(row).toHaveTextContent('Closes Dec 14, 2026, about 18 days left');
       expect(row).toHaveTextContent('Aug 2, 2027');
       // Next to the directory row, not instead of it.
@@ -864,10 +866,32 @@ describe('the owner’s own ideas', () => {
       answer({ status: 'no_key', keySet: false, events: [], fetchedAt: null })
     );
     await show(hubData([idea()]));
-    expect(await screen.findByText(/The Community Days key is not set yet/)).toBeInTheDocument();
+    // The notice is about the directory only, so it does not contradict the row below it.
+    expect(
+      await screen.findByText(
+        'The Community Days key is not set yet, so there are no Community Days events to show. Events you added yourself are still listed.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/so there are no events to show/)).toBeNull();
     const list = screen.getByRole('list', { name: 'Future Events' });
     expect(within(list).getByText('Example Conf 2099')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    expect(screen.queryByTestId('topics-line')).toBeNull();
+  });
+
+  it('still lists the owner’s ideas when the Community Days read fails', async () => {
+    getJSON.mockImplementation(async (route) => {
+      if (route === EVENTS_ROUTE) throw new Error('HTTP 503');
+      return answer();
+    });
+    await show(hubData([idea()]));
+    // The error names the directory, not every event on the tab.
+    expect(
+      await screen.findByText('The Community Days events could not be loaded: HTTP 503')
+    ).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Future Events' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows.map((row) => row.getAttribute('data-event'))).toEqual(['manual-example-conf-2099']);
     expect(screen.queryByTestId('topics-line')).toBeNull();
   });
 });

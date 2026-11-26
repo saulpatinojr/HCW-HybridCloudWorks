@@ -13,7 +13,8 @@ import {
 import { allOverlaps, marksForMonth } from './applyCalendarModel';
 import { callCloseInfo, filterEvents, locationLine } from './applyModel';
 
-const NOW = new Date('2099-01-01T12:00:00Z');
+// Local noon, as `todayDay` reads local time: the same day in every time zone.
+const NOW = new Date(2099, 0, 1, 12);
 
 const entry = (over = {}) => ({
   _docId: 'example-conf-2099',
@@ -154,6 +155,12 @@ describe('which entries are listed', () => {
       NOW
     );
     expect(rows.map((row) => row.title)).toEqual(['Only Mine']);
+  });
+
+  it('takes today as a day, the way the tab passes it', () => {
+    const entries = [entry({ _docId: 'past', eventName: 'Past Idea', date: '2099-03-01' })];
+    expect(manualOpportunities(entries, {}, '2099-03-01')).toHaveLength(1);
+    expect(manualOpportunities(entries, {}, '2099-03-02')).toEqual([]);
   });
 
   it('lists nothing when the hub has no entries yet', () => {

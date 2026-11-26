@@ -113,7 +113,8 @@ function NoKey() {
       />
       <div className="min-w-0 flex-1 space-y-1">
         <p className="font-medium">
-          The Community Days key is not set yet, so there are no events to show.
+          The Community Days key is not set yet, so there are no Community Days events to show.
+          Events you added yourself are still listed.
         </p>
         <p className="text-muted-foreground">
           Community Days has to approve API access for your account first. When it has, make a key
@@ -665,8 +666,13 @@ export default function ApplyTab({ data, editor = null }) {
   // The directory's rows with the owner's own ideas slotted in by date. The
   // clash rule, the calendar and the filters all read this one list.
   const manual = useMemo(
-    () => manualOpportunities(data.rows?.manualEntries, { events: list.events, saved: list.saved }),
-    [data.rows, list.events, list.saved]
+    () =>
+      manualOpportunities(
+        data.rows?.manualEntries,
+        { events: list.events, saved: list.saved },
+        today
+      ),
+    [data.rows, list.events, list.saved, today]
   );
   const events = useMemo(() => withManualRows(list.events, manual), [list.events, manual]);
   const overlaps = useMemo(
@@ -678,6 +684,9 @@ export default function ApplyTab({ data, editor = null }) {
   const shown = filterEvents(events, { search, status });
   const canEstimate = list.topics.count > 0 || list.topics.hasBio;
   const editManual = manualEditAction(editor, data.rows?.manualEntries);
+  // The owner's own rows come from the stored events, not from the
+  // directory read, so they show while that read is loading or has failed.
+  const showList = read.loaded || manual.length > 0;
   const askClear = (target) =>
     setPendingClear({ id: target.id, title: target.title, note: target.note });
 
@@ -716,12 +725,12 @@ export default function ApplyTab({ data, editor = null }) {
           )}
         </Dismissible>
       )}
-      <ReadsStatus reads={[read]} label="events to apply to" />
+      <ReadsStatus reads={[read]} label="Community Days events" />
 
       {read.loaded && !list.keySet && <NoKey />}
       {read.loaded && <ListNotices list={list} />}
 
-      {read.loaded && (
+      {showList && (
         <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
           <div className="order-2 space-y-4 lg:order-1">
             {(list.keySet || manual.length > 0) && (

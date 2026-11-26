@@ -35,7 +35,12 @@
  * the rest of the hub compares them (`normalizeName`), the same rule as
  * "you are already speaking here".
  */
-import { normalizeName, storedSessionizeId, toInputDate } from '@/lib/speakingEvents';
+import {
+  normalizeName,
+  parseDateValue,
+  storedSessionizeId,
+  toInputDate,
+} from '@/lib/speakingEvents';
 import { httpUrl, manualRowStatus, safeString } from './eventModel';
 import { isDay, todayDay } from './applyModel';
 
@@ -95,10 +100,12 @@ const isOver = (row, today) => Boolean(row.endDate) && row.endDate < today;
  *
  * @param {object[]} manualEntries - the hub's `rows.manualEntries`
  * @param {{ events?: object[], saved?: object[] }} feed - the Community Days answer
- * @param {Date} [now]
+ * @param {Date|string} [when] - now, or today as `YYYY-MM-DD`. The tab passes
+ *   the day it renders for, so its memo reruns when the day turns.
  */
-export function manualOpportunities(manualEntries, { events, saved } = {}, now = new Date()) {
+export function manualOpportunities(manualEntries, { events, saved } = {}, when = new Date()) {
   const taken = feedNames(events, saved);
+  const now = parseDateValue(when) ?? new Date();
   const today = todayDay(now);
   return (manualEntries ?? [])
     .filter((entry) => storedSessionizeId(entry) === null)
