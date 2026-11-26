@@ -142,12 +142,21 @@ describe('the capabilities', () => {
     expect(() => normalizeCapabilities([])).toThrow(AgentContentInputError);
   });
 
-  it('a record with no switches has every capability; a switch off removes one', () => {
-    expect(enabledCapabilities({})).toEqual([...CAPABILITY_IDS]);
-    expect(enabledCapabilities({ capabilities: { 'drafts.review': true } })).toEqual([...CAPABILITY_IDS]);
+  it('a record with no switches has every capability Koda had before the Cloudflare switches, and none of those; a switch off removes one', () => {
+    // A record that names no agent is Koda's. Its nine switches read on, as
+    // they always have; the four Cloudflare switches came later and read off
+    // until the owner turns one on (#1905).
+    const CLOUDFLARE = CAPABILITY_IDS.filter((id) => id.startsWith('admin.cloudflare'));
+    const KODA_NINE = CAPABILITY_IDS.filter((id) => !CLOUDFLARE.includes(id));
+    expect(CLOUDFLARE).toEqual(['admin.cloudflare', 'admin.cloudflare.settings', 'admin.cloudflare.dns', 'admin.cloudflare.rules']);
+    expect(KODA_NINE).toHaveLength(9);
+    expect(enabledCapabilities({})).toEqual(KODA_NINE);
+    expect(enabledCapabilities({ capabilities: { 'drafts.review': true } })).toEqual(KODA_NINE);
     expect(enabledCapabilities({ capabilities: { 'published.read': false } })).toEqual(
-      CAPABILITY_IDS.filter((id) => id !== 'published.read'),
+      KODA_NINE.filter((id) => id !== 'published.read'),
     );
+    // A Cloudflare switch the owner turned on reads on.
+    expect(enabledCapabilities({ capabilities: { 'admin.cloudflare': true } })).toEqual([...KODA_NINE, 'admin.cloudflare']);
     // There is no delete switch: the key never deletes.
     expect(CAPABILITY_IDS).not.toContain('drafts.delete');
   });
@@ -155,8 +164,22 @@ describe('the capabilities', () => {
   it('has no publish, slug or settings capability to switch on', () => {
     // No capability publishes, sets a slug, or touches settings or secrets; the
     // `admin.*` ids are section switches over admin-access.js's allow-list.
-    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret/.test(id) && id !== 'published.read')).toBe(false);
-    expect(CAPABILITY_IDS.filter((id) => id.startsWith('admin.'))).toEqual(['admin.pipeline', 'admin.enhanced', 'admin.brain', 'admin.spotlight', 'admin.platform']);
+    // `admin.cloudflare.settings` is the Cloudflare zone's settings (and the
+    // cache), never the site's own settings or secrets: its routes are all
+    // under cms/cloudflare/ (admin-access.test.js holds that).
+    const allowed = ['published.read', 'admin.cloudflare.settings'];
+    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret/.test(id) && !allowed.includes(id))).toBe(false);
+    expect(CAPABILITY_IDS.filter((id) => id.startsWith('admin.'))).toEqual([
+      'admin.pipeline',
+      'admin.enhanced',
+      'admin.brain',
+      'admin.spotlight',
+      'admin.platform',
+      'admin.cloudflare',
+      'admin.cloudflare.settings',
+      'admin.cloudflare.dns',
+      'admin.cloudflare.rules',
+    ]);
   });
 });
 
