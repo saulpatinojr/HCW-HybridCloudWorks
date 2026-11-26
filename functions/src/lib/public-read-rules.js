@@ -43,7 +43,7 @@ export const PROVIDER_ALIASES = {
  * 'published_blog' set predates it — both must pass or freshly published
  * documents disappear from public pages).
  */
-const PUBLIC_STATUSES = new Set([
+export const PUBLIC_STATUSES = new Set([
   'published',
   'published_blog',
   'published_news',

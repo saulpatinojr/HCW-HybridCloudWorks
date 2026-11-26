@@ -280,7 +280,11 @@ export async function listImportSources(ctx, request) {
       .filter((e) => e.sourceModule === sourceModule)
       .map((e) => String(e.sourceId))
   );
+  // A reader with its own rule (content: what visitors can open) holds each
+  // row to it too, so the picker never offers a row the import would refuse,
+  // whatever shape the stored record has (review of #1899).
   const items = rows
+    .filter((row) => !reader.accepts || reader.accepts(row))
     .map((row) => {
       const seed = reader.toEvidence(row);
       return {
