@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 
 const seedAiEngineIfEmpty = vi.fn();
 const subscribeProviders = vi.fn();
@@ -201,11 +201,18 @@ const modelOptions = (name) =>
   [...screen.getByLabelText(`Model for ${name}`).options].map((o) => o.value);
 
 /** Mount the page under a real router, on the AI Engine route or one of its tabs. */
+/** Where the router ended up, so a redirect can be read. */
+function Where() {
+  const location = useLocation();
+  return <p data-testid="where">{`${location.pathname}${location.search}`}</p>;
+}
+
 function renderPage(entry = '/admin/ai-engine') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/admin/ai-engine" element={<AIEnginePage />} />
+        <Route path="/admin/agents" element={<Where />} />
       </Routes>
     </MemoryRouter>
   );
@@ -244,7 +251,7 @@ beforeEach(() => {
 });
 
 describe('AIEnginePage shell', () => {
-  it('shows the eight tabs with Tasks where Site Services was, Koda and the second agent key, then Developer API last, and no Site Services or Routing at all', async () => {
+  it('shows the six tabs with Tasks where Site Services was and Developer API last, and no Site Services, Routing or agent key tab at all', async () => {
     renderPage();
     expect(await screen.findByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
@@ -253,13 +260,21 @@ describe('AIEnginePage shell', () => {
       'MCP Servers',
       'Playground',
       'Usage & Cost',
-      'Koda',
-      'Claude',
       'Developer API',
     ]);
     expect(screen.queryByText(/Site Services/)).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Routing' })).toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: /AI Engine/ })).toBeInTheDocument();
+  });
+
+  it('sends an old agent key tab address to the matching tab on the Agents page, without reading the AI configuration', async () => {
+    renderPage('/admin/ai-engine?tab=koda');
+    expect(await screen.findByTestId('where')).toHaveTextContent('/admin/agents?tab=koda');
+    renderPage('/admin/ai-engine?tab=claude');
+    expect((await screen.findAllByTestId('where'))[1]).toHaveTextContent(
+      '/admin/agents?tab=claude'
+    );
+    expect(seedAiEngineIfEmpty).not.toHaveBeenCalled();
   });
 
   it('the old Site Services address lands on Tasks, which reads the resolver’s answer', async () => {

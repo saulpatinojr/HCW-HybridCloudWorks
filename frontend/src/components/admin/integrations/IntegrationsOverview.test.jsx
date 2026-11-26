@@ -200,6 +200,8 @@ describe('Test all', () => {
         'firecrawl',
         'replicate',
         'qlty',
+        // #1905: a read of the zone with the Cloudflare admin token.
+        'cloudflare',
       ]);
       expect(probes).not.toContain('youtube');
       expect(fetchMock).toHaveBeenCalledTimes(1);

@@ -10,9 +10,11 @@ import {
   connectorValues,
   endpointGroups,
   keyState,
+  listWords,
   startingSwitches,
   whenText,
 } from './kodaView';
+import { KODA_KEY_TAB, agentKeyTab } from './agentKeys';
 
 const CATALOGUE = [
   { id: 'drafts.read', label: 'Read drafts', description: 'List and open.' },
@@ -123,11 +125,14 @@ describe('connectorValues', () => {
 
 describe('another agent key’s words', () => {
   it('keeps Koda’s words, and gives another key its own name and no outside service', () => {
+    // Koda's starting switches are the server's list since #1905 (the nine
+    // capabilities that existed before the Cloudflare switches).
     expect(agentWords()).toMatchObject({
       id: 'koda',
       name: 'Koda',
       client: 'Muse',
-      switchesOnWhenMade: true,
+      switchesOnWhenMade: KODA_KEY_TAB.switchesOnWhenMade,
+      writesDrafts: true,
     });
     const words = agentWords({
       id: 'claude',
@@ -147,10 +152,27 @@ describe('another agent key’s words', () => {
     expect(startingSwitches(words, CATALOGUE)).toBe(
       'A new key starts with only Read drafts and Create and edit drafts on; everything else is off until you turn it on.'
     );
-    expect(startingSwitches(agentWords())).toBe('All are on for a new key.');
+    expect(
+      startingSwitches(agentWords({ id: 'x', displayName: 'X', switchesOnWhenMade: true }))
+    ).toBe('All are on for a new key.');
     expect(JSON.stringify(connectorValues({ host: 'h', url: 'u' }, 120, words))).not.toMatch(
       /Muse/
     );
+  });
+
+  it('lists three or more starting switches the way a sentence does', () => {
+    expect(listWords([])).toBe('');
+    expect(listWords(['A'])).toBe('A');
+    expect(listWords(['A', 'B'])).toBe('A and B');
+    expect(listWords(['A', 'B', 'C'])).toBe('A, B and C');
+    expect(startingSwitches(agentWords(), CATALOGUE)).toMatch(
+      /^A new key starts with only Read drafts, Create and edit drafts, drafts\.review, published\.read, .* and admin\.platform on;/
+    );
+  });
+
+  it('talks about drafts only for a key whose job is drafts', () => {
+    expect(agentWords(agentKeyTab('claude')).writesDrafts).toBe(true);
+    expect(agentWords(agentKeyTab('claude-network')).writesDrafts).toBe(false);
   });
 
   it('reads a missing switch as the key’s starting value, and a stored one as stored', () => {

@@ -58,11 +58,12 @@ describe('joining services to credentials', () => {
     label: 'Telegram — bot token',
   });
   // A site-platform value, which no service card claims (since ADR 0033
-  // every AI key has a card, so Firecrawl no longer serves as the example).
+  // every AI key has a card, so Firecrawl no longer serves as the example;
+  // since #1905 the origin secret is on the Cloudflare card, so the salt is).
   const originSecret = item({
-    secret: 'CF-ORIGIN-SECRET',
+    secret: 'CLIENT-IP-SALT',
     section: 'platform',
-    label: 'Cloudflare origin secret',
+    label: 'Client IP salt',
   });
 
   // ── grouping ────────────────────────────────────────────────────────────
@@ -170,14 +171,14 @@ describe('joining services to credentials', () => {
   });
 
   it('shows a credential with no service card as a loose row in its own group', () => {
-    // The origin secret has no card. It must still appear, under Site
-    // platform, rather than falling off the page because nothing claimed it.
+    // The salt has no card. It must still appear, under Site platform,
+    // rather than falling off the page because nothing claimed it.
     const { serviceGroups } = buildIntegrationView({ sections, secrets: [originSecret] });
     const platform = serviceGroups.find((group) => group.id === 'platform');
-    expect(platform.loose.map((row) => row.secret)).toEqual(['CF-ORIGIN-SECRET']);
-    // The group's two cards list Azure sign-ins and the agent keys the site
-    // issues, and claim no key, so the origin secret stays loose beside them.
-    expect(platform.cards.map((card) => card.id)).toEqual(['azure', 'agent-keys']);
+    expect(platform.loose.map((row) => row.secret)).toEqual(['CLIENT-IP-SALT']);
+    // The group's cards list Azure sign-ins, the agent keys the site issues
+    // and Cloudflare's keys; none claims the salt, so it stays loose beside them.
+    expect(platform.cards.map((card) => card.id)).toEqual(['azure', 'agent-keys', 'cloudflare']);
     for (const card of platform.cards) expect(card.items).toEqual([]);
   });
 
@@ -226,7 +227,7 @@ describe('the Keys tab join (#570)', () => {
       secrets: [
         item({ secret: 'PUBLER-API-KEY', section: 'communication' }),
         item({ secret: 'FIRECRAWL-API-KEY', section: 'ai-services' }),
-        item({ secret: 'CF-ORIGIN-SECRET', section: 'platform' }),
+        item({ secret: 'CLIENT-IP-SALT', section: 'platform' }),
       ],
     });
     const communication = groups.find((group) => group.id === 'communication');
@@ -239,6 +240,22 @@ describe('the Keys tab join (#570)', () => {
     const platform = groups.find((group) => group.id === 'platform');
     expect(platform.items[0].usedBy).toEqual([]);
     expect(platform.items[0].testedBy).toEqual([]);
+  });
+
+  it('says a Cloudflare key is checked by the card’s test only when the test reads it (#1905)', () => {
+    const { groups } = buildKeyGroups({
+      sections,
+      secrets: [
+        item({ secret: 'CLOUDFLARE-ADMIN-TOKEN', section: 'platform' }),
+        item({ secret: 'CF-ORIGIN-SECRET', section: 'platform' }),
+      ],
+    });
+    const platform = groups.find((group) => group.id === 'platform');
+    const row = (name) => platform.items.find((entry) => entry.secret === name);
+    expect(row('CLOUDFLARE-ADMIN-TOKEN').usedBy).toEqual(['Cloudflare']);
+    expect(row('CLOUDFLARE-ADMIN-TOKEN').testedBy).toEqual(['Cloudflare']);
+    expect(row('CF-ORIGIN-SECRET').usedBy).toEqual(['Cloudflare']);
+    expect(row('CF-ORIGIN-SECRET').testedBy).toEqual([]);
   });
 
   it('drops a group with no keys and puts an unknown section under Other credentials', () => {

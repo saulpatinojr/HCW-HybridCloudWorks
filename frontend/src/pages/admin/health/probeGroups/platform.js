@@ -87,7 +87,7 @@ export const PLATFORM_PROBES = [
       "Koda's key (present, active, last used), the admin switches that are off, and its refusals in the last day by reason.",
     impact:
       'Refusals with a live key mean Koda is calling something it may not; a revoked key being called means a stale copy is in use.',
-    action: 'Open the Koda tab: rotate or revoke the key, or turn a switch back on.',
+    action: 'Open Koda’s tab on the Agents page: rotate or revoke the key, or turn a switch back on.',
     href: KODA,
     evaluate: evaluateContentAgent,
   }),
@@ -119,6 +119,15 @@ export const PLATFORM_PROBES = [
     covers: 'The Code and Security tab.',
     impact: 'That tab says Qlty is not configured.',
     action: 'Rotate the token on Keys.',
+  }),
+  // The admin token behind the Cloudflare page and Claude Network Guy (#1905):
+  // a read of the zone, which changes nothing and costs nothing.
+  fromService('cloudflare', {
+    hub: 'platform',
+    covers: 'Whether the Cloudflare admin token can read the site’s zone.',
+    impact:
+      'The Cloudflare page and Claude Network Guy cannot read or change the zone. The site itself keeps running: visitors do not go through this token.',
+    action: 'Paste a new admin token on Keys, or check it is still limited to the right zone.',
   }),
   fromService('cloud-pricing', {
     hub: 'platform',

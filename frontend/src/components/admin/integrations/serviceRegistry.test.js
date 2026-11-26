@@ -70,19 +70,72 @@ describe('the service registry', () => {
       'Microsoft Azure and Entra ID',
       // The agent keys this site issues itself, one box per key.
       'Agent keys (issued by this site)',
-      'Hybrid Lab (Coder and Turnstile)',
+      // #1905: every Cloudflare key on one card, the admin token tested.
+      'Cloudflare',
+      'Hybrid Lab (Coder)',
       'Hostinger',
       // ADR 0035: the first tool add-on, read through the status proxy.
       'Migration add-on',
     ]);
   });
 
-  it('groups every Coder key on the Hybrid Lab card under Coder, with the automatic renewal, and Turnstile apart', () => {
+  it('groups every Coder key on the Hybrid Lab card under Coder, with the automatic renewal, and Turnstile on the Cloudflare card', () => {
     const lab = SERVICES.find((service) => service.id === 'hybrid-lab');
     expect(lab.keyGroups).toEqual([
       { title: 'Coder', secrets: ['CODER-URL', 'CODER-STATUS-TOKEN'], panel: 'coderAutomation' },
-      { title: 'Turnstile', secrets: ['TURNSTILE-SECRET-KEY'] },
     ]);
+    expect(lab.secrets).not.toContain('TURNSTILE-SECRET-KEY');
+  });
+
+  it('puts every Cloudflare key on one platform card, with a box each, and tests the admin token only (#1905)', () => {
+    const card = SERVICES.find((service) => service.id === 'cloudflare');
+    expect(card.group).toBe('platform');
+    expect(card.secrets).toEqual([
+      'CLOUDFLARE-ADMIN-TOKEN',
+      'CF-ORIGIN-SECRET',
+      'CLOUDFLARE-ANALYTICS-TOKEN',
+      'TURNSTILE-SECRET-KEY',
+    ]);
+    expect(card.keyGroups.map((group) => group.secrets)).toEqual([
+      ['CLOUDFLARE-ADMIN-TOKEN'],
+      ['CF-ORIGIN-SECRET'],
+      ['CLOUDFLARE-ANALYTICS-TOKEN'],
+      ['TURNSTILE-SECRET-KEY'],
+    ]);
+    expect(card.keyGroups[0].title).toBe(
+      'Admin token (the Cloudflare page and Claude Network Guy use it)'
+    );
+    expect(card.testedSecrets).toEqual(['CLOUDFLARE-ADMIN-TOKEN']);
+    expect(typeof card.test).toBe('function');
+    // No key from this vendor is on any other card.
+    for (const service of SERVICES.filter((s) => s.id !== 'cloudflare')) {
+      for (const name of card.secrets) expect(service.secrets ?? []).not.toContain(name);
+    }
+    expect(card.usedIn).toEqual(
+      expect.arrayContaining(['Cloudflare', 'Agents (Claude Network Guy)'])
+    );
+    expect(card.cost).toMatch(/Free plan/);
+    expect(card.costOnLedger).toBe(true);
+  });
+
+  it('tests Cloudflare through its connection probe and reads the zone it answered with', async () => {
+    postJSON.mockReset();
+    const runner = SERVICES.find((service) => service.id === 'cloudflare').test;
+    postJSON.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { result: { name: 'example.com', status: 'active' } },
+    });
+    await expect(runner()).resolves.toBe('Connected — the zone example.com is active.');
+    expect(postJSON).toHaveBeenLastCalledWith('connectionProbe', { probe: 'cloudflare' });
+    postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+    await expect(runner()).resolves.toBe('Connected to Cloudflare.');
+    postJSON.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: 'CLOUDFLARE_ADMIN_TOKEN is not set',
+    });
+    await expect(runner()).rejects.toThrow('CLOUDFLARE_ADMIN_TOKEN is not set');
   });
 
   it('lists both Anthropic credentials on the one Anthropic card: the API key with its key row, and Claude Code as a box of its own', () => {
@@ -134,6 +187,8 @@ describe('the service registry', () => {
       'firecrawl',
       'qlty',
       'copilot-review',
+      // #1905: free today; a paid plan would be a subscription.
+      'cloudflare',
       'hybrid-lab',
       'hostinger',
     ]);
@@ -219,8 +274,9 @@ describe('the service registry', () => {
       AGENT_KEY_TABS.map((agent) => agentKeyPanel(agent.id))
     );
     expect(card.keyGroups.map((group) => group.title)).toEqual([
-      'Koda key (made on its AI Engine tab)',
-      'Claude key (made on its AI Engine tab)',
+      'Koda key (made on its Agents tab)',
+      'Claude Publisher key (made on its Agents tab)',
+      'Claude Network Guy key (made on its Agents tab)',
     ]);
     expect(card.cost).toMatch(/^Nothing/);
     expect(card.costOnLedger).toBeUndefined();
