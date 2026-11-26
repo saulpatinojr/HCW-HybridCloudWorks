@@ -117,6 +117,45 @@ describe('which entries are listed', () => {
     expect(rows.map((row) => row.title)).toEqual(['Only Mine']);
   });
 
+  it('leaves out an Idea whose day has passed, and keeps one with no date or still running', () => {
+    const rows = manualOpportunities(
+      [
+        entry({ _docId: 'past', eventName: 'Past Idea', date: '2098-12-31' }),
+        entry({ _docId: 'undated', eventName: 'Undated Idea', date: null }),
+        entry({
+          _docId: 'running',
+          eventName: 'Running Idea',
+          date: '2098-12-31',
+          endDate: '2099-01-02',
+        }),
+        entry({ _docId: 'today', eventName: 'Today Idea', date: '2099-01-01' }),
+      ],
+      {},
+      NOW
+    );
+    expect(rows.map((row) => row.title)).toEqual(['Undated Idea', 'Running Idea', 'Today Idea']);
+  });
+
+  it('never lists a stored Sessionize record, even when Sessionize could not be read', () => {
+    // While Sessionize is unreachable every stored row reaches `manualEntries`,
+    // and one with no status of its own would otherwise read as an Idea.
+    const rows = manualOpportunities(
+      [
+        entry({
+          _docId: 'by-event-id',
+          eventName: 'Sessionize Talk',
+          status: undefined,
+          eventId: 7,
+        }),
+        entry({ _docId: 'by-sessionize-id', eventName: 'Other Talk', sessionizeId: '9' }),
+        entry({ _docId: 'own', eventName: 'Only Mine' }),
+      ],
+      {},
+      NOW
+    );
+    expect(rows.map((row) => row.title)).toEqual(['Only Mine']);
+  });
+
   it('lists nothing when the hub has no entries yet', () => {
     expect(manualOpportunities(undefined, {}, NOW)).toEqual([]);
   });

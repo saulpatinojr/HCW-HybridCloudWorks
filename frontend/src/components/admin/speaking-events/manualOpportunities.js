@@ -17,15 +17,27 @@
  * `ownTalks`), and the clash rule counts it there. Listing it here as well
  * would show it twice and let it clash with itself.
  *
+ * NOT A SESSIONIZE RECORD. The hub's `manualEntries` are the stored rows
+ * no live Sessionize event matched, and while Sessionize cannot be reached
+ * that is every stored row, Sessionize overrides included. A row that
+ * carries a Sessionize id is one of the owner's Sessionize talks, not an
+ * idea: with no status of its own the Idea rule would wrongly call it one,
+ * and its Edit would open the manual-entry form, whose save rewrites the
+ * record's name and date. So it is never listed here.
+ *
+ * STILL TO COME. An entry whose last day has passed is left out even when
+ * its status still says Idea: this tab is for events still worth applying
+ * to. An entry with no date stays listed (the owner has not set one yet).
+ *
  * NO DOUBLES. An entry with the same name as a Community Days event (listed,
  * or saved and no longer listed) is left out: the directory's row already
  * shows that event, with its notes and estimate. Names are compared the way
  * the rest of the hub compares them (`normalizeName`), the same rule as
  * "you are already speaking here".
  */
-import { normalizeName, toInputDate } from '@/lib/speakingEvents';
+import { normalizeName, storedSessionizeId, toInputDate } from '@/lib/speakingEvents';
 import { httpUrl, manualRowStatus, safeString } from './eventModel';
-import { isDay } from './applyModel';
+import { isDay, todayDay } from './applyModel';
 
 /** The prefix that keeps a manual row's id apart from a Community Days id. */
 export const MANUAL_ID_PREFIX = 'manual-';
@@ -75,6 +87,9 @@ function feedNames(events, saved) {
   return names;
 }
 
+/** Whether a row's last day is before today. An undated row is never over. */
+const isOver = (row, today) => Boolean(row.endDate) && row.endDate < today;
+
 /**
  * The manual entries that belong on Future Events, as rows.
  *
@@ -84,9 +99,12 @@ function feedNames(events, saved) {
  */
 export function manualOpportunities(manualEntries, { events, saved } = {}, now = new Date()) {
   const taken = feedNames(events, saved);
+  const today = todayDay(now);
   return (manualEntries ?? [])
+    .filter((entry) => storedSessionizeId(entry) === null)
     .filter((entry) => manualRowStatus(entry, now) === 'idea')
     .map(manualRow)
+    .filter((row) => !isOver(row, today))
     .filter((row) => !taken.has(normalizeName(row.title)));
 }
 

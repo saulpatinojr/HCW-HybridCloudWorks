@@ -47,7 +47,7 @@ Community Days rows, so one list holds every event worth applying to:
   the existing one-route pattern in `useApplyEvents.js`; document the choice.
 - A manual entry that duplicates a feed event (same name) must not show
   twice. The name rule is `normalizeName` in
-  [`frontend/src/lib/speakingEvents.js`](../../frontend/src/lib/speakingEvents.js):
+  [`frontend/src/lib/speakingEvents.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/lib/speakingEvents.js):
   the one `matchStoredRow` uses to pair a Sessionize event with its stored
   record (called by `mergeEvents` in `eventModel.js`), and the one the
   "you are already speaking here" rule in `applyCalendarModel.js` uses.
@@ -86,6 +86,14 @@ a route that caches and paces an outside service, for no gain.
   a sent proposal is already one of the owner's own talks, and the clash
   rule counts it there (`ownTalks` in `applyModel.js`); listing it here too
   would show it twice and let it clash with itself. It stays on Upcoming.
+- **Only events still to come.** An Idea whose last day has passed is left
+  out, even though its status still says Idea; one with no date yet stays.
+- **Never a Sessionize record.** A stored row that carries a Sessionize id
+  is one of the owner's Sessionize talks. While Sessionize cannot be read,
+  every stored row reaches the hub's list of manual entries, and one with no
+  status of its own would read as an Idea; its Edit would then open the
+  manual-entry form, whose save rewrites the record's name and date. So a
+  row with a Sessionize id is never listed here.
 - **No doubles.** An entry with the same name as a listed or saved Community
   Days event is left out; the directory's row shows it. Names are compared
   with `normalizeName`, the same rule as "you are already speaking here".
@@ -110,9 +118,15 @@ a route that caches and paces an outside service, for no gain.
 - **Without the Community Days key** the tab still lists the owner's ideas,
   under the usual "key is not set" notice.
 
-Code: `frontend/src/components/admin/speaking-events/manualOpportunities.js`
-(the rules) and `ApplyTab.jsx` (the row). Tests:
-`manualOpportunities.test.js` and the "the owner's own ideas" block of
-`ApplyTab.test.jsx`, which also holds the acceptance line: the recorded
-`vslive-ailive-mshq-2027` entry shows next to the directory row with
-"Closes Dec 14, 2026" and its days left.
+Code, in `frontend/src/components/admin/speaking-events/`:
+[`manualOpportunities.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/manualOpportunities.js)
+(which entries, and the order),
+[`ManualRows.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/ManualRows.jsx)
+(the row, Edit and **Add an event**),
+[`ApplyRowParts.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/ApplyRowParts.jsx)
+(the title line and clash words both kinds of row share) and
+[`ApplyTab.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/speaking-events/ApplyTab.jsx)
+(the tab). Tests: `manualOpportunities.test.js`, `ManualRows.test.jsx` and
+the "the owner's own ideas" block of `ApplyTab.test.jsx`, which also holds
+the acceptance line: the recorded `vslive-ailive-mshq-2027` entry shows
+next to the directory row with "Closes Dec 14, 2026" and its days left.
