@@ -83,8 +83,9 @@ a manual entry shows the moment it is saved, because a save already re-reads
 the hub's stored events. A server merge would have mixed a second store into
 a route that caches and paces an outside service, for no gain.
 
-- **Which entries.** Only status **Idea** (no status counts as Idea until
-  its day passes, the hub's usual rule). **Proposed is left out on purpose:**
+- **Which entries.** Only entries saved with the status **Idea** are listed:
+  a stored row with no status is never listed, because it may be a
+  Sessionize talk paired by name only, without an id. **Proposed is left out on purpose:**
   a sent proposal is already one of the owner's own talks, and the clash
   rule counts it there (`ownTalks` in `applyModel.js`); listing it here too
   would show it twice and let it clash with itself. It stays on Upcoming.

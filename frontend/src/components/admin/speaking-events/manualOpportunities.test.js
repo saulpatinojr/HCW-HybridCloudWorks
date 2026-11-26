@@ -12,6 +12,7 @@ import {
 } from './manualOpportunities';
 import { allOverlaps, marksForMonth } from './applyCalendarModel';
 import { callCloseInfo, filterEvents, locationLine } from './applyModel';
+import { mergeEvents } from './eventModel';
 
 // Local noon, as `todayDay` reads local time: the same day in every time zone.
 const NOW = new Date(2099, 0, 1, 12);
@@ -88,17 +89,42 @@ describe('which entries are listed', () => {
     expect(rows.map((row) => row.title)).toEqual(['Example Conf 2099']);
   });
 
-  it('treats an entry with no status as an Idea until its day has passed', () => {
-    const future = entry({ status: undefined });
-    const past = entry({
-      _docId: 'old',
-      eventName: 'Old Conf',
-      status: undefined,
-      date: '2098-05-01',
-    });
-    expect(manualOpportunities([future, past], {}, NOW).map((row) => row.title)).toEqual([
-      'Example Conf 2099',
-    ]);
+  it('lists an entry saved with the status Idea, in any case', () => {
+    const rows = manualOpportunities(
+      [entry(), entry({ _docId: 'upper', eventName: 'Upper Conf', status: ' Idea ' })],
+      {},
+      NOW
+    );
+    expect(rows.map((row) => row.title)).toEqual(['Example Conf 2099', 'Upper Conf']);
+  });
+
+  it('never lists a stored row with no status, though the hub would show it as an Idea', () => {
+    const rows = manualOpportunities(
+      [
+        entry({ status: undefined }),
+        entry({ _docId: 'null', eventName: 'Null Conf', status: null }),
+        entry({ _docId: 'blank', eventName: 'Blank Conf', status: '' }),
+      ],
+      {},
+      NOW
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it('never lists a Sessionize talk paired by name only, while Sessionize cannot be reached', () => {
+    // A stored override with no Sessionize id and no status, paired to its
+    // Sessionize event by name. With Sessionize unreachable, mergeEvents
+    // pairs nothing and the row lands among the manual entries.
+    const stored = [
+      { _docId: 'by-name', eventName: 'Example Sessionize Talk', date: '2099-06-01' },
+      entry({ _docId: 'own', eventName: 'Only Mine' }),
+    ];
+    const live = mergeEvents([{ id: 7, name: 'Example Sessionize Talk' }], stored);
+    expect(live.mergedEvents[0]._storedDoc?._docId).toBe('by-name');
+    const { manualEntries } = mergeEvents([], stored);
+    expect(manualEntries.map((row) => row._docId)).toContain('by-name');
+    const rows = manualOpportunities(manualEntries, {}, NOW);
+    expect(rows.map((row) => row.title)).toEqual(['Only Mine']);
   });
 
   it('leaves out an entry with the same name as a listed or saved directory event', () => {

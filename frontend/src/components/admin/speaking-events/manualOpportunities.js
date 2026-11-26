@@ -10,8 +10,14 @@
  * box) apply to them unchanged. The Community Days read stays one route
  * (useApplyEvents.js, ADR 0045) and is not touched.
  *
- * WHICH ENTRIES. Only those whose Speaking status is Idea: an event worth
- * proposing to, nothing sent yet. That is the same question the Community
+ * WHICH ENTRIES. Only those saved with the status Idea: an event worth
+ * proposing to, nothing sent yet. The check reads the status stored on the
+ * row itself (the hub passes stored rows through unchanged), never the
+ * hub's derived default, which calls a row with no status an Idea. A row
+ * with no status is never listed: it may be a Sessionize talk that was
+ * paired by name, with no id, and while Sessionize cannot be reached it
+ * lands among the manual entries. "Add an event" saves the status Idea, so
+ * a new idea is listed. That is the same question the Community
  * Days rows answer. A Proposed entry is left out on purpose: a proposal has
  * been sent, so it is already one of the owner's own talks (applyModel's
  * `ownTalks`), and the clash rule counts it there. Listing it here as well
@@ -41,7 +47,7 @@ import {
   storedSessionizeId,
   toInputDate,
 } from '@/lib/speakingEvents';
-import { httpUrl, manualRowStatus, safeString } from './eventModel';
+import { httpUrl, safeString } from './eventModel';
 import { isDay, todayDay } from './applyModel';
 
 /** The prefix that keeps a manual row's id apart from a Community Days id. */
@@ -92,6 +98,10 @@ function feedNames(events, saved) {
   return names;
 }
 
+/** Whether the stored row itself says Idea (any case). No status is not Idea here. */
+const savedAsIdea = (entry) =>
+  typeof entry?.status === 'string' && entry.status.trim().toLowerCase() === 'idea';
+
 /** Whether a row's last day is before today. An undated row is never over. */
 const isOver = (row, today) => Boolean(row.endDate) && row.endDate < today;
 
@@ -109,7 +119,7 @@ export function manualOpportunities(manualEntries, { events, saved } = {}, when 
   const today = todayDay(now);
   return (manualEntries ?? [])
     .filter((entry) => storedSessionizeId(entry) === null)
-    .filter((entry) => manualRowStatus(entry, now) === 'idea')
+    .filter(savedAsIdea)
     .map(manualRow)
     .filter((row) => !isOver(row, today))
     .filter((row) => !taken.has(normalizeName(row.title)));
