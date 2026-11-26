@@ -87,7 +87,8 @@ export const PLATFORM_PROBES = [
       "Koda's key (present, active, last used), the admin switches that are off, and its refusals in the last day by reason.",
     impact:
       'Refusals with a live key mean Koda is calling something it may not; a revoked key being called means a stale copy is in use.',
-    action: 'Open Koda’s tab on the Agents page: rotate or revoke the key, or turn a switch back on.',
+    action:
+      'Open Koda’s tab on the Agents page: rotate or revoke the key, or turn a switch back on.',
     href: KODA,
     evaluate: evaluateContentAgent,
   }),
