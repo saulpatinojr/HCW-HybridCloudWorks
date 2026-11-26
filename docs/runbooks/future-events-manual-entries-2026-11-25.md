@@ -1,7 +1,7 @@
-# Future Events: show manual entries alongside the Community Days feed
+# Future Events: manual entries alongside the Community Days feed
 
 Date: 2026-11-25
-Status: spec for implementation (owner request, 2026-11-25)
+Status: spec for implementation (owner request, 2026-11-25; scope updated same day)
 
 ## Context
 
@@ -16,14 +16,25 @@ Example, created 2026-11-25: `vslive-ailive-mshq-2027` — VSLive! & AiLive!
 https://sessionize.com/VSLAILMSHQ27/). It is in `speakerevents` but never
 appears in Future Events, because the tab only reads the Community Days feed.
 
+The owner will soon be adding these manual entries himself. Manual entry is
+therefore a first-class feature to enable now, alongside the API method —
+not just a display concern for entries created through the API.
+
 ## Ask
 
-Surface manual speaker-event entries in the Future Events tab alongside the
+Make manual entries first-class in the Future Events tab, alongside the
 Community Days rows, so one list holds every event worth applying to:
 
-- Include `speakerevents` entries whose status marks them as opportunities
-  not yet decided/applied (at minimum `idea`; decide whether `proposed`
-  belongs here or stays only in the Upcoming tab, and say why).
+- **Create manual entries from the admin UI.** An add/edit affordance
+  (placement following existing Speaking hub patterns — in the Future
+  Events tab or the hub's event editing flow) that writes through the
+  existing `upsertSpeakerEvent` path: name, date, location, event URL,
+  CFP deadline, description, status `idea` by default. The owner must be
+  able to add an opportunity by hand without touching the API.
+- **Show manual entries in the tab.** Include `speakerevents` entries whose
+  status marks them as opportunities not yet decided/applied (at minimum
+  `idea`; decide whether `proposed` belongs here or stays only in the
+  Upcoming tab, and say why).
 - Give manual rows the same treatment as feed rows where it makes sense:
   CFP deadline and days left, clash marks against the owner's own talks
   (applyModel rules), notes, and the estimate button.
@@ -38,15 +49,15 @@ Community Days rows, so one list holds every event worth applying to:
 
 ## Out of scope
 
-- Creating manual entries from the tab UI (entries are created via the API
-  or the existing Speaking hub editing flow).
 - Any change to the Community Days API client, key handling, or refresh.
 - Publishing anything: manual idea entries stay `display: false` on the
   public site.
 
 ## Acceptance
 
-- The VSLive entry above appears in Future Events with its Dec 14, 2026
-  deadline and days-left, next to the Community Days rows.
+- The owner can add a manual opportunity from the admin UI and it appears
+  in Future Events next to the Community Days rows.
+- The existing `vslive-ailive-mshq-2027` entry appears in Future Events
+  with its Dec 14, 2026 deadline and days-left.
 - Existing tab behavior (notes, estimates, refresh, clash marks) unchanged
   for feed rows; test suites green.
