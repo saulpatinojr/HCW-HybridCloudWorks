@@ -180,17 +180,17 @@ function LockedCard({ status }) {
           What is locked, and why
         </CardTitle>
         <CardDescription>
-          The records and the two rule phases below keep the site running and are managed by
-          Terraform (the code that builds the site’s cloud resources). Nobody can change them from
-          here, not an admin and not an agent; the server refuses. No DNS record or ruleset can be
-          deleted from this page, but replacing a phase’s rules removes the ones you leave out.
+          The records and the rule phase below keep the site running and are managed by Terraform
+          (the code that builds the site’s cloud resources). Nobody can change them from here, not
+          an admin and not an agent; the server refuses. No DNS record or ruleset can be deleted
+          from this page, but replacing a phase’s rules removes the ones you leave out.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <LockedNames status={status} />
         <div>
           <p className="text-sm font-medium">Rule phases Terraform manages</p>
-          <ul className="mt-1 space-y-1 text-sm">
+          <ul className="mt-1 space-y-1 text-sm" data-testid="locked-phases">
             {protectedPhaseList(status).map((item) => (
               <Reasoned key={item.phase} code={item.phase} reason={item.reason} />
             ))}
@@ -201,7 +201,7 @@ function LockedCard({ status }) {
           <p className="text-xs text-muted-foreground">
             Only these. Every other phase is read-only: {READ_ONLY_PHASE_REASON}
           </p>
-          <ul className="mt-1 space-y-1 text-sm">
+          <ul className="mt-1 space-y-1 text-sm" data-testid="open-phases">
             {editablePhaseList(status).map((item) => (
               <Reasoned key={item.phase} code={item.phase} reason={item.description} />
             ))}

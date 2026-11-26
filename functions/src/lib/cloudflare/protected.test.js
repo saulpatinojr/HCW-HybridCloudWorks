@@ -2,7 +2,9 @@
  * The protected list (#1905) held to the Terraform that manages the zone:
  * every DNS record in infra/frontend.tf and infra-lab/dns.tf, and every rule
  * phase in infra/, must be on it, or the Cloudflare page could change what
- * the next Terraform run would undo.
+ * the next Terraform run would undo. The protected phases are exactly the
+ * ones infra/ writes, so a phase Terraform gives up (the API rate limit,
+ * #1903) is not left locked, and one it takes on is never left editable.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -89,28 +91,41 @@ describe('the protected DNS names', () => {
 });
 
 describe('the protected rule phases', () => {
-  it('holds every phase Terraform writes rules into', () => {
-    const phases = [...infra.matchAll(/^\s*phase\s*=\s*"([a-z_]+)"/gm)].map((match) => match[1]);
-    expect(phases).toContain('http_request_late_transform');
-    for (const phase of phases) expect(phaseProtection(phase), phase).not.toBeNull();
+  // Every phase infra/ writes rules into, as Terraform names them.
+  const terraformPhases = [...new Set([...infra.matchAll(/^\s*phase\s*=\s*"([a-z_]+)"/gm)].map((match) => match[1]))].sort();
+
+  it('protects exactly the phases Terraform writes rules into, each with its own reason', () => {
+    expect(terraformPhases).toContain('http_request_late_transform');
+    expect(PROTECTED_PHASES.map((entry) => entry.phase).sort()).toEqual(terraformPhases);
+    for (const phase of terraformPhases) {
+      expect(isEditablePhase(phase), phase).toBe(false);
+      expect(phaseProtection(phase), phase).not.toBe(READ_ONLY_PHASE_REASON);
+      expect(phaseProtection(phase), phase).not.toBeNull();
+    }
   });
 
-  it('holds the rate limit phase too, before its Terraform reaches main', () => {
-    expect(PROTECTED_PHASES.map((entry) => entry.phase)).toEqual(['http_request_late_transform', 'http_ratelimit']);
-    expect(phaseProtection('HTTP_RATELIMIT')).not.toBeNull();
-    expect(phaseProtection('http_request_dynamic_redirect')).toBeNull();
+  it('protects only the origin rule: the API rate limit is the Cloudflare page’s since #1903', () => {
+    expect(PROTECTED_PHASES.map((entry) => entry.phase)).toEqual(['http_request_late_transform']);
+    expect(phaseProtection('HTTP_REQUEST_LATE_TRANSFORM')).not.toBeNull();
+    expect(phaseProtection('http_ratelimit')).toBeNull();
+    expect(phaseProtection('HTTP_RATELIMIT')).toBeNull();
+    expect(terraformPhases, 'Terraform writes the rate limit again: move it back to PROTECTED_PHASES').not.toContain('http_ratelimit');
   });
 });
 
 describe('the allow-list of rule phases', () => {
-  it('names exactly the five phases that may be replaced, each with a plain description', () => {
+  it('names exactly the six phases that may be replaced, each with a plain description', () => {
     expect(EDITABLE_PHASES.map((entry) => entry.phase)).toEqual([
       'http_request_dynamic_redirect',
       'http_request_transform',
       'http_response_headers_transform',
       'http_config_settings',
       'http_request_firewall_custom',
+      'http_ratelimit',
     ]);
+    expect(EDITABLE_PHASES.find((entry) => entry.phase === 'http_ratelimit').description).toBe(
+      'Rate limiting: limit how many requests one address can make, for example to the API.'
+    );
     for (const entry of EDITABLE_PHASES) {
       expect(entry.description.length, entry.phase).toBeGreaterThan(20);
       expect(isEditablePhase(entry.phase)).toBe(true);

@@ -109,7 +109,7 @@ token and the two audit and analytics tokens, so each can be revoked alone.
      | Transform Rules | Edit | Rules: header and URL rewrites |
      | Single Redirect | Edit | Rules: redirects |
      | Config Rules | Edit | Rules: configuration rules |
-     | Zone WAF | Edit | Rules: custom security rules |
+     | Zone WAF | Edit | Rules: custom security rules and rate limiting (the API rate limit) |
 
      Nothing else is needed: the page does not read traffic figures, and
      cache rules are not a phase it changes, so leave **Analytics** and
@@ -200,6 +200,85 @@ Two kinds of change send you a warning (a yellow Telegram message headed
   `protectedAfterWrite: true`, and the record should be checked in the
   Cloudflare dashboard.
 
+## Part 4. Making the API rate limit rule
+
+The API rate limit is one rule that stops a single address from sending a
+flood of requests to the site's API. It used to be planned as Terraform code
+([#1904](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1904)),
+but that was never applied, and on 2026-11-26 you asked for it to be made
+and looked after on the Cloudflare page and by Claude Network Guy instead
+([#1903](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1903);
+[#1908](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1908)
+takes it out of Terraform). It lives in the `http_ratelimit` rule phase,
+which is one of the six phases the page can change.
+
+**The rule's values** are the ones #1904 chose:
+
+| Setting | Value | In plain words |
+| --- | --- | --- |
+| Phase | `http_ratelimit` | Cloudflare's rate limiting rules |
+| Expression | `(lower(http.request.uri.path) contains "/api/")` | Every request whose path has `/api/` in it |
+| Requests per period | `200` | More than 200 requests... |
+| Period | `10` seconds | ...in 10 seconds... |
+| Counted by | `cf.colo.id` and `ip.src` | ...from one address, counted at each Cloudflare data centre ([`cf.colo.id` is required](https://developers.cloudflare.com/waf/rate-limiting-rules/parameters/)) |
+| Mitigation timeout | `10` seconds | The address stays blocked for 10 seconds |
+| Action | `block` | Further requests are refused |
+
+The site's token needs **Zone WAF Edit** for this phase, which Part 2 already
+lists ([Cloudflare's page on rate limiting rules](https://developers.cloudflare.com/terraform/additional-configurations/rate-limiting-rules/)
+names Zone WAF Write as the permission). Cloudflare's Free plan includes one
+rate limiting rule, so if the phase already holds one, change that rule
+(keep its `id`) rather than adding a second.
+
+**The easy way: ask Claude Network Guy.** Turn on **Cloudflare: edit rules**
+on its tab of the
+[Agents page](https://hybridcloudworks.com/admin/agents?tab=claude-network)
+(Part 3, step 4), and ask it to make the rule with the values above. When it
+is done you get a Telegram message such as "Claude Network Guy replaced the
+Cloudflare rules in the http_ratelimit phase (1 rule(s))." Turn the switch
+off again afterwards if nothing else needs it.
+
+**Or make it yourself on the page:**
+
+1. Open the Rules tab of the
+   [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules),
+   signed in as yourself.
+2. In **What can be changed here**, press **Open** beside `http_ratelimit`.
+   You should see the phase with no rules yet (or the one rule it holds).
+   If the page says the token cannot read rules, add Zone WAF Edit to the
+   token (Part 2, step 2) and try again.
+3. Press **Edit these rules**, and replace what is in the box with this
+   (keep the `id` of any rule that is already there):
+
+   ```json
+   [
+     {
+       "description": "Block an address sending more than 200 requests in 10 seconds to the API (counted per Cloudflare data centre)",
+       "expression": "(lower(http.request.uri.path) contains \"/api/\")",
+       "action": "block",
+       "enabled": true,
+       "ratelimit": {
+         "characteristics": ["cf.colo.id", "ip.src"],
+         "period": 10,
+         "requests_per_period": 200,
+         "mitigation_timeout": 10
+       }
+     }
+   ]
+   ```
+
+4. Press **Replace the rules**, then **Replace the rules** again in the box
+   that asks you to confirm. You should see the phase again with the one
+   rule in it, now with an `id` Cloudflare gave it. If you see "This phase
+   changed since you opened it", close the phase, open it again and repeat
+   from step 3.
+
+Changing the limit later works the same way: edit the numbers and keep the
+rule's `id`. Network Guy may change the rule but never remove it. If you
+remove it yourself, the page asks you to type `http_ratelimit` first,
+because without it one address can send the API as many requests as it
+likes.
+
 ## What is refused, and why
 
 The server refuses each of these before it changes anything in Cloudflare,
@@ -215,11 +294,10 @@ whoever asks. Three rows apply to an agent key only, and say so.
 | A DNS edit to a record that is not A, AAAA, CNAME, MX or TXT (an NS or CAA record, say) | The page adds and edits only those five types | The Cloudflare dashboard |
 | A badly formed DNS name: a leading, trailing or double dot, `@` anywhere but on its own, `*` anywhere but as the whole first part | The name that is checked must be the name that is sent | Correct the name |
 | The `http_request_late_transform` rule phase | It holds the origin rule; a mistake there refuses every visitor's API call | `infra/frontend.tf`, and the [origin secret rotation runbook](origin-secret-rotation.md) |
-| The `http_ratelimit` rule phase | It holds the API rate limit rule ([#1904](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1904)) | `infra/frontend.tf` |
-| Every other rule phase except five (origin rules, cache rules, cloud connector, snippets, managed rules, DDoS and any phase Cloudflare adds later) | "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard." Only redirects, URL rewrites, response headers, configuration rules and custom security rules can be replaced from the page | The Cloudflare dashboard |
+| Every other rule phase except six (origin rules, cache rules, cloud connector, snippets, managed rules, DDoS and any phase Cloudflare adds later) | "This kind of rule can send or store the site's traffic elsewhere, so it is changed in the Cloudflare dashboard." Only redirects, URL rewrites, response headers, configuration rules, custom security rules and rate limiting rules can be replaced from the page (the API rate limit moved here from Terraform on 2026-11-26, Part 4) | The Cloudflare dashboard |
 | A custom security rule whose action is `skip` | It would let matching requests past the other security checks | The Cloudflare dashboard |
 | An empty list of rules | It would delete every rule in the phase, and deleting is done in the dashboard | The Cloudflare dashboard |
-| Agent key only: a list of rules that leaves out a rule the phase has now | An agent key may add rules and change existing ones, but every current rule's id must still be in its list. "An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself (it asks you to type the phase's name before a custom security rule is removed) |
+| Agent key only: a list of rules that leaves out a rule the phase has now | An agent key may add rules and change existing ones, but every current rule's id must still be in its list. "An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page." | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself (it asks you to type the phase's name before a custom security rule or a rate limiting rule is removed) |
 | A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
 | A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
 | Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
@@ -230,7 +308,7 @@ What the page shows is limited too. The rules of a phase that cannot be
 changed here are shown without what they carry (only each rule's id,
 description, expression, action and whether it is on), so the origin secret
 in the `http_request_late_transform` rule never leaves the server. In the
-five phases that can be changed, a header value whose name has secret,
+six phases that can be changed, a header value whose name has secret,
 token, auth or key in it is shown as
 `[hidden: change this value in the Cloudflare dashboard]`.
 

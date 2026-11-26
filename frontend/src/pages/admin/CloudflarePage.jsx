@@ -11,7 +11,7 @@
  *   Settings  every zone setting, saved one at a time
  *   DNS       every DNS record; add one or change one, never delete
  *   Rules     the zone's rulesets by phase; replace the rules of one of the
- *             five phases on the allow-list
+ *             six phases on the allow-list
  *   Cache     empty the whole cache, or up to 30 addresses
  *
  * Every call goes through the server's `cms/cloudflare/` routes, which hold

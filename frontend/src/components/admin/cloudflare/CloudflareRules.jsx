@@ -4,10 +4,10 @@
  * elsewhere). Rules are grouped into rulesets, one per phase: the point in
  * handling a request where they run, such as `http_request_late_transform`.
  *
- * Only five phases can be changed here (the allow-list, EDITABLE_PHASES in
+ * Only six phases can be changed here (the allow-list, EDITABLE_PHASES in
  * cloudflareLocks.js, which mirrors the server). Each is listed with what it
  * does and can be opened even before it holds any rules. Every other phase
- * (the two Terraform writes, and anything that can send or store the site's
+ * (the one Terraform writes, and anything that can send or store the site's
  * traffic elsewhere) is read-only: it shows a lock and its reason, its rules
  * are shown as the server answers them (what each matches and does, never
  * what it carries), and the server refuses a change (409).
@@ -17,8 +17,9 @@
  * phase was read at, and the server refuses it (409, with a sentence shown
  * in the toast) when the phase changed since. An empty list is refused here
  * and on the server, because it would delete every rule in the phase. In the
- * custom security rules, a shorter list removes a security rule, so the
- * confirmation asks for the phase's name to be typed. A list holding a value
+ * custom security rules and the rate limiting rules, a shorter list removes
+ * a rule that protects the site, so the confirmation asks for the phase's
+ * name to be typed. A list holding a value
  * the server hid (a secret) is not offered for editing: the secret is not
  * known here, so that phase is changed in the Cloudflare dashboard.
  */
@@ -50,6 +51,7 @@ import {
   editableRules,
   entrypointRulesets,
   holdsHiddenValue,
+  GUARDED_PHASES,
   needsTypedConfirm,
   otherRulesets,
   parseRulesDraft,
@@ -77,8 +79,9 @@ function confirmation(phase, currentCount, rules) {
   const typed = needsTypedConfirm(phase, currentCount, count);
   const removed = currentCount - count;
   const base = `The phase will hold exactly the ${count} rule(s) you wrote, for every visitor, as soon as you confirm. Any rule you left out is removed.`;
+  const guarded = GUARDED_PHASES[phase];
   const warning = typed
-    ? ` This removes ${removed} custom security rule(s), so requests they blocked or challenged will reach the site. Type ${phase} below to confirm.`
+    ? ` This removes ${removed} ${guarded.rules}, so ${guarded.effect}. Type ${phase} below to confirm.`
     : '';
   return { typed, description: `${base}${warning}` };
 }
@@ -242,7 +245,7 @@ function EditableCard({ status, onOpen }) {
       <CardHeader>
         <CardTitle className="text-lg">What can be changed here</CardTitle>
         <CardDescription>
-          Only these five kinds of rule can be replaced from this page. Every other kind can send or
+          Only these six kinds of rule can be replaced from this page. Every other kind can send or
           store the site’s traffic elsewhere, so it is read-only here and changed in the Cloudflare
           dashboard. These rules still apply to requests to the site’s API, so change them with
           care.

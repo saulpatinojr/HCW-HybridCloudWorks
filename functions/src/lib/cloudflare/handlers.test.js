@@ -804,9 +804,9 @@ describe('rules', () => {
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it.each([LATE, 'http_ratelimit'])('refuses to replace the Terraform phase %s, with its own reason, and calls nothing', async (phase) => {
+  it('refuses to replace the Terraform phase http_request_late_transform, with its own reason, and calls nothing', async () => {
     const { handlers, api, store } = setup({ user: NETWORK_GUY });
-    const res = parse(await handlers.putPhase(replace(phase, { rules: [RULE] }), {}));
+    const res = parse(await handlers.putPhase(replace(LATE, { rules: [RULE] }), {}));
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
     expect(res.body.reason).not.toBe(READ_ONLY_PHASE_REASON);
@@ -933,6 +933,81 @@ describe('rules', () => {
   it.each(EDITABLE_PHASES.map((entry) => entry.phase))('lets the editable phase %s be replaced', async (phase) => {
     const { handlers } = setup({ routes: { ...current(phase), ...put(phase) } });
     expect(parse(await handlers.putPhase(replace(phase, { rules: [{ expression: 'true', action: 'block' }] }), {})).status).toBe(200);
+  });
+
+  describe('the API rate limit rule (http_ratelimit), the Cloudflare page’s since #1903', () => {
+    const RATE = 'http_ratelimit';
+    // The rule #1904 chose: 200 requests in 10 seconds from one address to /api/, blocked for 10 seconds.
+    const LIMIT = {
+      description: 'Block an address sending more than 200 requests in 10 seconds to the API (counted per Cloudflare data centre)',
+      expression: '(lower(http.request.uri.path) contains "/api/")',
+      action: 'block',
+      enabled: true,
+      ratelimit: { characteristics: ['cf.colo.id', 'ip.src'], period: 10, requests_per_period: 200, mitigation_timeout: 10 },
+    };
+    const SAVED = { id: 'limit-1', ...LIMIT };
+    const withLimit = entrypoint(RATE, { id: 'r5', phase: RATE, kind: 'zone', version: '2', rules: [SAVED] });
+
+    it('lets Claude Network Guy make the rule in an empty phase, recorded and sent to the phone', async () => {
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: put(RATE) });
+      const res = parse(await handlers.putPhase(replace(RATE, { rules: [LIMIT], expectedVersion: null }), {}));
+      expect(res.status).toBe(200);
+      expect(methods(api)).toEqual(['GET ', `GET /rulesets/phases/${RATE}/entrypoint`, `PUT /rulesets/phases/${RATE}/entrypoint`]);
+      expect(api.calls[2].body).toEqual({ rules: [LIMIT] });
+      expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({ agent: 'claude-network', details: { family: 'rules', phase: RATE, count: 1 } });
+      expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(notifier.notifyTelegram.mock.calls[0][0]).toMatchObject({
+        source: 'cloudflare-change:claude-network:audit-1',
+        message: `Claude Network Guy replaced the Cloudflare rules in the ${RATE} phase (1 rule(s)).`,
+      });
+    });
+
+    it('reads the phase in full, limits included, as editable', async () => {
+      const { handlers } = setup({ routes: withLimit });
+      const res = parse(await handlers.getPhase(request({ params: { phase: RATE } }), {}));
+      expect(res.body).toMatchObject({ editable: true, locked: false, lockedReason: null, version: '2' });
+      expect(res.body.ruleset.rules).toEqual([SAVED]);
+    });
+
+    it('lets an agent key change the limit but not remove the rule', async () => {
+      const changed = setup({ user: NETWORK_GUY, routes: { ...withLimit, ...put(RATE) } });
+      const raised = { ...SAVED, ratelimit: { ...SAVED.ratelimit, requests_per_period: 300 } };
+      expect(parse(await changed.handlers.putPhase(replace(RATE, { rules: [raised], expectedVersion: '2' }), {})).status).toBe(200);
+
+      const removed = setup({ user: NETWORK_GUY, routes: { ...withLimit, ...put(RATE) } });
+      const res = parse(await removed.handlers.putPhase(replace(RATE, { rules: [{ ...LIMIT, description: 'a new one' }], expectedVersion: '2' }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_REMOVAL_MESSAGE });
+      expect(WRITES(removed.api)).toEqual([]);
+      expect(removed.store.upsertDoc).not.toHaveBeenCalled();
+      expect(removed.notifier.notifyTelegram).not.toHaveBeenCalled();
+    });
+
+    it('refuses an empty list and a stale version for everyone, writing nothing', async () => {
+      for (const user of [PERSON, NETWORK_GUY]) {
+        const empty = setup({ user, routes: { ...withLimit, ...put(RATE) } });
+        const none = parse(await empty.handlers.putPhase(replace(RATE, { rules: [], expectedVersion: '2' }), {}));
+        expect(none.status).toBe(400);
+        expect(none.body.error).toMatch(/deletes every rule in the phase/);
+        expect(empty.api.fetch).not.toHaveBeenCalled();
+
+        const stale = setup({ user, routes: { ...withLimit, ...put(RATE) } });
+        const old = parse(await stale.handlers.putPhase(replace(RATE, { rules: [SAVED], expectedVersion: '1' }), {}));
+        expect(old.status).toBe(409);
+        expect(old.body).toMatchObject({ code: 'CLOUDFLARE_STALE', error: STALE_MESSAGE });
+        expect(WRITES(stale.api)).toEqual([]);
+        expect(stale.store.upsertDoc).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses to change the rule when the zone is not this site’s', async () => {
+      const { handlers, api, store } = setup({ user: NETWORK_GUY, routes: { [`GET ${ZONE_PATH}`]: zoneReply('other.example'), ...put(RATE) } });
+      const res = parse(await handlers.putPhase(replace(RATE, { rules: [LIMIT], expectedVersion: null }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_WRONG_ZONE', error: WRONG_ZONE_MESSAGE });
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    });
   });
 
   describe('an agent key may add or change rules, never remove one', () => {

@@ -8,7 +8,8 @@
  * the request instead of after it. cloudflareLocks.test.js imports that file
  * (it imports nothing) and fails when the two differ:
  *
- *   PROTECTED_PHASES     the two phases Terraform writes, with their reasons
+ *   PROTECTED_PHASES     the phase Terraform writes, with its reason (the API
+ *                        rate limit left Terraform for this page in #1903)
  *   EDITABLE_PHASES      the only phases that may be replaced (an allow-list:
  *                        every other phase is read-only)
  *   OWNER_ONLY_SETTINGS  zone settings an agent key may not change
@@ -31,11 +32,6 @@ export const PROTECTED_PHASES = Object.freeze([
     phase: 'http_request_late_transform',
     reason:
       'The origin secret rule (infra/frontend.tf, cloudflare_ruleset.origin_secret) adds the header that proves a visitor came through Cloudflare. Changing it locks every visitor out of the API.',
-  }),
-  Object.freeze({
-    phase: 'http_ratelimit',
-    reason:
-      'The API rate limit rule is managed by Terraform (infra/). A change here would be undone on the next Terraform run, and removing it lets one visitor flood the API.',
   }),
 ]);
 
@@ -63,6 +59,11 @@ export const EDITABLE_PHASES = Object.freeze(
       phase: 'http_request_firewall_custom',
       description:
         'Custom security rules: block, challenge or log the requests that match (never skip).',
+    },
+    {
+      phase: 'http_ratelimit',
+      description:
+        'Rate limiting: limit how many requests one address can make, for example to the API.',
     },
   ].map(Object.freeze)
 );
