@@ -71,6 +71,57 @@ const leadDays = (program, kind) => {
     : DEFAULT_LEAD_DAYS[kind];
 };
 
+/** The dated items of one application: one per date that still matters in its status. */
+function applicationItems(application, program) {
+  const name =
+    program?.name ||
+    application.title ||
+    application.programId ||
+    "Ambassador application";
+  return APPLICATION_DATES.filter(
+    (date) =>
+      date.statuses.includes(application.status) &&
+      typeof application[date.field] === "string",
+  ).map((date) => {
+    const due = application[date.field].slice(0, 10);
+    return {
+      key: `${application.id}:${date.field}`,
+      kind: "deadline",
+      programId: application.programId,
+      recordId: application.id,
+      title: `${date.verb}: ${name}`,
+      due,
+      leadDays: leadDays(program, date.lead),
+      daysLeft: null,
+      href: ambassadorHref(application.id),
+      detail: "",
+      status: application.status,
+      field: date.field,
+    };
+  });
+}
+
+/** A held membership's activity requirement, or null when it is met or there is none. */
+function upkeepItem(program, evidence, today) {
+  if (program.enabled === false || program.membershipStatus !== "active")
+    return null;
+  const progress = upkeepProgress(program, evidence, today);
+  if (!progress || progress.current.met) return null;
+  const { current, minCount } = progress;
+  return {
+    key: `${program.id}:upkeep:${current.start}`,
+    kind: "upkeep",
+    programId: program.id,
+    recordId: program.id,
+    title: `${program.name}: ${current.label} activity requirement not yet met`,
+    due: current.end,
+    leadDays: leadDays(program, "renewal"),
+    daysLeft: current.daysLeft,
+    href: ambassadorProgramHref(program.id),
+    detail: `${current.count} of ${minCount} recorded for ${current.label}; the period ends ${current.end}`,
+  };
+}
+
 /**
  * @param {{ programs: object[], applications: object[], evidence: object[], today: string }} input
  *        `today` as YYYY-MM-DD (UTC)
@@ -89,61 +140,16 @@ export function ambassadorAttention({
   const byId = new Map(
     programs.filter(isLive).map((program) => [program.id, program]),
   );
-  const items = [];
-
-  for (const application of applications) {
-    if (!isLive(application)) continue;
-    const program = byId.get(application.programId) || null;
-    const name =
-      program?.name ||
-      application.title ||
-      application.programId ||
-      "Ambassador application";
-    for (const date of APPLICATION_DATES) {
-      const value = application[date.field];
-      if (
-        !date.statuses.includes(application.status) ||
-        typeof value !== "string"
-      )
-        continue;
-      const due = value.slice(0, 10);
-      items.push({
-        key: `${application.id}:${date.field}`,
-        kind: "deadline",
-        programId: application.programId,
-        recordId: application.id,
-        title: `${date.verb}: ${name}`,
-        due,
-        leadDays: leadDays(program, date.lead),
-        daysLeft: daysUntil(due, today),
-        href: ambassadorHref(application.id),
-        detail: "",
-        status: application.status,
-        field: date.field,
-      });
-    }
-  }
-
-  for (const program of byId.values()) {
-    if (program.enabled === false || program.membershipStatus !== "active")
-      continue;
-    const progress = upkeepProgress(program, evidence, today);
-    if (!progress || progress.current.met) continue;
-    const { current, minCount } = progress;
-    items.push({
-      key: `${program.id}:upkeep:${current.start}`,
-      kind: "upkeep",
-      programId: program.id,
-      recordId: program.id,
-      title: `${program.name}: ${current.label} activity requirement not yet met`,
-      due: current.end,
-      leadDays: leadDays(program, "renewal"),
-      daysLeft: current.daysLeft,
-      href: ambassadorProgramHref(program.id),
-      detail: `${current.count} of ${minCount} recorded for ${current.label}; the period ends ${current.end}`,
-    });
-  }
-  return items;
+  const deadlines = applications
+    .filter(isLive)
+    .flatMap((application) =>
+      applicationItems(application, byId.get(application.programId) || null),
+    )
+    .map((item) => ({ ...item, daysLeft: daysUntil(item.due, today) }));
+  const upkeep = [...byId.values()]
+    .map((program) => upkeepItem(program, evidence, today))
+    .filter(Boolean);
+  return [...deadlines, ...upkeep];
 }
 
 /** Whether an item is inside its lead time (or past due) on `today`. */

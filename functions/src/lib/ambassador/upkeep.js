@@ -53,35 +53,37 @@ export function upkeepWindow(day, period, offset = 0) {
 }
 
 /**
- * The evidence filed under this program by name, dated in the current period
- * and in the one before. General evidence (filed under no program) is not
- * counted: it says nothing about this program. Null when the program has no
- * rule.
+ * How the current period stands: the evidence filed under this program by
+ * name and dated inside it, against the rule's count. General evidence
+ * (filed under no program) is not counted: it says nothing about this
+ * program. Null when the program has no rule.
+ *
+ * The browser's copy (ambassadorModel.js) also tallies the period before and
+ * carries the rule's note, for the cards; the server needs neither, so it
+ * leaves them out. upkeepMirror.test.js holds the parts both have to agree.
  */
 export function upkeepProgress(program, evidence, today) {
   const upkeep = program?.upkeep;
   if (!upkeep || !UPKEEP_PERIODS.includes(upkeep.period)) return null;
+  const window = upkeepWindow(today, upkeep.period);
   const types = upkeep.evidenceTypes || [];
-  const filed = (evidence || []).filter(
-    (item) =>
-      !item.softDeletedAt &&
-      Array.isArray(item.programIds) &&
-      item.programIds.includes(program.id) &&
-      (types.length === 0 || types.includes(item.sourceModule)),
-  );
-  const tally = (window) => {
-    const count = filed.filter(
-      (item) =>
-        item.date && item.date >= window.start && item.date <= window.end,
-    ).length;
-    return { ...window, count, met: count >= upkeep.minCount };
-  };
-  const current = tally(upkeepWindow(today, upkeep.period));
+  const filedHere = (item) =>
+    !item.softDeletedAt &&
+    Array.isArray(item.programIds) &&
+    item.programIds.includes(program.id) &&
+    (types.length === 0 || types.includes(item.sourceModule));
+  const inPeriod = (item) =>
+    Boolean(item.date) && item.date >= window.start && item.date <= window.end;
+  const count = (evidence || []).filter(
+    (item) => filedHere(item) && inPeriod(item),
+  ).length;
   return {
-    period: upkeep.period,
     minCount: upkeep.minCount,
-    note: upkeep.note || "",
-    current: { ...current, daysLeft: daysUntil(current.end, today) },
-    previous: tally(upkeepWindow(today, upkeep.period, -1)),
+    current: {
+      ...window,
+      count,
+      met: count >= upkeep.minCount,
+      daysLeft: daysUntil(window.end, today),
+    },
   };
 }

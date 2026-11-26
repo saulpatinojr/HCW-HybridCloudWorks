@@ -58,8 +58,10 @@ describe('the browser and the server count upkeep the same way', () => {
     ];
     for (const day of everyDayOf2026()) {
       for (const program of rules) {
+        const browser = upkeepProgress(program, EVIDENCE, day);
+        // The server keeps only what it uses: the current period and the count.
         expect(server.upkeepProgress(program, EVIDENCE, day), day).toEqual(
-          upkeepProgress(program, EVIDENCE, day)
+          browser && { minCount: browser.minCount, current: browser.current }
         );
       }
     }
