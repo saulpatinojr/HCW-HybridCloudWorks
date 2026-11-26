@@ -6,13 +6,22 @@
  */
 import React from 'react';
 import { Link } from 'react-router';
-import { CheckCircle2, Globe, Lock, XCircle } from 'lucide-react';
+import { CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { agentKeyTab } from '@/components/admin/ai-engine/agentKeys';
 import { agentKeyTabHref } from '@/components/admin/agents/tabs';
 import { navItemById } from '@/config/adminNav';
 import { CLOUDFLARE_DOCS, ExternalLink, NotConfigured, ReadGate } from './CloudflareParts';
-import { familyRows, protectedDnsList, protectedPhaseList } from './cloudflareView';
+import {
+  APEX_WILDCARD_REASON,
+  editablePhaseList,
+  familyRows,
+  protectedDnsList,
+  protectedPhaseList,
+  protectedPrefixList,
+  READ_ONLY_PHASE_REASON,
+} from './cloudflareView';
+import { OWNER_ONLY_SETTINGS } from './cloudflareLocks';
 
 const NETWORK_AGENT = agentKeyTab('claude-network');
 
@@ -56,19 +65,42 @@ function ZoneCard({ status }) {
             </div>
           </dl>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            The token is set, but Cloudflare did not return the zone. Check that the token is
-            limited to the site’s zone and has the Zone Read permission (
-            <ExternalLink href={CLOUDFLARE_DOCS.permissions}>
-              Cloudflare’s permission list
-            </ExternalLink>
-            ).
-          </p>
+          <NoZone zoneError={status.zoneError} />
         )}
       </CardContent>
     </Card>
   );
 }
+
+/**
+ * Why the zone is missing: the server's own sentence when it gave one (a
+ * refused token, a limit, Cloudflare down), else the likeliest cause.
+ */
+function NoZone({ zoneError }) {
+  if (zoneError) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="zone-error">
+        {zoneError}
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      The token is set, but Cloudflare did not return the zone. Check that the token is limited to
+      the site’s zone and has the Zone Read permission (
+      <ExternalLink href={CLOUDFLARE_DOCS.permissions}>Cloudflare’s permission list</ExternalLink>
+      ).
+    </p>
+  );
+}
+
+const FAMILY_ICONS = {
+  yes: <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />,
+  refused: <XCircle className="h-4 w-4 text-rose-600" aria-hidden="true" />,
+  unknown: <HelpCircle className="h-4 w-4 text-amber-600" aria-hidden="true" />,
+};
+
+const FamilyIcon = ({ state }) => FAMILY_ICONS[state] ?? FAMILY_ICONS.unknown;
 
 function FamiliesCard({ status }) {
   const rows = familyRows(status);
@@ -77,8 +109,10 @@ function FamiliesCard({ status }) {
       <CardHeader>
         <CardTitle className="text-lg">What the token can read</CardTitle>
         <CardDescription>
-          Each line is one kind of thing the page shows. A cross means the token was refused when
-          the page asked, so that tab will be empty until the token is given that permission.
+          Each line is one kind of thing the page shows. A cross means Cloudflare refused the token
+          when the page asked, so that tab stays empty until the token is given that permission. A
+          question mark means the page could not check just now (Cloudflare was slow or answered
+          with an error); try again in a minute.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -88,15 +122,9 @@ function FamiliesCard({ status }) {
           <ul className="space-y-1.5 text-sm">
             {rows.map((row) => (
               <li key={row.id} className="flex items-center gap-2" data-testid={`family-${row.id}`}>
-                {row.readable ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-rose-600" aria-hidden="true" />
-                )}
+                <FamilyIcon state={row.state} />
                 <span>{row.label}</span>
-                <span className="text-muted-foreground">
-                  {row.readable ? 'can be read' : 'refused'}
-                </span>
+                <span className="text-muted-foreground">{row.words}</span>
               </li>
             ))}
           </ul>
@@ -106,9 +134,44 @@ function FamiliesCard({ status }) {
   );
 }
 
-function LockedCard({ status }) {
+/** One locked item with its reason. */
+function Reasoned({ code, reason }) {
+  return (
+    <li>
+      <code>{code}</code>
+      {reason ? <span className="text-muted-foreground"> — {reason}</span> : null}
+    </li>
+  );
+}
+
+function LockedNames({ status }) {
   const names = protectedDnsList(status);
-  const phases = protectedPhaseList(status);
+  return (
+    <div>
+      <p className="text-sm font-medium">DNS records</p>
+      <p className="text-xs text-muted-foreground">
+        An entry that starts with <code>*.</code> covers every name under it. A wildcard over a
+        locked name (such as <code>*.www</code>) is locked too, and so is <code>*</code> for the
+        whole zone: {APEX_WILDCARD_REASON}
+      </p>
+      <ul className="mt-1 space-y-1 text-sm">
+        {protectedPrefixList(status).map((item) => (
+          <Reasoned key={item.prefix} code={`${item.prefix}…`} reason={item.reason} />
+        ))}
+        {names.map((item) => (
+          <Reasoned key={item.name} code={item.name} reason={item.reason} />
+        ))}
+      </ul>
+      {names.length === 0 && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          The full list of names comes from the server once the token is set.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LockedCard({ status }) {
   return (
     <Card>
       <CardHeader>
@@ -117,43 +180,42 @@ function LockedCard({ status }) {
           What is locked, and why
         </CardTitle>
         <CardDescription>
-          These keep the site running and are managed by Terraform (the code that builds the site’s
-          cloud resources). Nobody can change them from here, not an admin and not an agent; the
-          server refuses. Change them in the Terraform files the reason names. Nothing on this page
-          can delete anything.
+          The records and the two rule phases below keep the site running and are managed by
+          Terraform (the code that builds the site’s cloud resources). Nobody can change them from
+          here, not an admin and not an agent; the server refuses. No DNS record or ruleset can be
+          deleted from this page, but replacing a phase’s rules removes the ones you leave out.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <LockedNames status={status} />
         <div>
-          <p className="text-sm font-medium">DNS records</p>
-          {names.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              The list comes from the server once the token is set. Certificate check records
-              (_acme-challenge) are always locked.
-            </p>
-          ) : (
-            <ul className="mt-1 space-y-1 text-sm">
-              {names.map((item) => (
-                <li key={item.name}>
-                  <code>{item.name}</code>
-                  {item.reason ? (
-                    <span className="text-muted-foreground"> — {item.reason}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+          <p className="text-sm font-medium">Rule phases Terraform manages</p>
+          <ul className="mt-1 space-y-1 text-sm">
+            {protectedPhaseList(status).map((item) => (
+              <Reasoned key={item.phase} code={item.phase} reason={item.reason} />
+            ))}
+          </ul>
         </div>
         <div>
-          <p className="text-sm font-medium">Rule phases</p>
+          <p className="text-sm font-medium">Rule phases that can be changed here</p>
+          <p className="text-xs text-muted-foreground">
+            Only these. Every other phase is read-only: {READ_ONLY_PHASE_REASON}
+          </p>
           <ul className="mt-1 space-y-1 text-sm">
-            {phases.map((item) => (
-              <li key={item.phase}>
-                <code>{item.phase}</code>
-                {item.reason ? (
-                  <span className="text-muted-foreground"> — {item.reason}</span>
-                ) : null}
-              </li>
+            {editablePhaseList(status).map((item) => (
+              <Reasoned key={item.phase} code={item.phase} reason={item.description} />
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-sm font-medium">Settings only you change</p>
+          <p className="text-xs text-muted-foreground">
+            An agent key is refused these; you, signed in as the owner, can change them on the
+            Settings tab.
+          </p>
+          <ul className="mt-1 space-y-1 text-sm">
+            {(status?.protected?.ownerOnlySettings ?? OWNER_ONLY_SETTINGS).map((item) => (
+              <Reasoned key={item.setting} code={item.setting} />
             ))}
           </ul>
         </div>

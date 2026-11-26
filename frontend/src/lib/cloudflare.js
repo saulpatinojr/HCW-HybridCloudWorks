@@ -15,20 +15,27 @@
  *   updateCloudflareDnsRecord(id, patch) PATCH change a record            super_admin
  *   readCloudflareRulesets()             GET   the zone's rulesets         editor
  *   readCloudflarePhase(phase)           GET   one phase's rules           editor
- *   replaceCloudflarePhase(phase, body)  PUT   replace a phase's rules    super_admin
+ *   replaceCloudflarePhase(phase, body)  PUT   replace an editable phase's
+ *                                              rules { rules,
+ *                                              expectedVersion }           super_admin
  *
  * Every id that goes into a path is checked here first, with the same rule
- * the server uses, so a bad value is a sentence on screen rather than a
- * request; the server checks again, and decides what is locked.
+ * the server uses (functions/src/lib/cloudflare/zone-routes.js,
+ * dns-routes.js and rules-routes.js, wrapped by handlers.js), so a bad value
+ * is a sentence on screen rather than a request; the server checks again,
+ * and decides what is locked. A phase replacement carries `expectedVersion`,
+ * the version its read answered, and is refused when the phase changed since.
  */
 import { getJSON, postJSON, sendJSON } from '@/lib/api';
 
 const BASE = 'cms/cloudflare';
 
-/** The server's rule for a setting id (cloudflare-http.js). */
+/** The server's rule for a setting id (zone-routes.js SETTING_ID_PATTERN). */
 export const SETTING_ID = /^[a-z0-9_]{1,64}$/;
-/** The server's rule for a rule phase. */
-export const PHASE_ID = /^[a-z_]{1,64}$/;
+/** The server's rule for a rule phase (rules-routes.js PHASE_PATTERN). */
+export const PHASE_ID = /^[a-z0-9_]{1,64}$/;
+/** The server's rule for a DNS record id (dns-routes.js RECORD_ID_PATTERN). */
+export const RECORD_ID = /^[a-f0-9]{32}$/;
 /** The most addresses one purge may name. */
 export const MAX_PURGE_FILES = 30;
 
@@ -71,12 +78,8 @@ export function createCloudflareDnsRecord(record) {
 }
 
 export function updateCloudflareDnsRecord(recordId, patch) {
-  // Cloudflare's record ids are 32 hex characters; the server checks them too.
-  return sendJSON(
-    `${BASE}/dns/${checked(/^[A-Za-z0-9]{1,64}$/, recordId, 'record id')}`,
-    'PATCH',
-    patch
-  );
+  // Cloudflare's record ids are 32 lower-case hex characters; the server checks them too.
+  return sendJSON(`${BASE}/dns/${checked(RECORD_ID, recordId, 'record id')}`, 'PATCH', patch);
 }
 
 export function readCloudflareRulesets() {

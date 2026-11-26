@@ -137,9 +137,10 @@ function Explainer() {
             starts with only what its job needs.
           </li>
           <li>
-            No agent key can delete anything, publish anything or read a password or key, whatever
-            is switched on. Every call it makes, and every call it is refused, goes in the audit
-            log.
+            No agent key can publish anything, or delete a DNS record, a ruleset or any content,
+            whatever is switched on; replacing a phase’s Cloudflare rules does remove the ones left
+            out. Every change it makes, and every call it is refused, goes in the audit log; what it
+            only reads is not recorded.
           </li>
           <li>
             Rotating a key makes a new one and stops the old one on its next request. Revoking

@@ -420,7 +420,7 @@ function Intro({ words, catalogue }) {
       <span>
         Koda is the content agent that drafts and reviews posts for the series. It signs in with the
         key below. It works on the Drafts stage, the published reads and the admin sections switched
-        on in the card below; it cannot publish, delete, change a setting or read a secret.
+        on in the card below; it cannot publish or delete, and it reaches nothing switched off.
       </span>
     );
   }

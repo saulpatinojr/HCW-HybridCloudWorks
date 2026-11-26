@@ -35,6 +35,8 @@ const toast = vi.fn();
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 
 const { default: CloudflarePage } = await import('./CloudflarePage');
+const { REDACTED_VALUE } = await import('@/components/admin/cloudflare/cloudflareLocks');
+const { HIDDEN_VALUE_NOTE } = await import('@/components/admin/cloudflare/CloudflareRules');
 
 const STATUS = {
   configured: true,
@@ -59,6 +61,7 @@ const STATUS = {
         reason: 'The origin secret rule. Changing it locks every visitor out of the API.',
       },
     ],
+    ownerOnlySettings: [{ setting: 'ssl', reason: 'An agent key may not change this.' }],
   },
 };
 const RECORDS = [
@@ -153,7 +156,9 @@ describe('the Cloudflare page', () => {
     ]);
     expect(screen.getByRole('heading', { level: 1, name: /Cloudflare/ })).toBeInTheDocument();
     expect(await screen.findByText('Free Website')).toBeInTheDocument();
-    expect(screen.getByTestId('family-rules')).toHaveTextContent('refused');
+    expect(screen.getByTestId('family-rules')).toHaveTextContent(
+      'refused (the token lacks this permission)'
+    );
     expect(screen.getByTestId('family-dns')).toHaveTextContent('can be read');
     expect(screen.getByText('docs.example.com')).toBeInTheDocument();
     expect(screen.getByText('http_ratelimit')).toBeInTheDocument();
@@ -183,6 +188,28 @@ describe('the Cloudflare page', () => {
     );
     fireEvent.click(screen.getByRole('tab', { name: 'DNS' }));
     expect(await screen.findByText('Cloudflare is not set up here yet')).toBeInTheDocument();
+  });
+
+  it('says when a family could not be checked, and shows the server’s sentence for the zone', async () => {
+    api.readCloudflareStatus.mockResolvedValue({
+      ...STATUS,
+      zone: null,
+      zoneError: 'Cloudflare is limiting requests right now. Wait a minute and try again.',
+      families: [{ id: 'cache', label: 'Cache', readable: null }],
+    });
+    renderAt();
+    expect(await screen.findByTestId('zone-error')).toHaveTextContent(/limiting requests/);
+    expect(screen.getByTestId('family-cache')).toHaveTextContent('could not check right now');
+    expect(screen.queryByText(/Zone Read permission/)).toBeNull();
+  });
+
+  it('lists the certificate-check prefix, the wildcard rule and the phases that can change', async () => {
+    renderAt();
+    await screen.findByText('Free Website');
+    expect(screen.getByText('_acme-challenge…')).toBeInTheDocument();
+    expect(screen.getByText(/covers every name under it/)).toBeInTheDocument();
+    expect(screen.getByText('http_request_dynamic_redirect')).toBeInTheDocument();
+    expect(screen.getByText(/No DNS record or ruleset can be deleted/)).toBeInTheDocument();
   });
 
   it('lands an old word on its tab', async () => {
@@ -287,12 +314,13 @@ describe('the Rules tab', () => {
     expect(screen.getByText('Managed')).toBeInTheDocument();
   });
 
-  it('replaces an unlocked phase’s rules after asking, once', async () => {
+  it('replaces an unlocked phase’s rules after asking, once, with the version it read', async () => {
     api.readCloudflarePhase.mockResolvedValue({
       ruleset: {
         name: 'Custom rules',
         rules: [{ id: 'r1', version: '2', expression: 'true', action: 'block' }],
       },
+      version: '5',
     });
     api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
     renderAt('/admin/cloudflare?tab=rules');
@@ -309,9 +337,145 @@ describe('the Rules tab', () => {
     await waitFor(() =>
       expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_request_firewall_custom', {
         rules: [{ id: 'r1', expression: 'true', action: 'block' }],
+        expectedVersion: '5',
       })
     );
     expect(api.replaceCloudflarePhase).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks every phase not on the allow-list, with the sentence about traffic', async () => {
+    api.readCloudflareRulesets.mockResolvedValue({
+      rulesets: [
+        ...RULESETS,
+        { id: 'rs4', name: 'Origin rules', phase: 'http_request_origin', kind: 'zone' },
+      ],
+    });
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { name: 'Origin rules', rules: [{ id: 'o', expression: 'true', action: 'route' }] },
+      version: '1',
+    });
+    renderAt('/admin/cloudflare?tab=rules');
+    const row = await screen.findByTestId('ruleset-http_request_origin');
+    expect(row).toHaveTextContent(/can send or store the site's traffic elsewhere/);
+    fireEvent.click(within(row).getByRole('button', { name: 'Open http_request_origin' }));
+    const panel = await screen.findByTestId('phase-http_request_origin');
+    await waitFor(() => expect(panel).toHaveTextContent('"action": "route"'));
+    expect(within(panel).queryByRole('button', { name: /Edit these rules/ })).toBeNull();
+  });
+
+  it('lists the five phases that can be changed, and opens one with no rules yet', async () => {
+    api.readCloudflarePhase.mockResolvedValue({ ruleset: null, version: null });
+    api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
+    renderAt('/admin/cloudflare?tab=rules');
+    await screen.findByTestId('editable-http_request_dynamic_redirect');
+    expect(screen.getAllByTestId(/^editable-/)).toHaveLength(5);
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open http_request_dynamic_redirect from the list of what can be changed',
+      })
+    );
+    const panel = await screen.findByTestId('phase-http_request_dynamic_redirect');
+    fireEvent.click(await within(panel).findByRole('button', { name: /Edit these rules/ }));
+    const editor = within(panel).getByLabelText('Rules for http_request_dynamic_redirect');
+    // An empty list is refused before anything is sent.
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/delete every rule/);
+    expect(within(panel).getByRole('button', { name: 'Replace the rules' })).toBeDisabled();
+    fireEvent.change(editor, {
+      target: { value: '[{"expression":"true","action":"redirect"}]' },
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Replace the rules' }));
+    const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Replace the rules' }));
+    await waitFor(() =>
+      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_request_dynamic_redirect', {
+        rules: [{ expression: 'true', action: 'redirect' }],
+        expectedVersion: null,
+      })
+    );
+  });
+
+  it('offers no editor for a list holding a hidden value', async () => {
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: {
+        name: 'Custom rules',
+        rules: [
+          {
+            id: 'h',
+            expression: 'true',
+            action: 'block',
+            action_parameters: { headers: { 'x-api-key': { value: REDACTED_VALUE } } },
+          },
+        ],
+      },
+      version: '2',
+    });
+    renderAt('/admin/cloudflare?tab=rules');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open http_request_firewall_custom' })
+    );
+    const panel = await screen.findByTestId('phase-http_request_firewall_custom');
+    await waitFor(() => expect(panel).toHaveTextContent(HIDDEN_VALUE_NOTE));
+    expect(within(panel).queryByRole('button', { name: /Edit these rules/ })).toBeNull();
+  });
+
+  it('asks for the phase name typed before removing a custom security rule', async () => {
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: {
+        name: 'Custom rules',
+        rules: [
+          { id: 'r1', expression: 'true', action: 'block' },
+          { id: 'r2', expression: 'false', action: 'challenge' },
+        ],
+      },
+      version: '3',
+    });
+    api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
+    renderAt('/admin/cloudflare?tab=rules');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open http_request_firewall_custom' })
+    );
+    const panel = await screen.findByTestId('phase-http_request_firewall_custom');
+    fireEvent.click(await within(panel).findByRole('button', { name: /Edit these rules/ }));
+    fireEvent.change(within(panel).getByLabelText('Rules for http_request_firewall_custom'), {
+      target: { value: '[{"id":"r1","expression":"true","action":"block"}]' },
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Replace the rules' }));
+    const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
+    expect(confirm).toHaveTextContent(/removes 1 custom security rule/);
+    const go = within(confirm).getByRole('button', { name: 'Replace the rules' });
+    expect(go).toBeDisabled();
+    fireEvent.change(within(confirm).getByLabelText('Type the phase name to confirm'), {
+      target: { value: 'http_request_firewall_custom' },
+    });
+    expect(go).toBeEnabled();
+    fireEvent.click(go);
+    await waitFor(() => expect(api.replaceCloudflarePhase).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the server’s sentence when the phase changed since it was opened, and keeps the edit', async () => {
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { name: 'Custom rules', rules: [{ id: 'r1', expression: 'true', action: 'block' }] },
+      version: '3',
+    });
+    const stale = 'This phase changed since you opened it; reload it and make your change again.';
+    api.replaceCloudflarePhase.mockRejectedValue(
+      Object.assign(new Error(stale), { status: 409, code: 'CLOUDFLARE_STALE' })
+    );
+    renderAt('/admin/cloudflare?tab=rules');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open http_request_firewall_custom' })
+    );
+    const panel = await screen.findByTestId('phase-http_request_firewall_custom');
+    fireEvent.click(await within(panel).findByRole('button', { name: /Edit these rules/ }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Replace the rules' }));
+    const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Replace the rules' }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: stale }))
+    );
+    expect(
+      within(panel).getByLabelText('Rules for http_request_firewall_custom')
+    ).toBeInTheDocument();
   });
 });
 
@@ -329,6 +493,14 @@ describe('the Settings tab', () => {
     const ipv6 = screen.getByTestId('setting-ipv6');
     expect(within(ipv6).queryByRole('button')).toBeNull();
     expect(within(ipv6).getByText(/does not allow this one to be changed/)).toBeInTheDocument();
+  });
+
+  it('marks the settings only the owner changes, with the server’s reason', async () => {
+    renderAt('/admin/cloudflare?tab=settings');
+    const row = await screen.findByTestId('setting-ssl');
+    await waitFor(() => expect(row).toHaveTextContent('Owner only.'));
+    expect(row).toHaveTextContent('An agent key may not change this.');
+    expect(screen.getByTestId('setting-brotli')).not.toHaveTextContent('Owner only.');
   });
 
   it('asks before changing a setting that can lock visitors out', async () => {

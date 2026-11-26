@@ -4,9 +4,10 @@
  * server's protected rule phases.
  */
 import { describe, expect, it } from 'vitest';
-import { PROTECTED_PHASES as SERVER_PROTECTED_PHASES } from '../../../../../functions/src/lib/cloudflare/protected.js';
 import {
-  PROTECTED_PHASES,
+  APEX_WILDCARD_REASON,
+  FAMILY_STATES,
+  READ_ONLY_PHASE_REASON,
   dnsForm,
   dnsNameLock,
   dnsRecordBody,
@@ -14,6 +15,7 @@ import {
   editableRules,
   entrypointRulesets,
   familyRows,
+  needsTypedConfirm,
   normalizeDnsName,
   otherRulesets,
   parsePurgeList,
@@ -46,25 +48,6 @@ const STATUS = {
   },
 };
 
-describe('the browser’s mirror of the server’s protected phases', () => {
-  it('locks the origin secret rule and the API rate limit, each with a reason', () => {
-    expect(PROTECTED_PHASES.map((item) => item.phase)).toEqual([
-      'http_request_late_transform',
-      'http_ratelimit',
-    ]);
-    for (const item of PROTECTED_PHASES) expect(item.reason).toMatch(/\w.{30,}/);
-  });
-
-  // functions/src/lib/cloudflare/protected.js imports nothing, so the browser
-  // reads it directly, as agentKeys.test.js reads the server's key list.
-  it('names the same phases as the server’s list', () => {
-    const phases = SERVER_PROTECTED_PHASES.map((item) =>
-      typeof item === 'string' ? item : item.phase
-    );
-    expect([...phases].sort()).toEqual(PROTECTED_PHASES.map((item) => item.phase).sort());
-  });
-});
-
 describe('locks', () => {
   it('joins the server’s phases with the mirror, the server’s reason first', () => {
     const list = protectedPhaseList(STATUS);
@@ -76,7 +59,7 @@ describe('locks', () => {
     expect(protectedPhaseList(null)).toHaveLength(2);
   });
 
-  it('locks a phase the ruleset marks, the mirror names, and nothing else', () => {
+  it('locks a phase the ruleset marks, a Terraform phase, and every phase not on the allow-list', () => {
     expect(
       phaseLock('http_custom', { ruleset: { locked: true, lockedReason: 'Server says.' } })
     ).toBe('Server says.');
@@ -85,6 +68,8 @@ describe('locks', () => {
       'The origin secret rule.'
     );
     expect(phaseLock('http_request_firewall_custom', { status: STATUS })).toBeNull();
+    expect(phaseLock('http_request_origin', { status: STATUS })).toBe(READ_ONLY_PHASE_REASON);
+    expect(phaseLock('http_request_cache_settings')).toBe(READ_ONLY_PHASE_REASON);
   });
 
   it('spells a DNS name in full, with @ as the zone', () => {
@@ -94,24 +79,52 @@ describe('locks', () => {
     expect(normalizeDnsName('', ZONE)).toBe('');
   });
 
-  it('locks the protected names, any certificate check, and nothing else', () => {
+  it('locks the protected names, any certificate check, the wildcards over them, and nothing else', () => {
     expect(dnsNameLock('@', { status: STATUS })).toBe('The site itself.');
     expect(dnsNameLock('www', { status: STATUS })).toMatch(/keeps the site running/);
     expect(dnsNameLock('api-azure.example.com', { status: STATUS })).toMatch(/frontend\.tf/);
     expect(dnsNameLock('_acme-challenge.lab', { status: STATUS })).toMatch(/certificate/);
+    expect(dnsNameLock('*', { status: STATUS })).toBe(APEX_WILDCARD_REASON);
+    expect(dnsNameLock('*.api-azure', { status: STATUS })).toMatch(/frontend\.tf/);
     expect(dnsNameLock('lab', { status: STATUS })).toBeNull();
+    expect(dnsNameLock('*.lab', { status: STATUS })).toBeNull();
     expect(dnsNameLock('', { status: STATUS })).toBeNull();
-    // A listed name ending in * is a prefix.
-    const prefixed = { ...STATUS, protected: { dnsNames: ['lab-*'] } };
-    expect(dnsNameLock('lab-one.example.com', { status: prefixed })).not.toBeNull();
-    expect(dnsNameLock('labs.example.com', { status: prefixed })).toBeNull();
+    // A `*.x` entry covers every name under x.
+    const wild = {
+      ...STATUS,
+      protected: { dnsNames: [{ name: '*.lab.example.com', reason: 'Lab.' }] },
+    };
+    expect(dnsNameLock('a.b.lab.example.com', { status: wild })).toBe('Lab.');
+    expect(dnsNameLock('labs.example.com', { status: wild })).toBeNull();
+    // The prefixes come from the status answer once it is read.
+    const prefixed = {
+      ...STATUS,
+      protected: { dnsPrefixes: [{ prefix: '_check', reason: 'P.' }] },
+    };
+    expect(dnsNameLock('_check-1.example.com', { status: prefixed })).toBe('P.');
+    expect(dnsNameLock('_acme-challenge.example.com', { status: prefixed })).toBeNull();
   });
 
   it('reads the families the status reports', () => {
     expect(familyRows(STATUS)).toEqual([
-      { id: 'settings', label: 'Zone settings', readable: true },
-      { id: 'dns', label: 'DNS records', readable: false },
+      {
+        id: 'settings',
+        label: 'Zone settings',
+        readable: true,
+        state: 'yes',
+        words: 'can be read',
+      },
+      {
+        id: 'dns',
+        label: 'DNS records',
+        readable: false,
+        state: 'refused',
+        words: FAMILY_STATES.refused,
+      },
     ]);
+    const [unknown] = familyRows({ families: [{ id: 'cache', readable: null }] });
+    expect(unknown).toMatchObject({ state: 'unknown', words: 'could not check right now' });
+    expect(FAMILY_STATES.refused).toMatch(/lacks this permission/);
     expect(familyRows(null)).toEqual([]);
   });
 });
@@ -126,6 +139,9 @@ describe('settings', () => {
     );
     expect(settingControl({ id: 'security_header', value: { a: 1 }, editable: true })).toBe('json');
     expect(settingControl({ id: 'ipv6', value: 'on', editable: false })).toBe('readonly');
+    // tls_1_3 offers its third value, zrt, so it is a select even when it reads on or off.
+    expect(settingControl({ id: 'tls_1_3', value: 'on', editable: true })).toBe('select');
+    expect(settingControl({ id: 'tls_1_3', value: 'zrt', editable: true })).toBe('select');
   });
 
   it('turns a control’s text into the value to send, or a sentence', () => {
@@ -217,11 +233,17 @@ describe('the rules editor', () => {
 
   it('accepts a list of rules with an expression and an action each', () => {
     expect(parseRulesDraft('[{"expression":"true","action":"block"}]')).toHaveLength(1);
-    expect(parseRulesDraft('[]')).toEqual([]);
+    expect(() => parseRulesDraft('[]')).toThrow(/delete every rule/);
     expect(() => parseRulesDraft('{')).toThrow(/not valid JSON/);
     expect(() => parseRulesDraft('{}')).toThrow(/must be a list/);
     expect(() => parseRulesDraft('[1]')).toThrow(/Rule 1 is not an object/);
     expect(() => parseRulesDraft('[{"action":"block"}]')).toThrow(/expression/);
+  });
+
+  it('asks for the phase name typed when a custom security rule would be removed', () => {
+    expect(needsTypedConfirm('http_request_firewall_custom', 3, 2)).toBe(true);
+    expect(needsTypedConfirm('http_request_firewall_custom', 3, 3)).toBe(false);
+    expect(needsTypedConfirm('http_request_dynamic_redirect', 3, 1)).toBe(false);
   });
 
   it('separates the zone’s own entry points from Cloudflare’s managed rulesets', () => {

@@ -36,6 +36,9 @@ import { Button } from '@/components/ui/button';
  * the dialog over a request still running, with nothing on screen to say
  * whether it had happened. The caller closes it when the request settles.
  *
+ * Pass `confirmDisabled` to hold the confirm button until the caller is
+ * satisfied, for example until a name has been typed into `preview`.
+ *
  * @param {{
  *   open: boolean,
  *   title: string,
@@ -45,6 +48,7 @@ import { Button } from '@/components/ui/button';
  *   cancelLabel?: string,
  *   busy?: boolean,
  *   busyLabel?: string,
+ *   confirmDisabled?: boolean,
  *   onConfirm: () => void,
  *   onCancel: () => void,
  *   destructive?: boolean,
@@ -59,6 +63,7 @@ export default function ConfirmModal({
   cancelLabel = 'Cancel',
   busy = false,
   busyLabel = 'Working…',
+  confirmDisabled = false,
   onConfirm,
   onCancel,
   destructive = true,
@@ -98,7 +103,7 @@ export default function ConfirmModal({
           <Button
             variant={destructive ? 'destructive' : 'default'}
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             aria-busy={busy || undefined}
           >
             {busy ? busyLabel : confirmLabel}

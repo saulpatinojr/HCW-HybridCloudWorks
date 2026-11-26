@@ -10,7 +10,8 @@
  *             read, what is locked and why, and where to go next
  *   Settings  every zone setting, saved one at a time
  *   DNS       every DNS record; add one or change one, never delete
- *   Rules     the zone's rulesets by phase; replace an unlocked phase's rules
+ *   Rules     the zone's rulesets by phase; replace the rules of one of the
+ *             five phases on the allow-list
  *   Cache     empty the whole cache, or up to 30 addresses
  *
  * Every call goes through the server's `cms/cloudflare/` routes, which hold
@@ -41,7 +42,7 @@ const HELP = [
   'Overview says whether the page is set up, which parts of the zone the token can read, and what is locked and why.',
   'Settings, DNS, Rules and Cache show what Cloudflare holds now. Anyone with the editor role can look; changing anything needs the super admin role.',
   'Locked records and rule phases keep the site running and are managed by Terraform. They show a lock and the reason, and the server refuses any change to them.',
-  'Nothing on this page can delete a DNS record or a ruleset. Every change is written to the audit log.',
+  'No DNS record or ruleset can be deleted from this page, but replacing a phase’s rules removes the ones you leave out. Every change is written to the audit log.',
 ];
 
 export default function CloudflarePage() {
@@ -79,7 +80,7 @@ export default function CloudflarePage() {
       >
         <div className="pt-4">
           {activeTab === 'overview' && <CloudflareOverview statusRead={statusRead} />}
-          {activeTab === 'settings' && <CloudflareSettings />}
+          {activeTab === 'settings' && <CloudflareSettings status={status} />}
           {activeTab === 'dns' && <CloudflareDns status={status} />}
           {activeTab === 'rules' && <CloudflareRules status={status} />}
           {activeTab === 'cache' && <CloudflareCache status={status} />}
