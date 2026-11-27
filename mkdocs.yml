@@ -147,6 +147,7 @@ nav:
       - Cosmos restore: runbooks/cosmos-restore.md
       - Content archive (the yearly long-term copy): runbooks/content-archive.md
       - Edge and DNS verification: runbooks/edge-dns-verification.md
+      - "Proxying the site's own names through Cloudflare": runbooks/proxy-site-hosts.md
       - Docker Scout and the add-on images: runbooks/docker-scout.md
       - Dependency review across the nine repositories: runbooks/dependency-review.md
       - Add-on guide drift check: runbooks/addon-guide-drift.md

@@ -1267,6 +1267,26 @@ variable "cloudflare_ip_ranges" {
 
 # -----------------------------------------------------------------------------
 # Domain
+# Which of the site's own names go through Cloudflare's proxy (#1929). The
+# apex and www records are in infra/frontend.tf. "none" is how they were made
+# and stays the default, so merging the change that added this switch changes
+# nothing live. The cutover sets "www" first, checks it, then "both"; going
+# back is setting it back, one run each. There is deliberately no value for
+# the apex alone. Set it in the hcw-azure workspace as a plain Terraform
+# variable only after the zone settings in docs/runbooks/proxy-site-hosts.md
+# are in place.
+variable "site_proxied_hosts" {
+  description = "Which of the site's own names Cloudflare proxies: \"none\" (DNS-only, the default), \"www\", or \"both\" (www and the apex). Cutover order and checks: docs/runbooks/proxy-site-hosts.md (#1929)."
+  type        = string
+  default     = "none"
+  nullable    = false
+
+  validation {
+    condition     = contains(["none", "www", "both"], var.site_proxied_hosts)
+    error_message = "site_proxied_hosts must be \"none\", \"www\" or \"both\". There is no value for the apex alone: www goes first (docs/runbooks/proxy-site-hosts.md)."
+  }
+}
+
 # -----------------------------------------------------------------------------
 variable "domain" {
   description = "Base domain for all services"

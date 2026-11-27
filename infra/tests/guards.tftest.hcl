@@ -15,6 +15,10 @@
 # 7. The adopted Web Analytics site (#1923): nothing planned while its two
 #    inputs are unset, and a site tag that disagrees with the site Terraform
 #    adopted stops the plan rather than being ignored.
+# 8. The site's own apex and www (#1929): imported DNS-only by default, the
+#    content read from the Static Web App, www proxied before the apex and
+#    never the apex alone, and the import stopped when the record it finds
+#    is not the CNAME it asked for.
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -63,7 +67,37 @@ override_resource {
   target          = azurerm_static_web_app.hcw
   override_during = plan
   values = {
-    id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web/providers/Microsoft.Web/staticSites/stapp-hcw"
+    id                = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web/providers/Microsoft.Web/staticSites/stapp-hcw"
+    default_host_name = "example-host-0000.7.azurestaticapps.net"
+  }
+}
+
+# The site's apex and www records (#1929) are found by name before they are
+# imported. One made-up record per name, as Cloudflare holds them today.
+# A mock provider cannot import, so the two imported records are overridden
+# too (Terraform's own advice in its refusal); only their id is set, and
+# every configured argument is still planned from the configuration.
+override_resource {
+  target          = cloudflare_dns_record.site_apex
+  override_during = plan
+  values = {
+    id = "00000000000000000000000000000001"
+  }
+}
+
+override_resource {
+  target          = cloudflare_dns_record.site_www
+  override_during = plan
+  values = {
+    id = "00000000000000000000000000000002"
+  }
+}
+
+override_data {
+  target = data.cloudflare_dns_record.site
+  values = {
+    id   = "00000000000000000000000000000001"
+    type = "CNAME"
   }
 }
 
@@ -306,4 +340,93 @@ run "web_analytics_site_tag_that_differs_stops_the_plan" {
   }
 
   expect_failures = [cloudflare_web_analytics_site.hcw]
+}
+
+# 8. The site's own apex and www (#1929). "none" is how the records were made
+# by hand: DNS-only, www at ttl 60, the apex at ttl 1 (automatic).
+run "site_records_stay_dns_only_by_default" {
+  command = plan
+
+  assert {
+    condition     = !cloudflare_dns_record.site_apex.proxied && !cloudflare_dns_record.site_www.proxied
+    error_message = "With site_proxied_hosts at its default, neither the apex nor www may be proxied: merging the change must not change the site (#1929)."
+  }
+
+  assert {
+    condition     = cloudflare_dns_record.site_apex.ttl == 1 && cloudflare_dns_record.site_www.ttl == 60
+    error_message = "DNS-only, the records keep the TTLs they were made with: 1 (automatic) on the apex, 60 on www (#1929)."
+  }
+
+  assert {
+    condition = alltrue([
+      for record in [cloudflare_dns_record.site_apex, cloudflare_dns_record.site_www] :
+      record.type == "CNAME" && record.content == "example-host-0000.7.azurestaticapps.net"
+    ])
+    error_message = "Both records are CNAMEs to the Static Web App's own default host name, read from the resource (#1929)."
+  }
+
+  assert {
+    condition     = cloudflare_dns_record.site_apex.name == "hybridcloudworks.com" && cloudflare_dns_record.site_www.name == "www.hybridcloudworks.com"
+    error_message = "The two records are the zone's apex and www (#1929)."
+  }
+}
+
+run "site_records_proxy_www_first" {
+  command = plan
+
+  variables {
+    site_proxied_hosts = "www"
+  }
+
+  assert {
+    condition     = cloudflare_dns_record.site_www.proxied && cloudflare_dns_record.site_www.ttl == 1
+    error_message = "\"www\" proxies www, with ttl 1, the only value a proxied record takes (#1929)."
+  }
+
+  assert {
+    condition     = !cloudflare_dns_record.site_apex.proxied
+    error_message = "\"www\" leaves the apex DNS-only until www has been checked (#1929)."
+  }
+}
+
+run "site_records_proxy_both" {
+  command = plan
+
+  variables {
+    site_proxied_hosts = "both"
+  }
+
+  assert {
+    condition     = cloudflare_dns_record.site_www.proxied && cloudflare_dns_record.site_apex.proxied
+    error_message = "\"both\" proxies www and the apex (#1929)."
+  }
+
+  assert {
+    condition     = cloudflare_dns_record.site_www.ttl == 1 && cloudflare_dns_record.site_apex.ttl == 1
+    error_message = "Proxied records take ttl 1 (#1929)."
+  }
+}
+
+run "site_records_refuse_the_apex_alone" {
+  command = plan
+
+  variables {
+    site_proxied_hosts = "apex"
+  }
+
+  expect_failures = [var.site_proxied_hosts]
+}
+
+run "site_records_import_stops_on_a_record_that_is_not_the_cname" {
+  command = plan
+
+  override_data {
+    target = data.cloudflare_dns_record.site
+    values = {
+      id   = "00000000000000000000000000000001"
+      type = "A"
+    }
+  }
+
+  expect_failures = [data.cloudflare_dns_record.site]
 }

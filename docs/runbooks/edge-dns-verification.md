@@ -38,13 +38,22 @@ recorded with its trigger stated as none.
 
 ## Read this first: only one hostname is proxied
 
+> **Changing with [#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929).**
+> The apex and `www` are in Terraform since #1929, still DNS-only. Once the
+> `site_proxied_hosts` switch proxies one of them, that name is expected to
+> answer from Cloudflare (`Server: cloudflare`, a `CF-RAY`, Cloudflare's
+> certificate), and the checks in
+> [Proxying the site's own names through Cloudflare](proxy-site-hosts.md)
+> replace the apex and `www` expectations below for it. Until then this
+> section stands as written.
+
 The obvious expectation — Cloudflare in front of the whole zone — is wrong
 here, and an operator holding it will raise a finding on every single run.
 
 | Hostname | Answers from | Proxied | Declared in |
 | --- | --- | :---: | --- |
-| `hybridcloudworks.com` (apex) | Azure, the Static Web App | no | not Terraform-managed |
-| `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no | not Terraform-managed |
+| `hybridcloudworks.com` (apex) | Azure, the Static Web App | no, until `site_proxied_hosts` is `"both"` | `infra/frontend.tf`, `cloudflare_dns_record.site_apex` (#1929) |
+| `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no, until `site_proxied_hosts` is `"www"` or `"both"` | `infra/frontend.tf`, `cloudflare_dns_record.site_www` (#1929) |
 | `api-azure.hybridcloudworks.com` | Cloudflare | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions` |
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
 | `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
@@ -53,16 +62,18 @@ here, and an operator holding it will raise a finding on every single run.
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 | `_cf-custom-hostname.go.hybridcloudworks.com` | nothing — a TXT record holding Linkie's ownership proof for `go` | n/a | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go_verification` |
 
-`infra/frontend.tf` declares exactly seven Cloudflare records. ADR 0024
+`infra/frontend.tf` declared exactly seven Cloudflare records until #1929 added the apex and `www`, which makes nine. ADR 0024
 (written when there was one) names `api-azure` in as many words as *the one
 proxied hostname*; `notes` is the second, added for Obsidian Publish (#1350).
 Four things about that table are deliberate rather than oversight:
 
-- **The apex and `www` are not in Terraform.** A Static Web App root domain
-  validates against a token Azure generates when the validation starts, so
-  pinning one in state would drift the moment Azure reissued it. They are
-  created by hand, per
-  [cutover runbook step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app).
+- **The apex and `www` records are in Terraform since #1929; the apex's
+  validation token is not.** A Static Web App root domain validates against
+  a token Azure generates when the validation starts, so pinning that TXT
+  record in state would drift the moment Azure reissued it; it stays a
+  hand-made record. The two CNAMEs were created by hand, per
+  [cutover runbook step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app),
+  and imported unchanged by #1929.
 - **`docs` is DNS-only.** GitHub issues and renews a Pages certificate by
   checking that the CNAME resolves to `*.github.io`; a proxied record answers
   with Cloudflare's addresses instead, and the domain sticks at "certificate

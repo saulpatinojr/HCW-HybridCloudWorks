@@ -67,7 +67,9 @@
 # records that resolve straight to the Static Web App (both A records read
 # 64.236.125.137 and www is a CNAME to the azurestaticapps.net host, read
 # 2026-10-15; PLAT-10, #970), so every byte the site serves counts against the
-# plan. What watches the pace is alert-swa-bandwidth in observability.tf
+# plan. (Once site_proxied_hosts proxies them, #1929, Cloudflare caches the
+# static files and serves repeats itself; HTML still comes from the app.)
+# What watches the pace is alert-swa-bandwidth in observability.tf
 # (#1052): BytesSent over the trailing 24 hours past 80% of a thirtieth of the
 # month, hourly, which pages while there is still month left to act in.
 #
@@ -142,6 +144,125 @@ resource "azurerm_static_web_app" "hcw" {
 # exactly how App Service proves domain ownership. Carrying that pattern across
 # to the Static Web App is the mistake this comment exists to prevent; SWA
 # validates a root domain with a generated token instead.
+
+# =============================================================================
+# The site's own address: the apex and www (#1929)
+#
+# Both names are CNAMEs to the Static Web App's default host. They were made
+# by hand in the Cloudflare dashboard on 2026-08-23 (www) and 2026-08-25 (the
+# apex), DNS-only, and are brought under Terraform here exactly as they are,
+# so the first apply changes nothing anyone can see: it imports the two
+# records and adds a comment to each (a comment is a note on the record and
+# has no effect on DNS answers, per the provider's own description of it).
+# Cloudflare answers for an apex CNAME with the target's addresses
+# ("CNAME flattening"), which is why a CNAME is allowed at the apex at all.
+#
+# THE SWITCH. `site_proxied_hosts` says which of the two names go through
+# Cloudflare's proxy (the orange cloud): "none" (the default, how they are
+# today), "www", or "both". There is no "apex only", because the cutover
+# order is www first and the apex after it has been checked. Going back is
+# the same switch set back, one run. The steps, the checks after each, and
+# the zone settings that must be in place first are in
+# docs/runbooks/proxy-site-hosts.md.
+#
+# TTL. A proxied record only takes ttl 1 ("automatic"; the provider refuses
+# anything else on create), so www's ttl follows the switch: 60 while
+# DNS-only, as it was made, and 1 once proxied. The apex already has ttl 1.
+#
+# THE CONTENT is the Static Web App's own default host name, read from the
+# resource above, so the record and the app cannot disagree.
+#
+# PREVENT_DESTROY, because these two records are the site. A plan that would
+# delete or replace either (a renamed resource without a `moved` block, a
+# changed type) stops instead of taking the site off the internet.
+#
+# THE OWNERSHIP PROOF stays where it is. The apex TXT record that holds the
+# token Azure validated the apex with on 2026-08-23 is not managed here (the
+# comment above says why) and must not be deleted: Azure reads it again if
+# the apex ever has to be validated again.
+# =============================================================================
+locals {
+  site_hosts = {
+    apex = var.domain
+    www  = "www.${var.domain}"
+  }
+  site_www_proxied  = contains(["www", "both"], var.site_proxied_hosts)
+  site_apex_proxied = var.site_proxied_hosts == "both"
+}
+
+# Finds the two hand-made records, so the import blocks below can name them
+# without a record id being written in this public repository or typed into
+# the workspace. With a filter, the provider asks Cloudflare for the records
+# that match and fails the plan unless it finds exactly one ("failed to find
+# exactly one result"), so a missing or doubled record stops the plan before
+# anything is imported. The postcondition then holds the record to the type
+# asked for (the name is the filter's exact match).
+data "cloudflare_dns_record" "site" {
+  for_each = local.site_hosts
+
+  zone_id = var.cloudflare_zone_id
+  filter = {
+    type = "CNAME"
+    name = {
+      exact = each.value
+    }
+  }
+
+  lifecycle {
+    postcondition {
+      condition     = self.type == "CNAME"
+      error_message = "The record found for the site's own address is not the CNAME at that name. Nothing has been imported or changed. Check the apex and www in the zone's DNS records in the Cloudflare dashboard (docs/runbooks/proxy-site-hosts.md)."
+    }
+  }
+}
+
+# The provider's import id is `<zone_id>/<dns_record_id>` (ImportState in
+# 5.29.0). Once both records are in state Terraform skips these blocks; they
+# and the data source above can be deleted together any time after the
+# first apply.
+import {
+  to = cloudflare_dns_record.site_apex
+  id = "${var.cloudflare_zone_id}/${data.cloudflare_dns_record.site["apex"].id}"
+}
+
+import {
+  to = cloudflare_dns_record.site_www
+  id = "${var.cloudflare_zone_id}/${data.cloudflare_dns_record.site["www"].id}"
+}
+
+resource "cloudflare_dns_record" "site_apex" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.domain
+  content = azurerm_static_web_app.hcw.default_host_name
+  type    = "CNAME"
+  proxied = local.site_apex_proxied
+  ttl     = 1
+  comment = "The site's own address (Static Web App), apex; proxy switch: site_proxied_hosts"
+
+  lifecycle {
+    prevent_destroy = true
+
+    # Same provider workaround as azure_functions below.
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
+resource "cloudflare_dns_record" "site_www" {
+  zone_id = var.cloudflare_zone_id
+  name    = "www.${var.domain}"
+  content = azurerm_static_web_app.hcw.default_host_name
+  type    = "CNAME"
+  proxied = local.site_www_proxied
+  ttl     = local.site_www_proxied ? 1 : 60
+  comment = "The site's own address (Static Web App), www; proxy switch: site_proxied_hosts"
+
+  lifecycle {
+    prevent_destroy = true
+
+    # Same provider workaround as azure_functions below.
+    ignore_changes = [include_shadow_metadata]
+  }
+}
 
 # Azure Functions subdomain for the API origin.
 #
@@ -624,17 +745,16 @@ resource "cloudflare_ruleset" "origin_secret" {
 # also stop the beacon there; that is a change to the app, a separate
 # decision, and not taken here.)
 #
-# THE HAND-PLACED BEACON DOES THE COUNTING. The apex and www are DNS-only
-# (gray-clouded) records that resolve straight to the Static Web App (the
-# "Nothing caches in front of that 100 GB" note above), so automatic setup
-# never sees the site's own pages. They carry the beacon themselves: the
-# frontend build puts `site_token` into every page
-# (frontend/scripts/cf-web-analytics.mjs, fed by the CF_WEB_ANALYTICS_TOKEN
-# repository variable, which the owner copies from the
-# web_analytics_site_token output). Cloudflare matches a beacon's hostname to
-# the site by suffix (its Web Analytics FAQ: a site for example.com accepts
-# www.example.com), so the apex and www count under this zone site. That is
-# read from the docs, not yet seen on a live page view.
+# THE SITE'S OWN PAGES ARE COUNTED ONCE THEY ARE PROXIED (#1929). A
+# hand-placed beacon (frontend/scripts/cf-web-analytics.mjs, fed by the
+# CF_WEB_ANALYTICS_TOKEN repository variable) was tried first, while the apex
+# and www were DNS-only; Cloudflare refused every page view it sent (no
+# Access-Control-Allow-Origin on its reply), and the variable was deleted on
+# 2026-11-27. Automatic setup reports to the site's own /cdn-cgi/rum, which
+# exists only behind the proxy, so the site's pages are counted once
+# site_proxied_hosts (the records near the top of this file) proxies them.
+# The variable must not be set again then: Cloudflare injects its own beacon
+# into proxied pages, and a second one would count every view twice.
 #
 # NOT MARKED SENSITIVE, ON PURPOSE. `site_token` is the value the beacon
 # carries in every page it is loaded from (`data-cf-beacon='{"token": "…"}'`

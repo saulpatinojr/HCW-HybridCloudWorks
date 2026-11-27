@@ -63,7 +63,7 @@ export const LAB_ZONE = 'hybridcloudinsights.com';
 /** The lab host's name (infra-lab/variables.tf `lab_hostname`). */
 const LAB = `lab.${ZONE_APEX}`;
 
-const SITE = 'The site itself, on the Static Web App (made by hand, infra/frontend.tf explains why).';
+const SITE = 'The site itself, on the Static Web App. Managed by Terraform in infra/frontend.tf since #1929, including whether Cloudflare proxies it (the site_proxied_hosts switch); a change here is undone by the next run.';
 const FRONTEND = 'Managed by Terraform in infra/frontend.tf; a change here is undone by the next run.';
 const LAB_RECORD = 'The lab host, managed by Terraform in infra-lab/dns.tf.';
 
