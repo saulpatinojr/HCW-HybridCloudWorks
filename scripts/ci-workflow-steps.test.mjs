@@ -894,6 +894,7 @@ export function timeoutMinutes(job) {
  */
 const LEFT_OUT = new Map([
   ['check-cloud-module-pins.yml / report', 'Never checks out: it holds `issues: write`, so it runs only `gh` and `jq` on the result of the `check` job (#1869). It has its own limit anyway (5 minutes).'],
+  ['check-swa-certificates.yml / issue', 'Never checks out: it holds `issues: write`, so it runs only `gh` and `jq` on the report the `check` job hands it (#1929). It has its own limit anyway (5 minutes).'],
   ['ci.yml / coverage', 'Checks out for the repository metadata the upload records, then only downloads artifacts and runs the Qlty action; no shell step runs code from this repository. It has its own limit anyway (10 minutes).'],
   ['ci.yml / gate', 'Never checks out: it only reads the results of the jobs it needs from the `needs` context. It has its own limit anyway (5 minutes).'],
   ['claude.yml / claude', 'Checks out, then runs only the Claude Code action; no shell step of this workflow runs code from this repository. It has its own limit anyway (60 minutes).'],

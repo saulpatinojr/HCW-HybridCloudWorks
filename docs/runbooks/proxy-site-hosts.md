@@ -241,14 +241,24 @@ reports that as unexpected for someone to read.
     itself once both are good again. **Before the switch,** open the
     workflow's page and check its latest run is green.
 
-    The same read by hand:
+    The same check by hand runs the workflow's own checker, so it judges
+    exactly what the daily run judges. Run it in PowerShell from the
+    repository's root folder, on `main`, with Node.js installed. It uses the
+    `STATIC_WEB_APP_DEFAULT_HOSTNAME` repository variable when that is set,
+    and the checker's built-in host otherwise:
 
     ```powershell
-    'hybridcloudworks.com','www.hybridcloudworks.com' | ForEach-Object { $t = New-Object Net.Sockets.TcpClient('calm-ground-0d0e6a010.7.azurestaticapps.net', 443); $s = New-Object Net.Security.SslStream($t.GetStream(), $false, { $true }); $s.AuthenticateAsClient($_); $c = New-Object Security.Cryptography.X509Certificates.X509Certificate2($s.RemoteCertificate); $t.Close(); [pscustomobject]@{ Name = $_; Issuer = $c.Issuer; NotAfter = $c.NotAfter } }
+    $h = gh variable get STATIC_WEB_APP_DEFAULT_HOSTNAME --repo saulpatinojr/HCW-HybridCloudWorks 2>$null; if ($h) { node scripts/check-swa-certificates.mjs --host $h } else { node scripts/check-swa-certificates.mjs }; "exit $LASTEXITCODE"
     ```
 
-    **Success:** two lines, each issued by DigiCert, with `NotAfter` more
-    than 30 days away.
+    **Success:** two lines, `hybridcloudworks.com: good, ...` and
+    `www.hybridcloudworks.com: good, ...`, each with its issuer, its end date
+    and more than 30 days left, then `exit 0`. A line saying **NEEDS
+    ACTION** (`exit 1`) gives the reason in brackets; follow "Going back"
+    below. **COULD NOT READ** (`exit 2`) means no connection was made; try
+    again, and if it repeats, check the host. If Node says it cannot find
+    the module, you are not in the repository's root folder or not on
+    `main`: `Test-Path scripts/check-swa-certificates.mjs` must say `True`.
 
 ## Part 3. The switch, `www` first
 

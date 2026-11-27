@@ -123,9 +123,13 @@ describe('check-swa-certificates.yml: its shape', () => {
     }
   });
 
-  it('keys the issue on one fixed title and the Platform label, never on search', () => {
+  it('keys the issue on one fixed title, the Platform label and the Actions bot as author, never on search', () => {
     expect(step.run).toContain(`title="${TITLE}"`);
     expect(step.run).toContain('label="Platform"');
+    expect(step.run).toContain('--json number,title,author');
+    expect(step.run).toContain('select(.title == $title and .author.login == "app/github-actions" and .author.is_bot == true)');
+    // One lookup feeds both the close and the comment, so the author rule covers both.
+    expect(step.run.split('gh issue list').length - 1).toBe(1);
     expect(step.run.includes('--search')).toBe(false);
   });
 });
@@ -174,7 +178,10 @@ describe('check-swa-certificates.yml: bash and jq are there', () => {
 
 describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with bash -e${SKIPPED}`, () => {
   const RUN_URL = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1';
-  const OPEN = JSON.stringify([{ number: 12, title: TITLE }]);
+  // How `gh issue list --json author` gives the Actions bot (read 2026-11-27 on #1749), and a person.
+  const BOT_AUTHOR = { is_bot: true, login: 'app/github-actions' };
+  const HUMAN = { is_bot: false, login: 'someone' };
+  const OPEN = JSON.stringify([{ number: 12, title: TITLE, author: BOT_AUTHOR }]);
   const STATE_WARN = '<!-- swa-cert-check state: hybridcloudworks.com=warn/expiring:2027-02-23 www.hybridcloudworks.com=ok/none:2027-05-01 -->';
   const STATE_ACT = '<!-- swa-cert-check state: hybridcloudworks.com=act/expiring:2027-02-23 www.hybridcloudworks.com=ok/none:2027-05-01 -->';
   const STATE_MISMATCH = '<!-- swa-cert-check state: hybridcloudworks.com=act/name-mismatch www.hybridcloudworks.com=ok/none:2027-05-01 -->';
@@ -248,7 +255,7 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
   it('looks the issue up by its label in the issue list, not through search', () => {
     const got = runIssue(1);
     expect(got.status, got.stderr).toBe(0);
-    expect(got.calls[0]).toBe('issue|list|--repo|saulpatinojr/HCW-HybridCloudWorks|--state|open|--label|Platform|--limit|200|--json|number,title');
+    expect(got.calls[0]).toBe('issue|list|--repo|saulpatinojr/HCW-HybridCloudWorks|--state|open|--label|Platform|--limit|200|--json|number,title,author');
   });
 
   it('needs action with none open: creates it, labelled Platform and owner-gated, with the report and the run', () => {
@@ -326,9 +333,38 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
   });
 
   it('never touches an issue with a similar title', () => {
-    const similar = JSON.stringify([{ number: 7, title: `${TITLE} (old)` }]);
+    const similar = JSON.stringify([{ number: 7, title: `${TITLE} (old)`, author: BOT_AUTHOR }]);
     expect(runIssue(0, { list: similar }).writes).toEqual([]);
     expect(runIssue(1, { list: similar }).writes[0]).toMatch(/^issue\|create\|/);
+  });
+
+  it('an open issue with the same title and label but a person as author is ignored: never closed or commented on, and the job opens its own', () => {
+    const human = JSON.stringify([{ number: 9, title: TITLE, author: HUMAN }]);
+    expect(runIssue(0, { list: human }).writes).toEqual([]);
+    const got = runIssue(1, { list: human });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([
+      `issue|create|--repo|saulpatinojr/HCW-HybridCloudWorks|--title|${TITLE}|--label|Platform|--label|owner-gated|--body-file|${got.dir}/issue.md`,
+    ]);
+  });
+
+  it('a bot login that is not the Actions bot, or the right login not marked as a bot, does not count either', () => {
+    for (const author of [{ is_bot: true, login: 'app/other-app' }, { is_bot: false, login: 'app/github-actions' }]) {
+      const list = JSON.stringify([{ number: 9, title: TITLE, author }]);
+      expect(runIssue(0, { list }).writes, author.login).toEqual([]);
+      expect(runIssue(2, { list }).writes[0], author.login).toMatch(/^issue\|create\|/);
+    }
+  });
+
+  it('with a person\'s look-alike and the workflow\'s own issue both open, only the workflow\'s is used', () => {
+    const both = JSON.stringify([
+      { number: 9, title: TITLE, author: HUMAN },
+      { number: 12, title: TITLE, author: BOT_AUTHOR },
+    ]);
+    const got = runIssue(0, { list: both });
+    expect(got.writes).toEqual([
+      `issue|close|12|--repo|saulpatinojr/HCW-HybridCloudWorks|--reason|completed|--comment|Both certificates are good for more than 30 days again: run ${RUN_URL}.`,
+    ]);
   });
 
   it('fails the step, writing nothing, when the issue list cannot be read', () => {

@@ -144,11 +144,16 @@ jobs:
           fi
 
       # One issue, kept current, in the shape of check-drill-age.yml: labelled
-      # `Platform` and found again by that label plus its exact title, read
-      # from the issue list rather than from search (fuzzy, and its index
-      # lags behind a just-created issue). An issue with a similar title is
-      # never commented on or closed. (If someone removes the label, the next
-      # failing day opens a second issue; that is the safe way to be wrong.)
+      # `Platform` and found again by that label, its exact title and its
+      # author, read from the issue list rather than from search (fuzzy, and
+      # its index lags behind a just-created issue). Only an issue this
+      # workflow opened counts: `gh issue list --json author` gives the
+      # Actions bot as login `app/github-actions` with `is_bot: true` (read
+      # 2026-11-27 on #1749), and nothing else is closed or commented on, so
+      # a person's issue with the same title and label is left alone and the
+      # job opens its own. An issue with a similar title is never touched
+      # either. (If someone removes the label, the next failing day opens a
+      # second issue; that is the safe way to be wrong.)
       #
       # Exit 0 closes the open issue. Any other exit, a missing output
       # included, reports and never closes.
@@ -174,7 +179,7 @@ jobs:
           set -euo pipefail
           title="Static Web App certificate needs attention: hybridcloudworks.com or www"
           label="Platform"
-          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title,author | jq -r --arg title "$title" '[.[] | select(.title == $title and .author.login == "app/github-actions" and .author.is_bot == true)][0].number // empty')
           if [ "${CERTS_EXIT}" = "0" ]; then
             if [ -n "$existing" ]; then
               gh issue close "$existing" --repo "$REPO" --reason completed --comment "Both certificates are good for more than 30 days again: run ${RUN_URL}."

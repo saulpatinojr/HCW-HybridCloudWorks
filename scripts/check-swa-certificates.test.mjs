@@ -461,4 +461,15 @@ describe('held to the rest of the repository', () => {
     expect(runbook.split(/\r?\n/)).toContain('## Going back');
     expect(runbook).toContain('actions/workflows/check-swa-certificates.yml');
   });
+
+  it("the runbook's hand check runs this checker, honouring the host variable, in one PowerShell 5.1 line", () => {
+    const runbook = readFileSync(join(REPO, 'docs', 'runbooks', 'proxy-site-hosts.md'), 'utf8');
+    const line = runbook.split(/\r?\n/).find((l) => l.trim().startsWith('$h = gh variable get STATIC_WEB_APP_DEFAULT_HOSTNAME'));
+    expect(line, 'the hand check line in Part 2 step 4').toBeDefined();
+    expect(line).toContain('node scripts/check-swa-certificates.mjs --host $h');
+    expect(line.includes('&&') || line.includes('||'), 'Windows PowerShell 5.1 has no && or ||').toBe(false);
+    // The old hand read accepted any certificate, so it could not see what the check looks for.
+    const handCheck = runbook.slice(runbook.indexOf('The same check by hand'), runbook.indexOf('## Part 3.'));
+    expect(handCheck.includes('{ $true }')).toBe(false);
+  });
 });
