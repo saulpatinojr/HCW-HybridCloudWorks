@@ -24,7 +24,13 @@ import ConfirmModal from '@/components/admin/ConfirmModal';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { readCloudflareSettings, saveCloudflareSetting } from '@/lib/cloudflare';
 import { whenText } from '@/components/admin/ai-engine/kodaView';
-import { ReadGate, WRITE_REASON, useCloudflareRead, useCloudflareWrite } from './CloudflareParts';
+import {
+  ReadGate,
+  WRITE_REASON,
+  useCloudflareWrite,
+  useCloudflareZone,
+  useZoneRead,
+} from './CloudflareParts';
 import useCanWrite from './useCanWrite';
 import {
   CAREFUL_SETTINGS,
@@ -211,7 +217,8 @@ function SettingRow({ setting, status, busy, canWrite, onSave }) {
 }
 
 export default function CloudflareSettings({ status = null }) {
-  const read = useCloudflareRead(readCloudflareSettings, EMPTY);
+  const zone = useCloudflareZone();
+  const read = useZoneRead(readCloudflareSettings, EMPTY);
   const { busyIds, run } = useCloudflareWrite(read.refresh);
   const canWrite = useCanWrite();
   const [filter, setFilter] = useState('');
@@ -225,7 +232,11 @@ export default function CloudflareSettings({ status = null }) {
   const shown = settings.filter((setting) => settingMatches(setting, filter));
 
   const onSave = (id, value) =>
-    run(id, () => saveCloudflareSetting(id, value), `${settingLabel(id)} is saved in Cloudflare.`);
+    run(
+      id,
+      () => saveCloudflareSetting(id, value, zone),
+      `${settingLabel(id)} is saved in Cloudflare.`
+    );
 
   return (
     <ReadGate read={read} label="The zone settings" status={status}>

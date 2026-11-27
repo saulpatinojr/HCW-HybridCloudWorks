@@ -473,7 +473,7 @@ export const SECRET_CATALOG = Object.freeze([
     section: "platform",
     label: "Cloudflare admin token",
     help:
-      "Account-owned API token, limited to the site's one zone, from the Cloudflare dashboard " +
+      "Account-owned API token, limited to the site's zone and the lab zone, from the Cloudflare dashboard " +
       "(Manage Account, API Tokens). The Cloudflare page and Claude Network Guy use it to read and " +
       "change zone settings, DNS records, rules and the cache. Give it an expiry of one year. " +
       "Until it is set, the Cloudflare page says it is not set up and changes nothing.",

@@ -1,6 +1,12 @@
 /**
- * cloudflare/protected.js — what the Cloudflare page and Claude Network Guy
- * may never change (#1905).
+ * cloudflare/protected.js — the zones the Cloudflare page and Claude Network
+ * Guy may act on, and what in them they may never change (#1905, #1911).
+ *
+ * THE ZONES are a fixed list (MANAGED_ZONES): the site's own zone and the
+ * lab's certificate zone. A zone not on it is refused before Cloudflare is
+ * called, whatever the token could reach. Each zone carries its own DNS
+ * names, prefixes and Terraform phases; the allow-list of phases and the
+ * owner-only settings are the same for every zone.
  *
  * Three kinds of list:
  *
@@ -13,10 +19,20 @@
  *     the zone-wide wildcard `*`, because a wildcard answers for names nobody
  *     listed. A wildcard entry in the list (`*.lab...`) protects every name
  *     under its parent: a record made there would answer in its place.
+ *     A wildcard `*.x` is refused too when a protected name lies under x,
+ *     because it would answer for that name whenever no exact record does.
+ *     In the lab zone (#1911): its apex, the certificate checks Caddy writes,
+ *     every name starting `_` (Caddy's checks, and the verification and
+ *     mail-policy names outside services read), the whole `lab` subtree the
+ *     checks live in (LAB_SUBTREE, from the delegation
+ *     target infra-lab/variables.tf points at), and every wildcard, because
+ *     a wildcard there could answer the DNS-01 check for the lab's
+ *     certificates between renewals. Its `www` and other names stay open.
  *   - Rule phases, as an ALLOW-list. A phase is the point in handling a
  *     request where a group of rules runs. Only the phases in EDITABLE_PHASES
  *     may be replaced from here. Every other phase is read-only: the one
- *     Terraform writes (PROTECTED_PHASES, with its own reason) and any other
+ *     Terraform writes in the site's zone (PROTECTED_PHASES, with its own
+ *     reason) and any other
  *     phase, named or not, because some kinds of rule can send or store the
  *     site's traffic elsewhere (an origin rule, a snippet, a cloud
  *     connector), and a kind Cloudflare adds later should start shut. The
@@ -33,8 +49,16 @@
  * allow-list.
  */
 
-/** The zone the site lives in (infra/variables.tf `domain`). */
-export const ZONE_APEX = 'hybridcloudworks.com';
+/** The zone the site lives in (infra/variables.tf `domain`), and the one a request names when it names none. */
+export const SITE_ZONE = 'hybridcloudworks.com';
+export const ZONE_APEX = SITE_ZONE;
+
+/**
+ * The lab's certificate zone (#948, #1911): the lab host's Caddy writes its
+ * short-lived `_acme-challenge` proof records here, never into the site's
+ * zone. Nothing else lives in it; no Terraform manages a record in it.
+ */
+export const LAB_ZONE = 'hybridcloudinsights.com';
 
 /** The lab host's name (infra-lab/variables.tf `lab_hostname`). */
 const LAB = `lab.${ZONE_APEX}`;
@@ -64,11 +88,55 @@ export const PROTECTED_DNS_NAMES = Object.freeze(
   ].map(Object.freeze)
 );
 
+const ACME = '_acme-challenge';
+
 /** Name prefixes refused wherever they appear: a certificate check anywhere in the zone. */
 export const PROTECTED_DNS_PREFIXES = Object.freeze([
   Object.freeze({
-    prefix: '_acme-challenge',
+    prefix: ACME,
     reason: 'A certificate check. Changing it can stop a certificate from renewing.',
+  }),
+]);
+
+/**
+ * The one name in the lab zone the site zone's `_acme-challenge` CNAMEs point
+ * at, where Caddy writes its DNS-01 answers (infra-lab/variables.tf
+ * `lab_acme_challenge_target`; protected.test.js holds the two equal).
+ */
+export const LAB_ACME_TARGET = `_acme-challenge.lab.${LAB_ZONE}`;
+
+/** The subtree that target lives in: every name under it is the lab's certificate business. */
+export const LAB_SUBTREE = LAB_ACME_TARGET.slice(LAB_ACME_TARGET.indexOf('.') + 1);
+
+const LAB_README = 'lab-host/README.md, "The Cloudflare runtime token and its scope"';
+
+/** The lab zone's protected names: its apex, and the subtree of the lab's certificate checks. */
+const LAB_DNS_NAMES = Object.freeze(
+  [
+    {
+      name: LAB_ZONE,
+      reason:
+        "The lab zone's own address. Nothing lives there, and a record there (an MX or TXT, say) could receive mail for the domain or pass a check that the domain is ours, so it is changed in the Cloudflare dashboard.",
+    },
+    { name: LAB_SUBTREE, reason: `Where the lab's certificate checks live: the site zone's _acme-challenge names point here (${LAB_README}).` },
+    { name: `*.${LAB_SUBTREE}`, reason: `Where the lab's certificate checks live: the site zone's _acme-challenge names point here (${LAB_README}).` },
+  ].map(Object.freeze)
+);
+
+/** Why every wildcard in the lab zone is refused. */
+export const LAB_WILDCARD_REASON = `A wildcard in the lab zone could answer the lab's certificate check whenever Caddy's record is not there (${LAB_README}), so wildcards are changed in the Cloudflare dashboard.`;
+
+/**
+ * Every lab-zone name whose first label starts with `_` (#1911 review R1):
+ * the only such names there are Caddy's certificate checks, and outside
+ * services prove a domain is ours or set its mail policy with them
+ * (`_dmarc`, `_domainkey`, a provider's `_verification` record), so none is
+ * made from here.
+ */
+const LAB_DNS_PREFIXES = Object.freeze([
+  Object.freeze({
+    prefix: '_',
+    reason: `In the lab zone the only names with a part starting with _ are the certificate checks the lab host's Caddy writes when it renews the lab's certificates (${LAB_README}), and outside services prove the domain is ours or set its mail policy with such names (_dmarc, _domainkey and the like), so they are changed in the Cloudflare dashboard.`,
   }),
 ]);
 
@@ -86,6 +154,42 @@ export const PROTECTED_PHASES = Object.freeze(
     },
   ].map(Object.freeze)
 );
+
+/**
+ * The zones the site may act on, each with its role in a sentence and its
+ * own protected names, prefixes and Terraform phases, and, where every
+ * wildcard is refused, the reason (`wildcardReason`). The first is the one
+ * a request that names no zone acts on.
+ */
+export const MANAGED_ZONES = Object.freeze(
+  [
+    {
+      name: SITE_ZONE,
+      role: "The site's own zone: the website, its API, the documentation, the podcast, the link page, the notes and the lab host's addresses.",
+      dnsNames: PROTECTED_DNS_NAMES,
+      dnsPrefixes: PROTECTED_DNS_PREFIXES,
+      phases: PROTECTED_PHASES,
+      wildcardReason: null,
+    },
+    {
+      name: LAB_ZONE,
+      role: "The lab's certificate zone: the lab host's Caddy writes its short-lived certificate checks here, and nothing else lives in it.",
+      dnsNames: LAB_DNS_NAMES,
+      dnsPrefixes: LAB_DNS_PREFIXES,
+      phases: Object.freeze([]),
+      wildcardReason: LAB_WILDCARD_REASON,
+    },
+  ].map(Object.freeze)
+);
+
+/** The managed zone a name means (any letter case), or null when it is not one. */
+export function managedZone(name) {
+  const wanted = String(name ?? '').toLowerCase();
+  return MANAGED_ZONES.find((zone) => zone.name === wanted) ?? null;
+}
+
+/** Why anything in a zone that is not managed is refused. */
+export const UNMANAGED_ZONE_REASON = 'This zone is not one the site manages, so nothing in it is changed from here.';
 
 /** The only rule phases that may be replaced from the portal, each described in a line. */
 export const EDITABLE_PHASES = Object.freeze(
@@ -175,31 +279,73 @@ export function checkDnsName(name, apex = ZONE_APEX) {
 /** Whether a listed name covers `full`. A `*.x` entry covers every name under x. */
 const covers = (listed, full) => listed === full || (listed.startsWith('*.') && full.endsWith(listed.slice(1)));
 
-/** The reason a listed name covers `full`, or null. */
-function listedReason(full) {
-  const entry = PROTECTED_DNS_NAMES.find((item) => covers(item.name, full));
+/** The reason a zone's listed name covers `full`, or null. */
+function listedReason(zone, full) {
+  const entry = zone.dnsNames.find((item) => covers(item.name, full));
   return entry ? entry.reason : null;
 }
 
-/** The reason a certificate-check prefix covers `full`, or null. */
-function prefixReason(full) {
-  const first = full.split('.')[0];
-  const entry = PROTECTED_DNS_PREFIXES.find((item) => first.startsWith(item.prefix));
+/** The reason a zone's certificate-check prefix covers `full`, or null. */
+function prefixReason(zone, full) {
+  // Any label, not only the first: `s1._domainkey` is a mail-signing name too.
+  const labels = full.split('.');
+  const entry = zone.dnsPrefixes.find((item) => labels.some((label) => label.startsWith(item.prefix)));
   return entry ? entry.reason : null;
 }
 
-/** Why a wildcard `*.x` may not be changed (the apex wildcard, or a protected x), or null. */
-function wildcardReason(full, apex) {
+/** The reason of a listed name lying under `base` (a `*.y` entry counts as y), or null. */
+function listedUnderReason(zone, base) {
+  const entry = zone.dnsNames.find((item) => item.name.replace(/^\*\./, '').endsWith(`.${base}`));
+  return entry ? entry.reason : null;
+}
+
+/**
+ * The reason of a protected prefix a wildcard over `base` would answer for, or
+ * null. `*.foo` answers `_acme-challenge.foo` whenever no exact record exists,
+ * so a zone that protects a prefix refuses every wildcard (#1913 review).
+ */
+function prefixChildReason(zone, base) {
+  const entry = zone.dnsPrefixes.find((item) => prefixReason(zone, `${item.prefix}.${base}`));
+  return entry ? entry.reason : null;
+}
+
+/**
+ * Why a wildcard `*.x` may not be changed, or null: the zone's own wildcard,
+ * any wildcard in a zone that refuses them all, or a wildcard that would
+ * answer for a protected name (x itself, a listed name under x, or a
+ * protected prefix's name under x).
+ */
+function wildcardReason(zone, full) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
-  if (base === apex) return APEX_WILDCARD_REASON;
-  return listedReason(base) || prefixReason(base);
+  if (base === zone.name) return APEX_WILDCARD_REASON;
+  if (zone.wildcardReason) return zone.wildcardReason;
+  // The first check that finds a reason; checks run in this order.
+  const checks = [listedReason, prefixReason, listedUnderReason, prefixChildReason];
+  return checks.map((check) => check(zone, base)).find(Boolean) ?? null;
 }
 
-/** Why a DNS name may not be added or edited, or null when it may. */
-export function dnsNameProtection(name, apex = ZONE_APEX) {
-  const full = normalizeDnsName(name, apex);
-  return listedReason(full) || prefixReason(full) || wildcardReason(full, apex);
+/** Why a full DNS name may not be added or edited in a zone entry (MANAGED_ZONES' shape), or null. */
+export function protectionIn(zone, full) {
+  return listedReason(zone, full) || prefixReason(zone, full) || wildcardReason(zone, full);
+}
+
+/** Why a DNS name in a zone may not be added or edited, or null when it may. */
+export function dnsNameProtection(name, zoneName = SITE_ZONE) {
+  const zone = managedZone(zoneName);
+  if (!zone) return UNMANAGED_ZONE_REASON;
+  return protectionIn(zone, normalizeDnsName(name, zone.name));
+}
+
+/**
+ * The other managed zone a name sent for `zoneName` belongs to (it is that
+ * zone's apex or ends with it, and is not inside `zoneName`), or null.
+ */
+export function otherManagedZone(name, zoneName) {
+  const raw = lower(name).replace(/\.+$/, '');
+  const inside = (apex) => raw === apex || raw.endsWith(`.${apex}`);
+  if (inside(zoneName)) return null;
+  return MANAGED_ZONES.find((zone) => zone.name !== zoneName && inside(zone.name))?.name ?? null;
 }
 
 /** Whether a phase is on the allow-list. */
@@ -208,10 +354,10 @@ export function isEditablePhase(phase) {
   return EDITABLE_PHASES.some((entry) => entry.phase === wanted);
 }
 
-/** Why a rule phase may not be replaced (Terraform's reason, or the read-only one), or null when it may. */
-export function phaseProtection(phase) {
+/** Why a rule phase in a zone may not be replaced (Terraform's reason, or the read-only one), or null when it may. */
+export function phaseProtection(phase, zoneName = SITE_ZONE) {
   const wanted = lower(phase);
-  const found = PROTECTED_PHASES.find((entry) => entry.phase === wanted);
+  const found = (managedZone(zoneName)?.phases ?? []).find((entry) => entry.phase === wanted);
   if (found) return found.reason;
   return isEditablePhase(wanted) ? null : READ_ONLY_PHASE_REASON;
 }

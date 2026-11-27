@@ -1,7 +1,8 @@
 /**
  * cloudflare/rules-routes.js — the Cloudflare page's rule routes (#1905):
  * list the zone's rulesets, read one phase's rules, replace one phase's
- * rules. A phase is the point in handling a request where a group of rules
+ * rules, in the zone the request names (#1911; the allow-list and every
+ * guard below are the same in each zone). A phase is the point in handling a request where a group of rules
  * runs. There is no delete.
  *
  * WHAT A READ SHOWS. Some rules carry a secret: the origin rule in
@@ -99,24 +100,24 @@ export function rulesFor(phase, rules) {
 
 export const STALE_MESSAGE = 'This phase changed since you opened it; reload it and make your change again.';
 
-const pickRuleset = (ruleset) => ({
+const pickRuleset = (ruleset, zoneName) => ({
   id: ruleset?.id ?? null,
   name: ruleset?.name ?? null,
   phase: ruleset?.phase ?? null,
   kind: ruleset?.kind ?? null,
   description: ruleset?.description ?? null,
   version: versionOf(ruleset),
-  locked: phaseProtection(ruleset?.phase) !== null,
-  lockedReason: phaseProtection(ruleset?.phase),
+  locked: phaseProtection(ruleset?.phase, zoneName) !== null,
+  lockedReason: phaseProtection(ruleset?.phase, zoneName),
 });
 
 /** A ruleset with its rules, as the phase routes answer it. */
-const rulesetView = (phase, ruleset) => ({ ...pickRuleset(ruleset), rules: rulesFor(phase, ruleset?.rules) });
+const rulesetView = (phase, ruleset, zoneName) => ({ ...pickRuleset(ruleset, zoneName), rules: rulesFor(phase, ruleset?.rules) });
 
 /** GET cms/cloudflare/rulesets. Metadata only: no rules. */
-export async function listRulesets({ client }) {
+export async function listRulesets({ client, zone }) {
   const rulesets = await client.listRulesets();
-  return json(200, { ok: true, rulesets: (Array.isArray(rulesets) ? rulesets : []).map(pickRuleset) });
+  return json(200, { ok: true, rulesets: (Array.isArray(rulesets) ? rulesets : []).map((ruleset) => pickRuleset(ruleset, zone.name)) });
 }
 
 /** The phase in the path, checked. */
@@ -127,16 +128,17 @@ function phaseOf(request) {
 }
 
 /** GET cms/cloudflare/rulesets/phases/{phase}. */
-export async function getPhase({ request, client }) {
+export async function getPhase({ request, client, zone }) {
   const phase = phaseOf(request);
   const ruleset = await client.getPhase(phase);
+  const lockedReason = phaseProtection(phase, zone.name);
   return json(200, {
     ok: true,
-    ruleset: ruleset ? rulesetView(phase, ruleset) : null,
+    ruleset: ruleset ? rulesetView(phase, ruleset, zone.name) : null,
     version: versionOf(ruleset),
     editable: isEditablePhase(phase),
-    locked: phaseProtection(phase) !== null,
-    lockedReason: phaseProtection(phase),
+    locked: lockedReason !== null,
+    lockedReason,
   });
 }
 
@@ -186,14 +188,14 @@ function rulesBody(phase, body) {
 
 /** PUT cms/cloudflare/rulesets/phases/{phase}. */
 export async function putPhase(call) {
-  const { request, client, user } = call;
+  const { request, client, user, zone } = call;
   const phase = phaseOf(request);
-  const reason = phaseProtection(phase);
+  const reason = phaseProtection(phase, zone.name);
   if (reason) throw protectedRefusal('That rule phase may not be changed from here', reason);
   const body = await bodyOf(request);
   const sent = rulesBody(phase, body);
   refuseAgentResponse(user, phase, sent.rules);
-  await requireOurZone(client);
+  await requireOurZone(client, zone.name);
   const current = await refuseStale(client, phase, body.expectedVersion);
   refuseAgentRemoval(user, current, sent.rules);
   refuseAgentDisable(user, phase, current, sent.rules);
@@ -202,5 +204,5 @@ export async function putPhase(call) {
   const note = concurrentWriteNote(current, saved);
   const details = { family: 'rules', phase, count, ...(note ? { concurrentWrite: true } : {}) };
   const audited = await recordChange(call, details, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`, note ? [note] : []);
-  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited, concurrentWrite: Boolean(note) });
+  return json(200, { ok: true, ruleset: rulesetView(phase, saved, zone.name), audited, concurrentWrite: Boolean(note) });
 }

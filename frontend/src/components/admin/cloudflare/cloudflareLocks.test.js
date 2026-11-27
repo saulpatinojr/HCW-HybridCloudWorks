@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 import * as server from '../../../../../functions/src/lib/cloudflare/protected.js';
 import {
   APEX_WILDCARD_REASON,
+  DEFAULT_ZONE,
   EDITABLE_PHASES,
+  MANAGED_ZONE_NAMES,
   OWNER_ONLY_SETTINGS,
   PROTECTED_DNS_PREFIXES,
   PROTECTED_PHASES,
@@ -21,7 +23,10 @@ import {
   isEditablePhase,
   ownerOnlyReason,
   phaseLock,
+  otherManagedZone,
+  protectedPhaseList,
   protectedPrefixList,
+  resolveZone,
 } from './cloudflareLocks';
 
 /** The status answer as the server builds it from its own lists. */
@@ -159,4 +164,141 @@ describe('owner-only settings and hidden values', () => {
     expect(holdsHiddenValue([{ expression: 'true', action: 'block' }])).toBe(false);
     expect(holdsHiddenValue(null)).toBe(false);
   });
+});
+
+describe('the managed zones (#1911)', () => {
+  /** The status answer for a zone, as the server builds it from its own lists. */
+  const statusFor = (zone) => ({
+    zone: { name: zone.name },
+    managed: { name: zone.name, role: zone.role },
+    protected: {
+      dnsNames: zone.dnsNames.map(({ name, reason }) => ({ name, reason })),
+      dnsPrefixes: zone.dnsPrefixes.map(({ prefix, reason }) => ({ prefix, reason })),
+      phases: zone.phases.map(({ phase, reason }) => ({ phase, reason })),
+      wildcardReason: zone.wildcardReason,
+    },
+  });
+
+  it('names the same zones as the server, in its order, the site’s first', () => {
+    expect(MANAGED_ZONE_NAMES).toEqual(server.MANAGED_ZONES.map((zone) => zone.name));
+    expect(DEFAULT_ZONE).toBe(server.SITE_ZONE);
+  });
+
+  it('keeps no copy of a zone’s role or reasons: those come from the status answer', () => {
+    for (const zone of server.MANAGED_ZONES) {
+      expect(JSON.stringify(MANAGED_ZONE_NAMES)).not.toContain(zone.role);
+    }
+  });
+
+  it('reads a zone from an address in any letter case, and the site’s for anything else', () => {
+    expect(resolveZone('HybridCloudInsights.com')).toBe(server.LAB_ZONE);
+    for (const value of [null, '', 'example.com', `${server.LAB_ZONE}.`, 'constructor']) {
+      expect(resolveZone(value), String(value)).toBe(server.SITE_ZONE);
+    }
+  });
+
+  const LAB_NAMES = [
+    '@',
+    'www',
+    'note',
+    '_acme-challenge',
+    '_acme-challenge.lab',
+    '*._acme-challenge.lab',
+    '*',
+    '*.lab',
+    '*.x.lab',
+    '*.foo',
+    '*.www',
+    'labs',
+    'lab',
+    'x.lab',
+    'a.b.lab',
+    '_atproto',
+    '_dmarc',
+    '_domainkey',
+    '_foo.www',
+    's1._domainkey',
+    'www._x',
+    'a_b',
+    'www.',
+    `x.${server.LAB_ZONE}`,
+  ];
+  it.each(LAB_NAMES)('locks %s in the lab zone exactly as the server does', (name) => {
+    const lab = server.managedZone(server.LAB_ZONE);
+    expect(dnsNameLock(name, { status: statusFor(lab) })).toBe(
+      server.dnsNameProtection(name, lab.name)
+    );
+  });
+
+  it('locks the phases exactly as the server does in each zone, and lists no Terraform phase in the lab zone', () => {
+    for (const zone of server.MANAGED_ZONES) {
+      const status = {
+        ...statusFor(zone),
+        protected: {
+          ...statusFor(zone).protected,
+          editablePhases: SERVER_STATUS.protected.editablePhases,
+        },
+      };
+      for (const phase of [
+        'http_request_late_transform',
+        'http_ratelimit',
+        'http_request_origin',
+      ]) {
+        expect(phaseLock(phase, { status }), `${zone.name} ${phase}`).toBe(
+          server.phaseProtection(phase, zone.name)
+        );
+      }
+    }
+    expect(protectedPhaseList(statusFor(server.managedZone(server.LAB_ZONE)))).toEqual([]);
+    expect(protectedPhaseList(null).map((item) => item.phase)).toEqual([
+      'http_request_late_transform',
+    ]);
+  });
+});
+
+describe('a wildcard over a locked name, in the site’s zone too (#1911 review F1)', () => {
+  it.each([
+    '*.go',
+    '*.api-azure',
+    '*.coder.lab',
+    '*.lab',
+    '*.x.coder.lab',
+    '*.blog',
+    '*.shop.blog',
+  ])('%s matches the server', (name) => {
+    expect(dnsNameLock(name, { status: SERVER_STATUS })).toBe(server.dnsNameProtection(name));
+  });
+});
+
+describe('trailing dots and names from the other zone match the server (#1911 review R4)', () => {
+  const SITE = server.SITE_ZONE;
+  const LAB = server.LAB_ZONE;
+  const NAMES = [
+    'www.',
+    'www..',
+    `${SITE}.`,
+    `${SITE}..`,
+    `x.${SITE}`,
+    `X.${SITE}...`,
+    LAB,
+    `${LAB}.`,
+    `_dmarc.${LAB}..`,
+    `x.${LAB}`,
+    `x${SITE}`,
+    'blog',
+    '@',
+  ];
+
+  it.each(NAMES)('%s: the other zone, in each zone', (name) => {
+    for (const zone of [SITE, LAB]) {
+      expect(otherManagedZone(name, zone), zone).toBe(server.otherManagedZone(name, zone));
+    }
+  });
+
+  it.each(NAMES.filter((name) => !name.includes(LAB)))(
+    '%s: the lock in the site’s zone',
+    (name) => {
+      expect(dnsNameLock(name, { status: SERVER_STATUS })).toBe(server.dnsNameProtection(name));
+    }
+  );
 });

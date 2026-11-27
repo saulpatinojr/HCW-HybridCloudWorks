@@ -8,6 +8,9 @@
  * the request instead of after it. cloudflareLocks.test.js imports that file
  * (it imports nothing) and fails when the two differ:
  *
+ *   MANAGED_ZONE_NAMES   the zones the page may pick (#1911), names only:
+ *                        each zone's role and protected lists come from the
+ *                        status answer for that zone
  *   PROTECTED_PHASES     the phase Terraform writes, with its reason (the API
  *                        rate limit left Terraform for this page in #1903)
  *   EDITABLE_PHASES      the only phases that may be replaced (an allow-list:
@@ -15,16 +18,30 @@
  *   OWNER_ONLY_SETTINGS  zone settings an agent key may not change
  *   DNS name checks      dnsNameLock matches the server's dnsNameProtection:
  *                        a `*.x` entry covers every name under x, `*` and a
- *                        wildcard over a protected name are locked, and the
- *                        prefixes come from the status answer
+ *                        wildcard over (or above) a protected name are
+ *                        locked, and the prefixes and the lab zone's
+ *                        every-wildcard rule come from the status answer
  *   REDACTED_VALUE       what a hidden secret reads as in an editable phase
  *
  * The status answer (`status.protected`) carries the server's own lists; a
  * list here is used only until the status has been read.
  */
 
-/** The zone the site lives in, used when the status has not named it yet. */
-export const ZONE_APEX = 'hybridcloudworks.com';
+/** The zones the page may act on, the site's first (the server's MANAGED_ZONES, by name). */
+export const MANAGED_ZONE_NAMES = Object.freeze([
+  'hybridcloudworks.com',
+  'hybridcloudinsights.com',
+]);
+
+/** The zone the site lives in: the one picked when the address names none. */
+export const [DEFAULT_ZONE] = MANAGED_ZONE_NAMES;
+export const ZONE_APEX = DEFAULT_ZONE;
+
+/** The managed zone an address names (any letter case), or the site's zone for anything else. */
+export function resolveZone(requested) {
+  const wanted = String(requested ?? '').toLowerCase();
+  return MANAGED_ZONE_NAMES.includes(wanted) ? wanted : DEFAULT_ZONE;
+}
 
 /** The rule phases Terraform writes, and why. The server's own reason wins when it gives one. */
 export const PROTECTED_PHASES = Object.freeze([
@@ -112,14 +129,19 @@ const listOf = (items, key) => (items ?? []).map((item) => entry(item, key)).fil
 
 // ── Rule phases ──────────────────────────────────────────────────────────────
 
-/** Every Terraform phase with its reason: the server's list joined with the mirror. */
+/**
+ * Every Terraform phase with its reason: the status answer's list for its
+ * zone once read (the lab zone has none), each reason filled from the
+ * mirror when the server gave none; the mirror until then.
+ */
 export function protectedPhaseList(status) {
-  const byPhase = new Map(PROTECTED_PHASES.map((item) => [item.phase, { ...item }]));
-  for (const item of listOf(status?.protected?.phases, 'phase')) {
-    const known = byPhase.get(item.phase);
-    byPhase.set(item.phase, { phase: item.phase, reason: item.reason || known?.reason || '' });
-  }
-  return [...byPhase.values()];
+  const fromServer = status?.protected?.phases;
+  if (!Array.isArray(fromServer)) return PROTECTED_PHASES.map((item) => ({ ...item }));
+  return listOf(fromServer, 'phase').map((item) => ({
+    phase: item.phase,
+    reason:
+      item.reason || PROTECTED_PHASES.find((known) => known.phase === item.phase)?.reason || '',
+  }));
 }
 
 /** The phases that may be replaced: the server's list once read, else the mirror. */
@@ -160,8 +182,8 @@ export function ownerOnlyReason(settingId, status = null) {
 
 /** A DNS name as Cloudflare spells it in full: lower case, no trailing dot, `@` read as the zone. */
 export function normalizeDnsName(name, zoneName = '') {
-  const zone = lower(zoneName).replace(/\.$/, '');
-  const value = lower(name).replace(/\.$/, '');
+  const zone = lower(zoneName).replace(/\.+$/, '');
+  const value = lower(name).replace(/\.+$/, '');
   if (!value) return '';
   if (value === '@') return zone;
   const inside = !zone || value === zone || value.endsWith(`.${zone}`);
@@ -191,8 +213,31 @@ function listedLock(full, status, zone) {
 }
 
 function prefixLock(full, status) {
-  const [first] = full.split('.');
-  const found = protectedPrefixList(status).find((item) => first.startsWith(item.prefix));
+  const labels = full.split('.');
+  const found = protectedPrefixList(status).find((item) =>
+    labels.some((label) => label.startsWith(item.prefix))
+  );
+  return found ? found.reason || DEFAULT_LOCK : null;
+}
+
+/** The reason of a listed name lying under `base` (a `*.y` entry counts as y), or null. */
+function listedUnderLock(base, status, zone) {
+  const found = protectedDnsList(status).find((item) =>
+    normalizeDnsName(item.name, zone).replace(/^\*\./, '').endsWith(`.${base}`)
+  );
+  return found ? found.reason || DEFAULT_LOCK : null;
+}
+
+/**
+ * Why a wildcard `*.x` is locked: the zone's own wildcard, any wildcard in a
+ * zone that refuses them all (the status answer's `wildcardReason`, the lab
+ * zone's), or one that would answer for a locked name (x, or one under x).
+ */
+/** A protected prefix's name a wildcard over `base` would answer for (`*.foo` answers `_acme-challenge.foo`). */
+function prefixChildLock(base, status) {
+  const found = protectedPrefixList(status).find((item) =>
+    prefixLock(`${item.prefix}.${base}`, status)
+  );
   return found ? found.reason || DEFAULT_LOCK : null;
 }
 
@@ -200,15 +245,34 @@ function wildcardLock(full, status, zone) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
   if (base === zone) return APEX_WILDCARD_REASON;
-  return listedLock(base, status, zone) || prefixLock(base, status);
+  if (status?.protected?.wildcardReason) return status.protected.wildcardReason;
+  // The first check that finds a reason, in the server's order.
+  const checks = [listedLock, prefixLock, listedUnderLock, prefixChildLock];
+  return checks.map((check) => check(base, status, zone)).find(Boolean) ?? null;
 }
 
 /**
  * Why a DNS name is locked, or null: the same rule as the server's
  * dnsNameProtection, read against the status answer's lists.
  */
+/** The zone a status answer is about: the one it names, else the zone it read, else the site's. */
+export const statusZone = (status) =>
+  lower(status?.managed?.name || status?.zone?.name || DEFAULT_ZONE);
+
+/**
+ * The other managed zone a name typed for `zoneName` belongs to (it is that
+ * zone's apex or ends with it, and is not inside `zoneName`), or null: the
+ * server's otherManagedZone, so the form says so before sending.
+ */
+export function otherManagedZone(name, zoneName) {
+  const raw = lower(name).replace(/\.+$/, '');
+  const inside = (apex) => raw === apex || raw.endsWith(`.${apex}`);
+  if (inside(zoneName)) return null;
+  return MANAGED_ZONE_NAMES.find((zone) => zone !== zoneName && inside(zone)) ?? null;
+}
+
 export function dnsNameLock(name, { status = null, zoneName = '' } = {}) {
-  const zone = lower(zoneName || status?.zone?.name || ZONE_APEX);
+  const zone = lower(zoneName) || statusZone(status);
   const full = normalizeDnsName(name, zone);
   if (!full) return null;
   return (

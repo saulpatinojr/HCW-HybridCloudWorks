@@ -1,10 +1,10 @@
 /**
- * What every Cloudflare tab shares (#1905): one read with its loading,
- * failure and "not set up yet" states; one write runner that refuses a second
- * click while the first request is out; and the lock note a protected row
- * shows instead of an edit button.
+ * What every Cloudflare tab shares (#1905): the zone the page has picked
+ * (#1911); one read with its loading, failure and "not set up yet" states;
+ * one write runner that refuses a second click while the first request is
+ * out; and the lock note a protected row shows instead of an edit button.
  */
-import React, { useCallback } from 'react';
+import React, { createContext, useCallback, useContext } from 'react';
 import { Link } from 'react-router';
 import { Loader2, Lock, Settings2 } from 'lucide-react';
 import EmptyState from '@/components/admin/shared/EmptyState';
@@ -15,6 +15,16 @@ import { useAuthReady } from '@/hooks/useAuthReady';
 import { NOT_CONFIGURED } from '@/lib/cloudflare';
 import { tabHref as integrationsTabHref } from '@/components/admin/integrations/tabs';
 import { changeWarning, notConfiguredNote } from './cloudflareView';
+import { DEFAULT_ZONE } from './cloudflareLocks';
+
+/**
+ * The managed zone the page has picked, by name. The page provides it; every
+ * tab reads and writes that zone through it, so no tab can act on another.
+ */
+export const CloudflareZone = createContext(DEFAULT_ZONE);
+
+/** The picked zone's name. */
+export const useCloudflareZone = () => useContext(CloudflareZone);
 
 /** The sentence every write control shows to someone below the role. */
 export const WRITE_REASON =
@@ -81,6 +91,16 @@ export function useCloudflareRead(load, empty = null) {
 }
 
 const describeReadError = (err) => err?.message || 'Cloudflare could not be read.';
+
+/**
+ * A tab's read of the picked zone: `read(zone)` from lib/cloudflare.js, run
+ * again whenever the zone changes. `read` and `empty` must be stable.
+ */
+export function useZoneRead(read, empty = null) {
+  const zone = useCloudflareZone();
+  const load = useCallback(() => read(zone), [read, zone]);
+  return useCloudflareRead(load, empty);
+}
 
 /**
  * The tab's body once its read has landed; until then the spinner, the

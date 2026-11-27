@@ -3,7 +3,7 @@
  * the body it sends, and the lock a name carries. Re-exported from
  * cloudflareView.js.
  */
-import { dnsNameLock } from './cloudflareLocks';
+import { dnsNameLock, otherManagedZone, statusZone } from './cloudflareLocks';
 
 // ── DNS ──────────────────────────────────────────────────────────────────────
 
@@ -98,10 +98,21 @@ export function dnsDialogCheck({ record = null, form, status = null }) {
   } catch (err) {
     problem = err.message;
   }
-  const lock = field(form, 'name') ? dnsNameLock(form.name, { status }) : null;
-  if (!problem && lock) problem = `That name is locked. ${lock}`;
+  if (!problem && field(form, 'name')) problem = nameProblem(form.name, status);
   const nothingChanged = Boolean(record && body && Object.keys(body).length === 0);
   return { body, problem, nothingChanged };
+}
+
+/**
+ * What stops a typed name before it is sent, or '': a name that belongs to
+ * the other managed zone (#1911), or a locked one. The server refuses both.
+ */
+function nameProblem(name, status) {
+  const other = otherManagedZone(name, statusZone(status));
+  if (other)
+    return `That name ends with ${other}, which is its own zone: pick ${other} above and add it there.`;
+  const lock = dnsNameLock(name, { status });
+  return lock ? `That name is locked. ${lock}` : '';
 }
 
 /**

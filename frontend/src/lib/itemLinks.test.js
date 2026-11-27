@@ -171,6 +171,10 @@ describe('LINK_PARAMS', () => {
     expect(LINK_PARAMS.talk).toBe('talk');
     expect(LINK_PARAMS.certification).toBe('certification');
   });
+
+  it('has a parameter for the Cloudflare page’s picked zone (#1911)', () => {
+    expect(LINK_PARAMS.zone).toBe('zone');
+  });
 });
 
 describe('the review set agrees everywhere it is listed', () => {
