@@ -217,6 +217,8 @@ describe('the managed zones (#1911)', () => {
     '_dmarc',
     '_domainkey',
     '_foo.www',
+    's1._domainkey',
+    'www._x',
     'a_b',
     'www.',
     `x.${server.LAB_ZONE}`,

@@ -136,7 +136,7 @@ export const LAB_WILDCARD_REASON = `A wildcard in the lab zone could answer the 
 const LAB_DNS_PREFIXES = Object.freeze([
   Object.freeze({
     prefix: '_',
-    reason: `In the lab zone the only names starting with _ are the certificate checks the lab host's Caddy writes when it renews the lab's certificates (${LAB_README}), and outside services prove the domain is ours or set its mail policy with such names (_dmarc, _domainkey and the like), so they are changed in the Cloudflare dashboard.`,
+    reason: `In the lab zone the only names with a part starting with _ are the certificate checks the lab host's Caddy writes when it renews the lab's certificates (${LAB_README}), and outside services prove the domain is ours or set its mail policy with such names (_dmarc, _domainkey and the like), so they are changed in the Cloudflare dashboard.`,
   }),
 ]);
 
@@ -287,8 +287,9 @@ function listedReason(zone, full) {
 
 /** The reason a zone's certificate-check prefix covers `full`, or null. */
 function prefixReason(zone, full) {
-  const first = full.split('.')[0];
-  const entry = zone.dnsPrefixes.find((item) => first.startsWith(item.prefix));
+  // Any label, not only the first: `s1._domainkey` is a mail-signing name too.
+  const labels = full.split('.');
+  const entry = zone.dnsPrefixes.find((item) => labels.some((label) => label.startsWith(item.prefix)));
   return entry ? entry.reason : null;
 }
 

@@ -278,7 +278,9 @@ describe('the managed zones (#1911)', () => {
 
   it('protects the lab zone’s apex for every record type, and leaves www and other names open (F2)', () => {
     for (const name of ['@', LAB_ZONE, `${LAB_ZONE}.`]) expect(lab(name), name).toMatch(/receive mail for the domain/);
-    for (const name of ['www', 'note', 'labs', 'mylab', 'lab-two', `x.www.${LAB_ZONE}`, 'a_b', 'www._x']) expect(lab(name), name).toBeNull();
+    for (const name of ['www', 'note', 'labs', 'mylab', 'lab-two', `x.www.${LAB_ZONE}`, 'a_b']) expect(lab(name), name).toBeNull();
+    // A part starting with _ anywhere in the name is refused, not only the first (#1911).
+    for (const name of ['www._x', 's1._domainkey', 'a._dmarc.www']) expect(lab(name), name).toMatch(/_/);
   });
 
   it('leaves the site zone’s _ names as they were: only _acme-challenge is refused there (R1)', () => {

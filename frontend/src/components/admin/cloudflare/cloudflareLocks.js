@@ -213,8 +213,10 @@ function listedLock(full, status, zone) {
 }
 
 function prefixLock(full, status) {
-  const [first] = full.split('.');
-  const found = protectedPrefixList(status).find((item) => first.startsWith(item.prefix));
+  const labels = full.split('.');
+  const found = protectedPrefixList(status).find((item) =>
+    labels.some((label) => label.startsWith(item.prefix))
+  );
   return found ? found.reason || DEFAULT_LOCK : null;
 }
 

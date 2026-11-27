@@ -378,9 +378,10 @@ same for both zones: there is no separate lab switch.
 certificates are proved (the DNS-01 check Caddy answers), so more of it is
 locked than its emptiness suggests: its apex (`hybridcloudinsights.com`
 itself, for every record type), `lab` and every name under it (the
-certificate check `_acme-challenge.lab` lives there), every name starting
-with an underscore (`_acme-challenge`, and verification or mail-policy names
-such as `_dmarc`, `_domainkey` or a provider's `_…-verification` record),
+certificate check `_acme-challenge.lab` lives there), every name with a
+part starting with an underscore (`_acme-challenge`, and verification or
+mail-policy names such as `_dmarc`, `s1._domainkey` or a provider's
+`_…-verification` record),
 and every wildcard. `www` and other names are open,
 because nothing uses them. The rule phases, the owner-only settings and
 every limit on an agent key are the same as in the site's zone. A name that
@@ -402,7 +403,7 @@ applies in both zones unless it names one.
 | The DNS records Terraform manages (`api-azure`, `docs`, `podcast`, `go`, `_cf-custom-hostname.go`, `notes`, `asuid.api-azure`) | An apply would put them back, and some are what Azure checks to keep the custom domain | [`infra/frontend.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/frontend.tf) |
 | The lab's records, and every name under `*.lab` and `*.coder.lab` | The lab's own Terraform and its certificate setup own them | [`infra-lab/dns.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra-lab/dns.tf) |
 | Any `_acme-challenge` name in `hybridcloudworks.com` | Certificate checks write these for a few minutes | Nothing to change by hand |
-| In the lab zone `hybridcloudinsights.com`, any name starting with an underscore (`_acme-challenge`, `_dmarc`, `_domainkey`, `_atproto` and the like) | The only such names there are the certificate checks the lab host's Caddy writes for a few minutes at each renewal ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope"), and outside services prove the domain is ours or set its mail policy with such names | The Cloudflare dashboard, by hand (Caddy's own names need nothing) |
+| In the lab zone `hybridcloudinsights.com`, any name with a part starting with an underscore (`_acme-challenge`, `_dmarc`, `_atproto`, `s1._domainkey` and the like) | The only such names there are the certificate checks the lab host's Caddy writes for a few minutes at each renewal ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope"), and outside services prove the domain is ours or set its mail policy with such names | The Cloudflare dashboard, by hand (Caddy's own names need nothing) |
 | In `hybridcloudworks.com`: `*` for the whole zone, and a wildcard over or above any name above (`*.www`, `*.api-azure`, `*.lab`) | A wildcard answers for names nobody listed, so it could stand in for a protected name | The Cloudflare dashboard |
 | In the lab zone: every wildcard (`*`, `*.lab`, `*.anything`) | Between Caddy's renewals a wildcard could answer the lab's certificate check and pass it for someone else | The Cloudflare dashboard |
 | A name that ends with the other managed zone (`x.hybridcloudworks.com` with the lab zone picked, and the other way round) | It would be made inside the wrong zone under a confusing name | Pick that zone and add it there |
