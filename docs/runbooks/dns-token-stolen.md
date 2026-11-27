@@ -44,7 +44,8 @@ Issue a replacement token strictly restricted to needed permissions:
 
 1. In Cloudflare Dashboard -> **API Tokens** -> **Create Token**.
 2. Select **Create Custom Token**:
-   - **Token Name:** `hcw-dns-automation-2026`
+   - **Token Name:** `hcp-terraform-cloudflare-dns` (the name `infra/variables.tf`
+     and `docs/standards/required-inputs.md` use for this token)
    - **Permissions** (the same list as `cloudflare_api_token` in
      `infra/variables.tf`; a token with less fails the apply on the
      resource that needs the missing permission):
@@ -69,24 +70,22 @@ Issue a replacement token strictly restricted to needed permissions:
 
 ## 4. Update secrets in the estate
 
-1. **Update Terraform Cloud:**
-   - In Terraform Cloud -> Workspace `hcw` -> **Variables**.
-   - Update `CLOUDFLARE_API_TOKEN` (marked Sensitive).
+The token lives in one place only: the sensitive Terraform variable
+`cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. It is not
+in Key Vault and not a GitHub Actions secret (the credential register,
+`functions/src/lib/credentials/register.js`, row
+`tfc-azure-cloudflare-api-token`, says so).
 
-2. **Update Key Vault (if applicable):**
-   ```bash
-   az keyvault secret set \
-     --vault-name "kv-hcw-prod-cus" \
-     --name "CLOUDFLARE-API-TOKEN" \
-     --value "<NEW_CLOUDFLARE_TOKEN>"
-   ```
+1. Open [hcw-azure → Variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables).
+2. Edit `cloudflare_api_token`, paste the new token into the value field
+   (it stays marked **Sensitive**), and save. Do not paste it anywhere else,
+   chat included.
+3. Revoke the old token on the same Cloudflare **API Tokens** page.
 
-3. **Update GitHub Actions repository secret (if used in workflows):**
-   ```bash
-   gh secret set CLOUDFLARE_API_TOKEN \
-     --repo saulpatinojr/HCW-HybridCloudWorks \
-     --body "<NEW_CLOUDFLARE_TOKEN>"
-   ```
+Instead of steps 1 and 2, `scripts/roll-cloudflare-tokens.mjs --target azure`
+rolls the token and writes the new value into the workspace variable in one
+step, without the value ever being printed; its header lists the
+environment variables it reads.
 
 ---
 
