@@ -680,8 +680,11 @@ resource "cloudflare_web_analytics_site" "hcw" {
     # cloudflare_web_analytics_site_tag would otherwise be ignored while the
     # Function App kept the old tag from state. As infra-lab/main.tf does for
     # its adopted server, a variable that disagrees with what was adopted is
-    # an error, not a quiet second meaning. The tag is not printed: the
-    # message says where to read it. Changing sites is the let-go steps above.
+    # an error, not a quiet second meaning. The message names no tag and says
+    # where to read it; Terraform's own diagnostic beneath it does show both
+    # values, in the run log, which only the workspace's members can read
+    # (a run that errors leaves no plan for tfc-plan-check to publish).
+    # Changing sites is the let-go steps above.
     postcondition {
       condition     = self.site_tag == var.cloudflare_web_analytics_site_tag
       error_message = "cloudflare_web_analytics_site_tag does not match the Web Analytics site Terraform already manages. Set the workspace variable back to that site's tag (Cloudflare dashboard, Analytics & Logs, Web Analytics, the site's Manage page), or to move to another site, follow the let-go steps in infra/frontend.tf first. Nothing has been changed."

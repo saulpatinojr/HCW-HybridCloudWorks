@@ -787,6 +787,30 @@ describe('every change is read, not only the ones classify names (#719 review)',
     ]);
   });
 
+  it('never prints the Web Analytics site’s identifiers on an undeclared change (#1923)', () => {
+    const tag = '0123456789abcdef0123456789abcdef';
+    const { plan } = fixture();
+    plan.resource_changes.push({
+      address: 'cloudflare_web_analytics_site.hcw[0]',
+      change: {
+        actions: ['update'],
+        before: { account_id: tag, zone_tag: null, site_tag: tag, site_token: tag, snippet: `<script data="${tag}">` },
+        after: { account_id: tag, zone_tag: tag, site_tag: `${tag}0`, site_token: `${tag}1`, snippet: '<script>' },
+        after_unknown: {},
+        before_sensitive: {},
+        after_sensitive: {},
+      },
+    });
+    const result = checkPlan(plan, { declared: [] });
+    expect(result.unexpected).toEqual([
+      'cloudflare_web_analytics_site.hcw[0]: update site_tag: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update site_token: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update snippet: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update zone_tag: null -> (set)',
+    ]);
+    expect(result.unexpected.join('\n')).not.toContain(tag);
+  });
+
   it('matches KNOWN_AFTER_APPLY only to an unknown, non-sensitive difference at its exact path (#1923)', () => {
     const declaration = { address: 'example_site.one', path: 'token', after: KNOWN_AFTER_APPLY, reason: 'test' };
     const difference = (extra) => ({ path: 'token', before: 'old', after: undefined, sensitive: false, unknown: true, ...extra });
