@@ -177,10 +177,12 @@ const isRule = (rule) => Boolean(rule) && typeof rule === 'object' && !Array.isA
 /**
  * Whether a list holds one rule id more than once (#1933 review). A phase
  * never holds two rules with one id, and the guards that compare a list
- * with the phase as it is now read each id once.
+ * with the phase as it is now read each id once. Only a non-empty text id
+ * counts: a new rule may carry no id, or a null or empty one, and Cloudflare
+ * gives it one when it saves.
  */
 function holdsAnIdTwice(rules) {
-  const ids = rules.map((rule) => rule.id).filter((id) => id !== undefined);
+  const ids = rules.map((rule) => rule.id).filter((id) => typeof id === 'string' && id !== '');
   return new Set(ids).size !== ids.length;
 }
 const withoutStamps = (rule) => Object.fromEntries(Object.entries(rule).filter(([key]) => !STAMPS.includes(key)));

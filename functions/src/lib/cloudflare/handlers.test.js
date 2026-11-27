@@ -1268,6 +1268,19 @@ describe('rules', () => {
       expect(res.body.error).toBe('Each rule id may appear only once in the list.');
       expect(api.fetch).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['null', null],
+      ['empty', ''],
+    ])('does not count two new rules with a %s id as one id twice, from the owner or an agent key', async (_label, id) => {
+      for (const user of [PERSON, NETWORK_GUY]) {
+        const { handlers, api } = setup({ user, routes: { ...withRules([KEPT, OTHER]), ...put(HEADERS) } });
+        const rules = [KEPT, OTHER, { ...NEW, id }, { ...header('x-second'), expression: 'true', id }];
+        const res = parse(await handlers.putPhase(replace(HEADERS, { rules }), {}));
+        expect(res.status).toBe(200);
+        expect(WRITES(api)).toHaveLength(1);
+      }
+    });
   });
 
   describe('an agent key may not set an owner-only setting through a rule (#1931)', () => {
