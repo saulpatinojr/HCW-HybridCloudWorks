@@ -7,10 +7,12 @@
  * add or edit, or a change of zone, starts again from page 1: the pages
  * loaded after it belong to that one answer and are dropped with it. "Load
  * more" asks for the next page and appends it; it does nothing while a page
- * is already on its way, and an answer that arrives after page 1 was read
- * again (or for another zone) is thrown away.
+ * is already on its way. Each page is kept under the mark of the page-1 read
+ * and zone it followed, and only pages whose mark matches what is on screen
+ * are shown, so one that lands after page 1 was read again (or after a zone
+ * switch) never appears.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * What the pages read so far add up to: their records in order (a record
@@ -64,32 +66,28 @@ export default function useDnsPages(read, readPage, zone) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [failure, setFailure] = useState({ base: null, zone: null, text: '' });
   const inFlight = useRef(false);
-  // The mark on screen, for an answer that lands later to check against.
-  const current = useRef(mark);
-  useEffect(() => {
-    current.current = { base: read.loadedAt, zone };
-  }, [read.loadedAt, zone]);
 
+  // The guard: pages kept under another read's mark are not shown.
   const view = dnsListView([read.data, ...(sameRead(more, mark) ? more.pages : [])]);
 
   const loadMore = useCallback(async () => {
     if (inFlight.current || !view.hasMore) return;
     inFlight.current = true;
-    const from = current.current;
+    const from = { base: read.loadedAt, zone };
     setLoadingMore(true);
     setFailure({ base: null, zone: null, text: '' });
     try {
       const page = await readPage(zone, view.nextPage);
-      if (sameRead(current.current, from)) {
-        setMore((was) => ({ ...from, pages: [...(sameRead(was, from) ? was.pages : []), page] }));
-      }
+      // Kept under `from`: if page 1 was read again meanwhile, `view` ignores it.
+      // Only one page is ever on its way, so this never replaces newer pages.
+      setMore((was) => ({ ...from, pages: [...(sameRead(was, from) ? was.pages : []), page] }));
     } catch (err) {
       setFailure({ ...from, text: err?.message || 'The next page could not be read.' });
     } finally {
       inFlight.current = false;
       setLoadingMore(false);
     }
-  }, [readPage, zone, view.hasMore, view.nextPage]);
+  }, [readPage, zone, read.loadedAt, view.hasMore, view.nextPage]);
 
   const moreError = sameRead(failure, mark) ? failure.text : '';
   return { ...view, loadMore, loadingMore, moreError };

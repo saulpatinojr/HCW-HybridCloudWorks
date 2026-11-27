@@ -547,6 +547,33 @@ describe('the DNS tab, a page at a time (#1907)', () => {
     expect(screen.getByTestId('dns-row-rec2')).toBeInTheDocument();
     expect(loadMore()).toBeEnabled();
   });
+
+  it('drops a page 2 that answers after a change has re-read page 1', async () => {
+    const late = deferred();
+    api.readCloudflareDns.mockImplementation((zone, page = 1) =>
+      page === 1 ? Promise.resolve({ ...FIRST }) : late.promise
+    );
+    api.updateCloudflareDnsRecord.mockResolvedValue({ record: {} });
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    fireEvent.click(loadMore());
+    await waitFor(() => expect(loadMore()).toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Change A lab.example.com' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Content'), {
+      target: { value: '192.0.2.11' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save the change/ }));
+    // The dialog closes only once the change's re-read of page 1 has landed.
+    const slow = { timeout: 5000 };
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), slow);
+    expect(api.readCloudflareDns.mock.calls).toEqual([[SITE], [SITE, 2], [SITE]]);
+    // Page 2, asked for before the change, lands only now.
+    late.resolve(LAST);
+    await waitFor(() => expect(loadMore()).toBeEnabled(), slow);
+    expect(screen.queryByTestId('dns-row-rec3')).toBeNull();
+    expect(screen.getByTestId('dns-row-rec2')).toBeInTheDocument();
+  });
 });
 
 describe('the Rules tab', () => {
@@ -1057,6 +1084,42 @@ describe('the zone picker (#1911)', () => {
     expect(api.readCloudflareDns).toHaveBeenLastCalledWith(LAB, 2);
     expect(screen.getByTestId('dns-row-lab1')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  // The page rebuilds its tabs for each zone (`key={zone}`), so this checks what
+  // the reader sees; useDnsPages.test.js checks the hook's own zone guard.
+  it('drops a site page that answers after the zone was switched (#1907)', async () => {
+    const late = deferred();
+    const row = (id, name) => ({ ...RECORDS[1], id, name });
+    const firstOf = (records) => ({
+      records,
+      page: 1,
+      totalPages: 2,
+      totalCount: 3,
+      hasMore: true,
+    });
+    api.readCloudflareDns.mockImplementation((zone, page = 1) => {
+      if (page === 2) return late.promise;
+      return Promise.resolve(
+        zone === LAB ? firstOf([row('lab1', `www.${LAB}`)]) : firstOf(RECORDS)
+      );
+    });
+    renderWithAddress('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(api.readCloudflareDns).toHaveBeenLastCalledWith(SITE, 2));
+    fireEvent.change(screen.getByLabelText('Zone'), { target: { value: LAB } });
+    await screen.findByTestId('dns-row-lab1');
+    // The site's page 2 lands only now, after the lab zone's page 1.
+    late.resolve({
+      records: [row('rec3', 'note.example.com')],
+      page: 2,
+      totalPages: 2,
+      hasMore: false,
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Load more' })).toBeEnabled());
+    expect(screen.queryByTestId('dns-row-rec3')).toBeNull();
+    expect(screen.getByTestId('dns-row-lab1')).toBeInTheDocument();
   });
 
   it('opens the zone a link names, in any letter case, and the site’s for any other name', async () => {

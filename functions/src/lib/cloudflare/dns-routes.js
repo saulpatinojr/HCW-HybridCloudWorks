@@ -149,7 +149,9 @@ export function pageOf(request) {
 export async function listDns({ request, client, zone }) {
   const page = pageOf(request);
   const { records, ...paging } = await client.listDnsPage(page);
-  return json(200, { ok: true, records: records.map((record) => pickDns(record, zone.name)), ...paging });
+  // No page after the last one this route reads, so a caller is never offered page 1001.
+  const hasMore = paging.hasMore && page < MAX_DNS_PAGE;
+  return json(200, { ok: true, records: records.map((record) => pickDns(record, zone.name)), ...paging, hasMore });
 }
 
 /** Refuses a name protected in the zone (409, with the reason). */

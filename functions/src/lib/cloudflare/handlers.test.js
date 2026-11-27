@@ -507,6 +507,21 @@ describe('DNS records', () => {
     expect(res.body.records).toEqual([]);
   });
 
+  it(`says no page follows page ${MAX_DNS_PAGE}, even when Cloudflare holds more`, async () => {
+    const full = Array.from({ length: DNS_PAGE_SIZE }, (_, i) => record({ id: `r${i}` }));
+    const counted = setup({ routes: dnsPage(full, { page: MAX_DNS_PAGE, total_pages: MAX_DNS_PAGE + 500 }) });
+    const res = parse(await counted.handlers.listDns(request({ query: `page=${MAX_DNS_PAGE}` }), {}));
+    expect(res.body).toMatchObject({ page: MAX_DNS_PAGE, totalPages: MAX_DNS_PAGE + 500, hasMore: false });
+    // The same when Cloudflare sends no totals and the page came back full.
+    const uncounted = setup({ routes: dnsPage(full, null) });
+    const bare = parse(await uncounted.handlers.listDns(request({ query: `page=${MAX_DNS_PAGE}` }), {}));
+    expect(bare.body).toMatchObject({ totalPages: null, hasMore: false });
+    // One page short of the limit still offers the next.
+    const before = setup({ routes: dnsPage(full, { page: MAX_DNS_PAGE - 1, total_pages: MAX_DNS_PAGE + 500 }) });
+    const near = parse(await before.handlers.listDns(request({ query: `page=${MAX_DNS_PAGE - 1}` }), {}));
+    expect(near.body.hasMore).toBe(true);
+  });
+
   it.each(['@', ZONE_APEX, 'www', `www.${ZONE_APEX}`, 'api-azure', `docs.${ZONE_APEX}`, '_acme-challenge.blog', `x.lab.${ZONE_APEX}`, 'lab', '*', `*.${ZONE_APEX}`, '*.api-azure', '*.www', '*._acme-challenge', '*.lab', '*.x.lab', 'WWW'])(
     'refuses to add a record named %j, with the reason, and calls nothing',
     async (name) => {

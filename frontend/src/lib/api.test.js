@@ -149,6 +149,8 @@ describe('the Cloudflare page’s timeouts (#1905)', () => {
     expect(timeoutForFunction('cms/cloudflare/dns')).toBe(50000);
     // A query string does not change the wait (#1907): the zone and the page ride on it.
     expect(timeoutForFunction('cms/cloudflare/dns?page=2')).toBe(50000);
+    // The Doc Vault's trash list rides on the same rule: 45 s, as `cms/doc-vault`.
+    expect(timeoutForFunction('cms/doc-vault?view=trash')).toBe(45000);
     expect(timeoutForFunction('cms/cloudflare/dns?zone=example.com&page=3')).toBe(50000);
     expect(timeoutForFunction('cms/cloudflare/status?zone=example.com')).toBe(35000);
     expect(timeoutForFunction(`cms/cloudflare/dns/${'a'.repeat(32)}?zone=example.com`)).toBe(50000);

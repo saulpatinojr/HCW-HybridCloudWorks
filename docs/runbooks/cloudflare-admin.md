@@ -400,7 +400,10 @@ is refused with 400 `CLOUDFLARE_UNMANAGED_ZONE` before Cloudflare is called,
 and so is an empty or repeated `zone`. Network Guy's four switches are the
 same for both zones: there is no separate lab switch. The DNS list comes a
 page at a time, 100 records a page: add `&page=2` (and so on) for the next
-one, and stop when the answer says `hasMore: false`.
+one, and stop when the answer says `hasMore: false`. A record added or
+removed between two pages can shift the rest, so one may be missed or
+listed twice, as the old all-at-once list could miss one too; read again
+from page 1 (on the page, reload the DNS tab) to be sure.
 
 **What is different in the lab zone.** The lab zone is where the lab's
 certificates are proved (the DNS-01 check Caddy answers), so more of it is

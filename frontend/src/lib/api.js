@@ -131,7 +131,9 @@ const PATTERN_TIMEOUT_MS = [
 
 export function timeoutForFunction(fnName) {
   // The route alone decides: `cms/cloudflare/dns?zone=…&page=2` waits as
-  // long as `cms/cloudflare/dns` (#1907).
+  // long as `cms/cloudflare/dns` (#1907). This also gives the Doc Vault's
+  // trash list (`cms/doc-vault?view=trash`) the `cms/doc-vault` wait, 45 s,
+  // where it had the 20 s default before.
   const [route] = String(fnName).split('?');
   if (FUNCTION_TIMEOUT_MS[route]) return FUNCTION_TIMEOUT_MS[route];
   const matched = PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(route));
