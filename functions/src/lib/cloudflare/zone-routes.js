@@ -14,7 +14,7 @@ import { authoredMessage } from '../http/error-response.js';
 import { isAgentUser } from '../agent-content/agent-keys.js';
 import { CloudflareError } from './client.js';
 import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './input.js';
-import { recordChange, requireOurZone } from './record.js';
+import { actorOf, recordChange, requireOurZone } from './record.js';
 import { notConfiguredMessage } from './prerequisites.js';
 import { EDITABLE_PHASES, MANAGED_ZONES, OWNER_ONLY_SETTINGS, SITE_ZONE, managedZone, ownerOnlySettingReason } from './protected.js';
 
@@ -111,11 +111,11 @@ function settingIdOf(request) {
   return settingId;
 }
 
-/** Refuses an agent key a setting only the owner changes. */
+/** Refuses an agent key a setting only the owner changes, naming the key. */
 function refuseOwnerOnly(user, settingId) {
   const reason = ownerOnlySettingReason(settingId);
   if (reason && isAgentUser(user)) {
-    throw new Refusal(`An agent key may not change ${settingId}. ${reason}`, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason });
+    throw new Refusal(`${actorOf(user)} (an agent key) may not change ${settingId}. ${reason}`, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason });
   }
 }
 

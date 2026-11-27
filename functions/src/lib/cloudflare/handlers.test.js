@@ -23,7 +23,15 @@ import {
 } from './handlers.js';
 import { CLOUDFLARE_API_BASE, DNS_PAGE_SIZE, forgetZoneIds, zoneUnreachableMessage } from './client.js';
 import { MAX_DNS_PAGE } from './dns-routes.js';
-import { EDITABLE_PHASES, LAB_ZONE, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
+import {
+  EDITABLE_PHASES,
+  LAB_ZONE,
+  OWNER_ONLY_SETTINGS,
+  READ_ONLY_PHASE_REASON,
+  UNLISTED_RULE_SETTING_REASON,
+  ZONE_APEX,
+  ownerOnlySettingReason,
+} from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE, wrongZoneMessage } from './record.js';
 import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE, concurrentWriteNote } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
@@ -385,6 +393,7 @@ describe('zone settings', () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('CLOUDFLARE_OWNER_ONLY');
     expect(res.body.error).toMatch(/Change it on the Cloudflare page yourself/);
+    expect(res.body.error).toContain(`Claude Network Guy (an agent key) may not change ${settingId}.`);
     expect(res.body.reason).toBe(OWNER_ONLY_SETTINGS.find((entry) => entry.setting === settingId).reason);
     expect(api.fetch).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
@@ -1209,6 +1218,146 @@ describe('rules', () => {
       expect(res.status).toBe(200);
       expect(api.calls[2].body).toEqual({ rules: [KEPT] });
       expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ zone: ZONE_APEX, family: 'rules', phase: REDIRECT, count: 1 });
+    });
+  });
+
+  describe('an agent key may not set an owner-only setting through a rule (#1931)', () => {
+    const CONFIG = 'http_config_settings';
+    const HEADERS = 'http_response_headers_transform';
+    const HOST = `notes.${ZONE_APEX}`;
+    // A configuration rule the owner made: SSL mode Full for one host.
+    const SSL_RULE = { id: 'cfg-ssl-1', expression: `(http.host eq "${HOST}")`, action: 'set_config', action_parameters: { ssl: 'full' }, enabled: true };
+    const SSL_RULE_2 = { id: 'cfg-ssl-2', expression: 'true', action: 'set_config', action_parameters: { ssl: 'strict' }, enabled: true };
+    // A configuration rule that sets only settings an agent key may change for the whole zone.
+    const OPEN_RULE = { id: 'cfg-open-1', expression: 'true', action: 'set_config', action_parameters: { email_obfuscation: false, rocket_loader: true, security_level: 'essentially_off' } };
+    const HSTS_RULE = { id: 'hdr-hsts-1', expression: 'true', action: 'rewrite', action_parameters: { headers: { 'Strict-Transport-Security': { operation: 'set', value: 'max-age=31536000' } } } };
+    const withRules = (phase, rules) => entrypoint(phase, { id: 'r7', phase, version: '3', rules });
+    const SSL_REASON = ownerOnlySettingReason('ssl');
+
+    /** An agent key's refusal: 403, the key and the setting named, the reason, nothing written, nothing logged that the rule carries. */
+    function expectRefused({ res, api, store, notifier, context }, setting, reason) {
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CLOUDFLARE_OWNER_ONLY');
+      expect(res.body.error).toContain('Claude Network Guy (an agent key)');
+      expect(res.body.error).toContain(setting);
+      expect(res.body.reason).toBe(reason);
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+      expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+      // The refusal names the setting and the key, never the rule's id or what it matches.
+      expect(res.body.error).not.toMatch(/cfg-|hdr-|notes\./);
+      expect(logs(context)).not.toMatch(/cfg-|hdr-|notes\.|max-age|flexible|strict|full/);
+    }
+
+    async function send(user, phase, held, rules, expectedVersion = '3') {
+      const routes = { ...(held ? withRules(phase, held) : {}), ...put(phase) };
+      const { handlers, api, store, notifier, context } = setup({ user, routes });
+      const res = parse(await handlers.putPhase(replace(phase, { rules, expectedVersion }), context));
+      return { res, api, store, notifier, context };
+    }
+
+    it('refuses an agent key creating a configuration rule that sets ssl', async () => {
+      const created = { expression: `(http.host eq "${HOST}")`, action: 'set_config', action_parameters: { ssl: 'flexible' } };
+      const result = await send(NETWORK_GUY, CONFIG, [OPEN_RULE], [OPEN_RULE, created]);
+      expectRefused(result, 'the zone setting ssl', SSL_REASON);
+      expect(result.res.body.error).toContain('the field ssl');
+    });
+
+    it.each([
+      ['changes the SSL mode it sets', { ...SSL_RULE, action_parameters: { ssl: 'flexible' } }],
+      ['changes the requests it matches', { ...SSL_RULE, expression: 'true' }],
+      ['switches it off', { ...SSL_RULE, enabled: false }],
+      ['takes ssl out of it', { ...SSL_RULE, action_parameters: { fonts: true } }],
+    ])('refuses an agent key updating the owner’s ssl rule when it %s', async (_label, changed) => {
+      const result = await send(NETWORK_GUY, CONFIG, [SSL_RULE], [changed]);
+      expectRefused(result, 'ssl', SSL_REASON);
+    });
+
+    it.each([
+      ['the field in capitals', CONFIG, { expression: 'true', action: 'set_config', action_parameters: { SSL: 'flexible' } }],
+      ['action_parameters in other letters', CONFIG, { expression: 'true', action: 'set_config', Action_Parameters: { ssl: 'flexible' } }],
+      ['a second action_parameters in capitals', CONFIG, { expression: 'true', action: 'set_config', action_parameters: {}, ACTION_PARAMETERS: { ssl: 'off' } }],
+      ['a field with a letter that only looks like s', CONFIG, { expression: 'true', action: 'set_config', action_parameters: { 'ſsl': 'off' } }],
+      ['headers in other letters', HEADERS, { expression: 'true', action: 'rewrite', action_parameters: { Headers: { 'Strict-Transport-Security': { operation: 'remove' } } } }],
+      ['a response in other letters', 'http_request_firewall_custom', { expression: 'true', action: 'block', action_parameters: { Response: { status_code: 403 } } }],
+    ])('refuses a rule with %s before calling Cloudflare, for an agent key and the owner alike', async (_label, phase, rule) => {
+      for (const user of [NETWORK_GUY, PERSON]) {
+        const { res, api, store } = await send(user, phase, null, [rule], null);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/lower-case letters, digits and underscores, as Cloudflare writes them/);
+        expect(api.fetch).not.toHaveBeenCalled();
+        expect(store.upsertDoc).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses an agent key moving one ssl rule past another, since the later one wins', async () => {
+      const result = await send(NETWORK_GUY, CONFIG, [SSL_RULE, SSL_RULE_2], [SSL_RULE_2, SSL_RULE]);
+      expectRefused(result, 'ssl', SSL_REASON);
+    });
+
+    it('checks a whole-phase replacement rule by rule, refusing it for the one rule that sets ssl', async () => {
+      const rules = [
+        { expression: 'true', action: 'set_config', action_parameters: { polish: 'lossless' } },
+        { expression: 'true', action: 'set_config', action_parameters: { fonts: true } },
+        { expression: `(http.host eq "${HOST}")`, action: 'set_config', action_parameters: { automatic_https_rewrites: false, ssl: 'off' } },
+      ];
+      const result = await send(NETWORK_GUY, CONFIG, null, rules, null);
+      expectRefused(result, 'the zone setting ssl', SSL_REASON);
+    });
+
+    it('refuses an agent key a configuration rule field that is not on Cloudflare’s list', async () => {
+      const result = await send(NETWORK_GUY, CONFIG, [OPEN_RULE], [OPEN_RULE, { expression: 'true', action: 'set_config', action_parameters: { mirage: true } }]);
+      expectRefused(result, 'a zone setting this page does not know', UNLISTED_RULE_SETTING_REASON);
+    });
+
+    it.each([
+      ['Strict-Transport-Security', { operation: 'set', value: 'max-age=0' }],
+      ['strict-transport-security', { operation: 'remove' }],
+    ])('refuses an agent key a response header rule touching the %s header (HSTS)', async (header, change) => {
+      const rule = { expression: 'true', action: 'rewrite', action_parameters: { headers: { [header]: change } } };
+      const result = await send(NETWORK_GUY, HEADERS, null, [rule], null);
+      expectRefused(result, 'the zone setting security_header', ownerOnlySettingReason('security_header'));
+    });
+
+    it('refuses an agent key changing the owner’s HSTS header rule', async () => {
+      const changed = { ...HSTS_RULE, action_parameters: { headers: { 'Strict-Transport-Security': { operation: 'set', value: 'max-age=0' } } } };
+      const result = await send(NETWORK_GUY, HEADERS, [HSTS_RULE], [changed]);
+      expectRefused(result, 'security_header', ownerOnlySettingReason('security_header'));
+    });
+
+    it('lets an agent key create and update a configuration rule that sets only settings it may change', async () => {
+      const created = await send(NETWORK_GUY, CONFIG, null, [OPEN_RULE], null);
+      expect(created.res.status).toBe(200);
+      expect(created.api.calls.at(-1).body).toEqual({ rules: [OPEN_RULE] });
+
+      const changed = { ...OPEN_RULE, expression: `(http.host eq "${HOST}")`, action_parameters: { ...OPEN_RULE.action_parameters, polish: 'lossy', bic: true } };
+      const updated = await send(NETWORK_GUY, CONFIG, [OPEN_RULE], [changed]);
+      expect(updated.res.status).toBe(200);
+      expect(WRITES(updated.api)).toHaveLength(1);
+    });
+
+    it('lets an agent key keep the owner’s ssl and HSTS rules as they are, change the rest of them, and change the other rules', async () => {
+      // The owner's rule comes back with its description changed and a field it may set added: the SSL part is the same.
+      const kept = { ...SSL_RULE, description: 'Notes over Full', action_parameters: { ...SSL_RULE.action_parameters, fonts: true } };
+      const added = { expression: 'true', action: 'set_config', action_parameters: { rocket_loader: false } };
+      const config = await send(NETWORK_GUY, CONFIG, [OPEN_RULE, SSL_RULE], [{ ...OPEN_RULE, enabled: false }, kept, added]);
+      expect(config.res.status).toBe(200);
+
+      const frame = { expression: 'true', action: 'rewrite', action_parameters: { headers: { 'X-Frame-Options': { operation: 'set', value: 'DENY' } } } };
+      const headers = await send(NETWORK_GUY, HEADERS, [HSTS_RULE], [frame, HSTS_RULE]);
+      expect(headers.res.status).toBe(200);
+    });
+
+    it('lets the owner (a super_admin person) create, update and replace rules that set owner-only settings', async () => {
+      const created = await send(PERSON, CONFIG, [OPEN_RULE], [OPEN_RULE, { expression: 'true', action: 'set_config', action_parameters: { ssl: 'strict' } }]);
+      expect(created.res.status).toBe(200);
+      const updated = await send(PERSON, CONFIG, [SSL_RULE], [{ ...SSL_RULE, action_parameters: { ssl: 'strict' }, enabled: false }]);
+      expect(updated.res.status).toBe(200);
+      const replaced = await send(PERSON, CONFIG, null, [SSL_RULE_2, { expression: 'true', action: 'set_config', action_parameters: { mirage: true } }], null);
+      expect(replaced.res.status).toBe(200);
+      const hsts = await send(PERSON, HEADERS, [HSTS_RULE], [{ ...HSTS_RULE, action_parameters: { headers: { 'Strict-Transport-Security': { operation: 'remove' } } } }]);
+      expect(hsts.res.status).toBe(200);
+      expect(updated.store.upsertDoc.mock.calls[0][1].details).toEqual({ zone: ZONE_APEX, family: 'rules', phase: CONFIG, count: 1 });
     });
   });
 });

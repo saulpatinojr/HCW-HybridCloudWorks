@@ -7,10 +7,19 @@
  *   - An agent key may add and change rules but never remove one.
  *   - In the guarded phases (custom security rules and the rate limit) it
  *     may not switch a rule off or add one switched off, nor set a custom
- *     response. A super_admin person may do all of these.
+ *     response.
+ *   - In any phase, it may not add, change, switch off or move a rule that
+ *     sets an owner-only zone setting for the requests it matches, such as
+ *     a configuration rule's `ssl` or a response header rule's
+ *     Strict-Transport-Security (#1931). Such a rule the owner made may come
+ *     back unchanged.
+ *
+ * A super_admin person may do all of these.
  */
 import { Refusal } from './input.js';
 import { isAgentUser } from '../agent-content/agent-keys.js';
+import { ownerOnlyRuleTouches } from './protected.js';
+import { actorOf } from './record.js';
 
 const FIREWALL_CUSTOM = 'http_request_firewall_custom';
 
@@ -72,6 +81,80 @@ export function refuseAgentDisable(user, phase, current, rules) {
     return !was || isOn(was);
   });
   if (switchedOff) throw ownerOnly(AGENT_DISABLE_MESSAGE);
+}
+
+/** A value as text with every object's keys in order, so two equal rules give the same text whatever order their fields came in. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** The value a touch names in its rule: the field of action_parameters, or the header. */
+function touchedValue(rule, touch) {
+  const parameters = rule.action_parameters;
+  return touch.place === 'header' ? parameters.headers[touch.key] : parameters[touch.key];
+}
+
+/**
+ * The rules of a list that set something only the owner may set, in the
+ * list's order, each as `{ id, touches, fingerprint }`. The fingerprint is
+ * what decides that setting for the requests the rule matches: what the rule
+ * matches, whether it is on, its action and the values it sets for owner-only
+ * settings. Nothing else in the rule counts, so an agent key may still change
+ * the rest of such a rule.
+ */
+function ownerOnlyRules(phase, rules) {
+  return (Array.isArray(rules) ? rules : []).flatMap((rule) => {
+    const touches = ownerOnlyRuleTouches(phase, rule);
+    if (!touches.length) return [];
+    const values = Object.fromEntries(touches.map((touch) => [touch.key, touchedValue(rule, touch)]));
+    const fingerprint = canonical({ expression: rule.expression ?? null, on: isOn(rule), action: rule.action ?? null, values });
+    return [{ id: typeof rule.id === 'string' ? rule.id : null, touches, fingerprint }];
+  });
+}
+
+/** Whether two owner-only rules are the same rule deciding the same thing. */
+const sameRule = (a, b) => {
+  if (!a?.id || !b) return false;
+  return a.id === b.id && a.fingerprint === b.fingerprint;
+};
+
+/** The longest name a refusal repeats back; a field a caller made up can be any length. */
+const MAX_NAME_IN_MESSAGE = 64;
+
+/** The 403 refusal for one owner-only touch, naming the key, the setting and the reason. */
+function ownerOnlyRuleRefusal(user, phase, touch) {
+  const name = touch.name.slice(0, MAX_NAME_IN_MESSAGE);
+  const what = touch.place === 'header' ? `the ${name} header` : `the field ${name}`;
+  const setting = touch.setting ? `the zone setting ${touch.setting}, which only the owner changes` : 'a zone setting this page does not know';
+  const message = `${actorOf(user)} (an agent key) may not add, change, switch off or move a rule in the ${phase} phase that sets ${what}: it changes ${setting}. ${touch.reason}`;
+  return new Refusal(message, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason: touch.reason });
+}
+
+/**
+ * Refuses (403, nothing written) an agent key's list that adds, changes,
+ * switches off, strips or moves a rule setting an owner-only zone setting
+ * (protected.js RULE_SETTING_PARAMETERS, #1931). The rules in the new list
+ * that set one must be the very rules the phase holds now, in the same
+ * order, each deciding the same thing; order counts because when two rules
+ * match a request, the later one's value is the one used. A rule the owner
+ * made may therefore come back unchanged, which an agent key must do,
+ * since it may not leave a rule out. A person (super_admin) may do all of it.
+ */
+export function refuseAgentOwnerOnlyRules(user, phase, current, rules) {
+  if (!isAgentUser(user)) return;
+  const now = ownerOnlyRules(phase, current?.rules);
+  const sent = ownerOnlyRules(phase, rules);
+  if (now.length === sent.length && now.every((rule, index) => sameRule(rule, sent[index]))) return;
+  // Name what changed: a rule sent that the phase does not hold as it is,
+  // else a current one that did not come back as it is, else (only the
+  // order moved) the first current one.
+  const culprit = sent.find((rule) => !now.some((held) => sameRule(held, rule))) ?? now.find((held) => !sent.some((rule) => sameRule(held, rule))) ?? now[0];
+  throw ownerOnlyRuleRefusal(user, phase, culprit.touches[0]);
 }
 
 /**

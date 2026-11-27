@@ -528,7 +528,7 @@ picked) is refused with a sentence telling you to pick that zone.
 ## What is refused, and why
 
 The server refuses each of these before it changes anything in Cloudflare,
-whoever asks. Four rows apply to an agent key only, and say so. Every row
+whoever asks. Five rows apply to an agent key only, and say so. Every row
 applies in both zones unless it names one.
 
 | Refused | Why | Change it in |
@@ -556,6 +556,7 @@ applies in both zones unless it names one.
 | A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
 | A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
 | Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
+| Agent key only: a rule that sets one of those settings for the requests it matches. That is a configuration rule (`http_config_settings`) with the `ssl` field, or a response header rule (`http_response_headers_transform`) that sets or removes the `Strict-Transport-Security` header, which is HSTS. A configuration rule field that is not on [Cloudflare's list of configuration rule settings](https://developers.cloudflare.com/rules/configuration-rules/settings/) is refused too, so a setting Cloudflare adds later starts closed | Without this, a rule could change for one address what the row above keeps for you. An agent key may not add such a rule, change one, switch one off, take the setting out of one, or move one past another (when two rules match, the later one's value is used). A rule like that which you made may stay in the list exactly as it is, so the agent key can still change the phase's other rules. The message names the key and the setting, for example "Claude Network Guy (an agent key) may not add, change, switch off or move a rule in the http_config_settings phase that sets the field ssl" | The Rules tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=rules), signed in as yourself |
 | Any change, when the zone id points at another zone | Each zone's protected list names that zone's records, so it would protect nothing elsewhere | For the site's zone, `CF_ZONE_ID`, which Terraform sets on the function app. For the lab zone, nothing: the looked-up id is forgotten and looked up again on the next request |
 | Any delete | No agent key deletes anything (ADR 0038), and the page offers none. When you (not an agent key) replace a phase's rules, the ones left out of the new list are removed | The Cloudflare dashboard |
 
@@ -597,7 +598,8 @@ change sends (and Cloudflare's own audit log).
 | DNS records cannot be read (HTTP 403) while the rest of the zone reads | The token has no **Zone \| DNS** permission for that zone (often **DNS Settings** was picked instead), or the zone is missing from its Zone Resources | Edit the token: add **Zone \| DNS \| Edit**, check the zone is listed, save, reload the Overview |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
-| "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
+| "Claude Network Guy (an agent key) may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
+| "Claude Network Guy (an agent key) may not add, change, switch off or move a rule ... that sets the field ssl" (or the `strict-transport-security` header, or a field the page does not know) | Network Guy tried to set an owner-only setting through a rule instead of the setting itself | Make the rule yourself on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules), if it should happen |
 | "No API rate limit rule is on" on the Health page or the Cloudflare page's Overview, or the Telegram message "Cloudflare API rate limit is off" from the daily check | The `http_ratelimit` phase has no rule, or its rule is switched off, so one address can send the API as many requests as it likes | Make the rule, or set `"enabled": true` on it again, on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules) (Part 4) |
 | "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
 | "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
