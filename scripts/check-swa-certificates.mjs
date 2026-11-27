@@ -138,18 +138,30 @@ export async function readCertificate({ attempts = ATTEMPTS, retryMs = RETRY_MS,
 }
 
 /**
- * Text that came from the far end, made safe for one Markdown table cell:
- * no line breaks, pipes, backticks or angle brackets, at most 200 characters.
- * The issue step compares only the state line this script writes itself, and
- * no cleaned value can start a line, so nothing the certificate says can
- * pose as that line.
+ * Text that came from the far end, made safe for one Markdown table cell in
+ * a public issue: no line breaks, pipes, backticks or angle brackets, and
+ * none of the characters GitHub turns into a link, an image, a mention or an
+ * issue reference (`@ [ ] ( ) ! #`, and `\`, which escapes), at most 200
+ * characters. The issue step compares only the state line this script
+ * writes itself, and no cleaned value can start a line, so nothing the
+ * certificate says can pose as that line.
  */
 export function clean(value) {
   const text = String(value ?? '')
-    .replace(/[\r\n\t|`<>]/g, ' ')
+    .replace(/[\r\n\t|`<>@[\]()!#\\]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+}
+
+/**
+ * Far-end text, cleaned and put in a code span, so GitHub shows it as it is
+ * and makes no link of it (a bare `https://` address included). `clean`
+ * removes backticks, so the text cannot close the span early. Empty is `—`.
+ */
+export function quoted(value) {
+  const text = clean(value);
+  return text ? `\`${text}\`` : '—';
 }
 
 /** `{ O, CN }` from a certificate's issuer or subject, as one short line. */
@@ -183,7 +195,7 @@ function parseCertDate(text) {
  */
 export function judge(name, read, { now = Date.now(), warnDays = WARN_DAYS, actDays = ACT_DAYS } = {}) {
   if (read.error) {
-    return { name, status: 'unreadable', stage: 'unreadable', problems: [`could not be read: ${clean(read.error.message ?? read.error)}`] };
+    return { name, status: 'unreadable', stage: 'unreadable', problems: [`could not be read: ${quoted(read.error.message ?? read.error)}`] };
   }
   const { cert, authorized, authorizationError } = read;
   const notAfter = parseCertDate(cert.valid_to);
@@ -197,7 +209,7 @@ export function judge(name, read, { now = Date.now(), warnDays = WARN_DAYS, actD
     fingerprint: clean(cert.fingerprint256),
   };
   if (notAfter === null) {
-    return { ...base, status: 'unreadable', stage: 'unreadable', daysLeft: null, problems: [`its end date "${clean(cert.valid_to)}" could not be read`] };
+    return { ...base, status: 'unreadable', stage: 'unreadable', daysLeft: null, problems: [`its end date ${quoted(cert.valid_to)} could not be read`] };
   }
 
   const left = notAfter - now;
@@ -211,7 +223,7 @@ export function judge(name, read, { now = Date.now(), warnDays = WARN_DAYS, actD
   // Node puts a name mismatch in authorizationError too; that is reported
   // once, above, by name. Anything else is the chain.
   if (!authorized && !(identity && authorizationError === 'ERR_TLS_CERT_ALTNAME_INVALID')) {
-    problems.push(`it is not trusted (${clean(authorizationError ?? 'no reason given')})`);
+    problems.push(`it is not trusted (${authorizationError ? quoted(authorizationError) : 'no reason given'})`);
   }
 
   if (problems.length === 0) return { ...base, status: 'ok', stage: 'ok', daysLeft, problems };
@@ -296,7 +308,7 @@ export function renderMarkdown(results, { host, now = Date.now() } = {}) {
   const rows = results.map((r) =>
     r.status === 'unreadable' && !r.notAfter
       ? `| ${r.name} | — | — | — | — | ${VERDICT[r.status]}: ${r.problems.join('; ')} |`
-      : `| ${r.name} | ${r.issuer || '—'} | ${r.altNames.join(', ') || r.subject || '—'} | ${r.notAfter ? r.notAfter.slice(0, 10) : '—'} | ${r.daysLeft ?? '—'} | ${VERDICT[r.status]}${r.problems.length ? `: ${r.problems.join('; ')}` : ''} |`
+      : `| ${r.name} | ${quoted(r.issuer)} | ${quoted(r.altNames.join(', ') || r.subject)} | ${r.notAfter ? r.notAfter.slice(0, 10) : '—'} | ${r.daysLeft ?? '—'} | ${VERDICT[r.status]}${r.problems.length ? `: ${r.problems.join('; ')}` : ''} |`
   );
   return [
     '## Static Web App certificates',
@@ -393,8 +405,24 @@ export async function main(argv, { read } = {}) {
   return exitCode(results);
 }
 
+/**
+ * main, with any error it did not expect (a summary file that cannot be
+ * written, say) turned into exit 2, "could not check", never the 1 that
+ * means a certificate needs action. The line it logs names no path or value:
+ * only the error's own code when Node gives one (EISDIR, EACCES).
+ */
+export async function run(argv, deps) {
+  try {
+    return await main(argv, deps);
+  } catch (error) {
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code) ? ` (${error.code})` : '';
+    console.error(`check-swa-certificates stopped on an unexpected error${code}; nothing was judged.`);
+    return 2;
+  }
+}
+
 // pathToFileURL rather than a hand-built file:// string: a Windows path does
 // not round-trip through the latter (entrypoint-guards.test.mjs).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await run(process.argv.slice(2));
 }

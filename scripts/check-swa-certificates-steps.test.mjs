@@ -243,6 +243,16 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
     expect(other.stdout).toContain('not main, so #12 is left open');
   });
 
+  it('needs action on another branch: writes nothing, open issue or not, and says the report is in the summary', () => {
+    const none = runIssue(1, { ref: 'refs/heads/feature' });
+    expect(none.status, none.stderr).toBe(0);
+    expect(none.writes).toEqual([]);
+    expect(none.stdout).toContain('not main, so no issue is opened or commented on');
+    const open = runIssue(2, { list: OPEN, ref: 'refs/heads/feature' });
+    expect(open.status, open.stderr).toBe(0);
+    expect(open.writes).toEqual([]);
+  });
+
   it('never touches an issue with a similar title', () => {
     const similar = JSON.stringify([{ number: 7, title: `${TITLE} (old)` }]);
     expect(runIssue(0, { list: similar }).writes).toEqual([]);

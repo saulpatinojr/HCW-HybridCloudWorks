@@ -12,7 +12,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ACT_DAYS,
   DEFAULT_HOST,
@@ -28,9 +28,11 @@ import {
   judge,
   main,
   parseArgs,
+  quoted,
   readCertificate,
   readOnce,
   renderMarkdown,
+  run as runChecked,
   stateLine,
 } from './check-swa-certificates.mjs';
 
@@ -103,7 +105,7 @@ describe('judging one certificate', () => {
     const read = { cert: cert('hybridcloudworks.com', 88), authorized: false, authorizationError: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' };
     const r = judge('hybridcloudworks.com', read, { now: NOW });
     expect(r.status).toBe('action');
-    expect(r.problems).toEqual(['it is not trusted (UNABLE_TO_VERIFY_LEAF_SIGNATURE)']);
+    expect(r.problems).toEqual(['it is not trusted (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`)']);
   });
 
   it('needs action for a certificate that is not valid yet', () => {
@@ -121,7 +123,7 @@ describe('judging one certificate', () => {
   it('calls a failed read unreadable, with the reason', () => {
     const r = judge('hybridcloudworks.com', { error: new Error('connect ECONNREFUSED') }, { now: NOW });
     expect(r).toMatchObject({ status: 'unreadable', stage: 'unreadable' });
-    expect(r.problems).toEqual(['could not be read: connect ECONNREFUSED']);
+    expect(r.problems).toEqual(['could not be read: `connect ECONNREFUSED`']);
   });
 
   it('honours a different warning window', () => {
@@ -136,8 +138,36 @@ describe('judging one certificate', () => {
 
 describe('text from the certificate is made safe before it is written', () => {
   it('drops line breaks, pipes, backticks and angle brackets, and caps the length', () => {
-    expect(clean('a|b\n<!-- swa-cert-check state: x -->`c`')).toBe('a b !-- swa-cert-check state: x -- c');
+    expect(clean('a|b\n<!-- swa-cert-check state: x -->`c`')).toBe('a b -- swa-cert-check state: x -- c');
     expect(clean('x'.repeat(300))).toHaveLength(200);
+  });
+
+  it('leaves nothing GitHub would turn into a link, an image, a mention or an issue reference', () => {
+    const hostile = '@someone [click](https://evil.example) ![img](https://evil.example/i.png) #12 a\\]b';
+    const cleaned = clean(hostile);
+    expect(cleaned).not.toMatch(/[@[\]()!#\\]/);
+    expect(cleaned).toBe('someone click https://evil.example img https://evil.example/i.png 12 a b');
+    expect(quoted(hostile)).toBe(`\`${cleaned}\``);
+    expect(quoted('')).toBe('—');
+  });
+
+  it('puts far-end text in the issue table only inside code spans, so a bare address is not a link either', () => {
+    const read = good('hybridcloudworks.com');
+    read.cert.issuer = { O: '@someone https://evil.example #12', CN: '[x](y)' };
+    read.cert.subjectaltname = 'DNS:hybridcloudworks.com, DNS:@other';
+    const r = judge('hybridcloudworks.com', read, { now: NOW });
+    const row = renderMarkdown([r], { host: DEFAULT_HOST, now: NOW })
+      .split('\n')
+      .find((l) => l.startsWith('| hybridcloudworks.com |'));
+    const cells = row.split('|').map((c) => c.trim());
+    expect(cells[2]).toBe('`someone https://evil.example 12, x y`');
+    expect(cells[3]).toBe('`hybridcloudworks.com, other`');
+    expect(row).not.toMatch(/[@[\]()!#]/);
+  });
+
+  it('quotes far-end text inside a problem too', () => {
+    const r = judge('hybridcloudworks.com', { error: new Error('see https://evil.example @x') }, { now: NOW });
+    expect(r.problems).toEqual(['could not be read: `see https://evil.example x`']);
   });
 
   it('cannot plant a state line through the issuer', () => {
@@ -168,14 +198,14 @@ describe('the verdict over both names', () => {
 
   it('prints one console line per name with the issuer and the days left', () => {
     expect(consoleLine(ok)).toBe('a.example: good, issuer DigiCert Inc, GeoTrust TLS RSA CA G1, ends 2027-02-23, 88 day(s) left');
-    expect(consoleLine(unreadable)).toBe('c.example: COULD NOT READ (could not be read: timeout)');
+    expect(consoleLine(unreadable)).toBe('c.example: COULD NOT READ (could not be read: `timeout`)');
   });
 
   it('a good report says there is nothing to do and names no step', () => {
     const text = renderMarkdown([ok, ok], { host: DEFAULT_HOST, now: NOW });
     expect(text).toContain('Nothing to do.');
     expect(text).not.toContain('### What to do');
-    expect(text).toContain(`| a.example | DigiCert Inc, GeoTrust TLS RSA CA G1 | a.example | 2027-02-23 | 88 | good |`);
+    expect(text).toContain('| a.example | `DigiCert Inc, GeoTrust TLS RSA CA G1` | `a.example` | 2027-02-23 | 88 | good |');
   });
 
   it('a near-expiry report names the going-back step, the variable and the runbook', () => {
@@ -301,6 +331,59 @@ describe('arguments', () => {
       expect(readFileSync(file, 'utf8')).toContain('NEEDS ACTION');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an unexpected error (a summary that cannot be written) exits 2, not 1, and logs no path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'swa-cert-check-'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      // A directory as the summary file: writeFileSync throws EISDIR (EPERM
+      // on some Windows builds), after the certificates were judged as
+      // needing action, which would otherwise surface as exit 1.
+      const code = await runChecked(['--summary', dir, '--warn-days', '100'], { read: async ({ servername }) => good(servername, 88) });
+      expect(code).toBe(2);
+      expect(errors).toHaveBeenCalledTimes(1);
+      const line = errors.mock.calls[0][0];
+      expect(line).toMatch(/^check-swa-certificates stopped on an unexpected error \([A-Z]+\); nothing was judged\.$/);
+      expect(line).not.toContain(dir);
+      expect(line).not.toContain('swa-cert-check-');
+    } finally {
+      errors.mockRestore();
+      logs.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an error with no code, or a code that is not a plain code, still exits 2 with no detail', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // checkAll catches a throw from the read itself, so these throw later,
+    // while the answer is judged: a getter on what the read returned.
+    const throwing = (error) => async () => ({
+      get error() {
+        throw error;
+      },
+    });
+    try {
+      expect(await runChecked([], { read: throwing(new Error('at /secret/path')) })).toBe(2);
+      const weird = Object.assign(new Error('at /secret/path'), { code: 'see /secret/path' });
+      expect(await runChecked([], { read: throwing(weird) })).toBe(2);
+      expect(errors.mock.calls.map(([line]) => line)).toEqual([
+        'check-swa-certificates stopped on an unexpected error; nothing was judged.',
+        'check-swa-certificates stopped on an unexpected error; nothing was judged.',
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('a clean run through run() returns main\'s own exit code', async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await runChecked([], { read: async ({ servername }) => good(servername) })).toBe(0);
+    } finally {
+      logs.mockRestore();
     }
   });
 });

@@ -20,8 +20,13 @@
 #   1  one needs action (30 days or less, not covering its name, not
 #      trusted, or not valid yet): one issue, opened when none is open and
 #      commented on when its state changed, and THE RUN FAILS;
-#   2  one could not be read after three tries: the same issue, and THE RUN
-#      FAILS. A check that could not look has not passed.
+#   2  one could not be read after three tries, or the script stopped on an
+#      error of its own: the same issue, and THE RUN FAILS. A check that
+#      could not look has not passed.
+#
+# Only a run of `main` opens, comments on or closes the issue. A manual run
+# of another branch writes its report to the job summary and passes or fails
+# the same way, but never touches the issue.
 #
 # The issue names the runbook step to take ("Going back": set
 # `site_proxied_hosts` to `none`, wait for Azure to renew, set it back).
@@ -98,8 +103,11 @@ jobs:
       # never commented on or closed. (If someone removes the label, the next
       # failing day opens a second issue; that is the safe way to be wrong.)
       #
-      # Exit 0 closes the open issue, on `main` only. Any other exit, a
-      # missing output included, reports and never closes.
+      # Only a run of `main` writes to the issue: exit 0 closes it, and any
+      # other exit (a missing output included) opens it or comments on it,
+      # never closes. A manual run of another branch reads that branch's
+      # script, so it writes the job summary and fails as usual but leaves
+      # the issue alone.
       #
       # Unlike the weekly drill check this runs daily, so it does not comment
       # every day. The report ends with a hidden state line (each name, its
@@ -131,6 +139,10 @@ jobs:
             else
               echo "Both certificates are good and no certificate issue is open."
             fi
+            exit 0
+          fi
+          if [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+            echo "This run is of ${GITHUB_REF:-an unknown ref}, not main, so no issue is opened or commented on; the report is in the job summary."
             exit 0
           fi
           {
