@@ -186,6 +186,12 @@ export const MANAGED_ZONES = Object.freeze(
   ].map(Object.freeze)
 );
 
+/** Whether a host name (in lower case) is a zone's apex or one of its subdomains. */
+export const onZone = (host, zoneName) => host === zoneName || host.endsWith(`.${zoneName}`);
+
+/** Whether a host name (in lower case) is on one of the managed zones: an apex or a subdomain of one. */
+export const onManagedZone = (host) => MANAGED_ZONES.some((zone) => onZone(host, zone.name));
+
 /** The managed zone a name means (any letter case), or null when it is not one. */
 export function managedZone(name) {
   const wanted = String(name ?? '').toLowerCase();
@@ -223,7 +229,29 @@ export const REFUSED_FIREWALL_ACTION = 'skip';
 
 const OWNER_STEP = 'Change it on the Cloudflare page yourself, signed in as the owner.';
 
-/** Zone settings an agent key may not change, with the reason the page shows. */
+/**
+ * Zone settings an agent key may not change, with the reason the page shows:
+ * the settings that decide how visitors' connections are encrypted, where a
+ * wrong value breaks or weakens HTTPS for every visitor. The last six came
+ * with #1933, each checked on Cloudflare's own page on 2026-11-27:
+ * tls_1_3 (https://developers.cloudflare.com/ssl/edge-certificates/additional-options/tls-13/),
+ * ciphers (https://developers.cloudflare.com/ssl/edge-certificates/additional-options/cipher-suites/customize-cipher-suites/api/),
+ * ssl_automatic_mode (https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/),
+ * 0rtt (https://developers.cloudflare.com/speed/optimization/protocol/0-rtt-connection-resumption/),
+ * and sha1_support and tls_1_2_only (the zone settings API,
+ * https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/edit/).
+ * Every other setting stays open to an agent key whose switch allows it.
+ * Four in the same area stay open on purpose: automatic_https_rewrites
+ * rewrites links inside pages, opportunistic_encryption offers encryption
+ * to http:// visitors (whom always_use_https already sends to https://),
+ * ssl_recommender only enrols the zone in emailed recommendations, and
+ * replace_insecure_js swaps script links to known unsafe services (such as
+ * polyfill.io) for copies on cdnjs, keeping their scheme
+ * (https://developers.cloudflare.com/waf/tools/replace-insecure-js-libraries/,
+ * read 2026-11-27). None of them decides how an https:// connection is
+ * encrypted. Whether the security level, Browser Integrity Check or the WAF
+ * should be the owner's is a separate decision, not made here.
+ */
 export const OWNER_ONLY_SETTINGS = Object.freeze(
   [
     { setting: 'ssl', reason: `How Cloudflare connects to the site; the wrong mode breaks HTTPS for every visitor. ${OWNER_STEP}` },
@@ -231,6 +259,12 @@ export const OWNER_ONLY_SETTINGS = Object.freeze(
     { setting: 'always_use_https', reason: `Sends every visitor to HTTPS; turning it off lets pages load unencrypted. ${OWNER_STEP}` },
     { setting: 'security_header', reason: `The HSTS header, which browsers remember for months, so a wrong value is slow to undo. ${OWNER_STEP}` },
     { setting: 'tls_client_auth', reason: `Whether Cloudflare shows the site a certificate of its own; turning it off weakens how the site checks who is calling. ${OWNER_STEP}` },
+    { setting: 'tls_1_3', reason: `Whether browsers may use TLS 1.3, the newest encryption; turning it off weakens HTTPS, and its zrt value lets early requests be replayed. ${OWNER_STEP}` },
+    { setting: 'ciphers', reason: `Which encryption methods browsers may use; a wrong list locks visitors out or lets weak ones in. ${OWNER_STEP}` },
+    { setting: 'ssl_automatic_mode', reason: `Whether Cloudflare picks the SSL mode itself; switching it decides who sets the SSL mode, which is the owner's. ${OWNER_STEP}` },
+    { setting: '0rtt', reason: `0-RTT lets a returning browser send a request before the encryption handshake ends, and such requests can be replayed. ${OWNER_STEP}` },
+    { setting: 'sha1_support', reason: `Whether Cloudflare still offers old browsers a certificate signed with SHA-1, a broken method; turning it on weakens HTTPS for them. ${OWNER_STEP}` },
+    { setting: 'tls_1_2_only', reason: `An older switch that allows TLS 1.2 only; it overlaps the minimum TLS version, and a wrong value locks visitors out. ${OWNER_STEP}` },
   ].map(Object.freeze)
 );
 
@@ -402,16 +436,18 @@ export const UNLISTED_RULE_SETTING_REASON = `This page does not know which zone 
  * Response headers (`http_response_headers_transform`): the
  * Strict-Transport-Security header is HSTS, the owner-only `security_header`.
  *
- * The other editable phases set no zone setting. A redirect, a URL rewrite,
- * a custom security rule or a rate limit has no field for one, and the
+ * The other editable phases have no field for a zone setting. A redirect,
+ * a URL rewrite, a custom security rule or a rate limit has none, and the
  * custom response of the last two is already refused to an agent key
  * (rules-guards.js).
  *
- * What this list does not catch, because it is a value rather than a
- * setting field: a redirect to an http:// address, which sends that visitor
- * to a page without encryption, and a URL rewrite that changes the path an
- * owner's rule matches on (rules that match on the host name are not
- * affected). Both are open to an agent key with the rules switch.
+ * Three related limits are about values or order rather than fields, and
+ * live in agent-phase-limits.js (#1933): an agent key may only add
+ * redirects after the ones the phase holds now (which protects an owner's
+ * http-to-https redirect, the per-request form of always_use_https), a new
+ * redirect from an agent key must send visitors to an https:// address,
+ * and an agent key keeps the URL rewrite phase as it is, because a rewrite
+ * changes the path the owner's later rules see.
  */
 export const RULE_SETTING_PARAMETERS = Object.freeze(
   [

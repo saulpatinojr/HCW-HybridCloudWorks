@@ -182,8 +182,21 @@ describe('the allow-list of rule phases', () => {
 });
 
 describe('the owner-only settings', () => {
-  it('lists the five settings an agent key may not change, each with a reason telling the owner what to do', () => {
-    expect(OWNER_ONLY_SETTINGS.map((entry) => entry.setting)).toEqual(['ssl', 'min_tls_version', 'always_use_https', 'security_header', 'tls_client_auth']);
+  it('lists the eleven settings that decide how connections are encrypted, each with a reason telling the owner what to do', () => {
+    // The last six since #1933, each id checked on Cloudflare's own page on 2026-11-27.
+    expect(OWNER_ONLY_SETTINGS.map((entry) => entry.setting)).toEqual([
+      'ssl',
+      'min_tls_version',
+      'always_use_https',
+      'security_header',
+      'tls_client_auth',
+      'tls_1_3',
+      'ciphers',
+      'ssl_automatic_mode',
+      '0rtt',
+      'sha1_support',
+      'tls_1_2_only',
+    ]);
     for (const entry of OWNER_ONLY_SETTINGS) {
       expect(ownerOnlySettingReason(entry.setting)).toMatch(/Change it on the Cloudflare page yourself/);
     }
@@ -220,7 +233,10 @@ describe('the rule fields that stand in for an owner-only setting (#1931)', () =
 
   it('maps only ssl (configuration rules) and the Strict-Transport-Security header (HSTS) to owner-only settings', () => {
     const mapped = RULE_SETTING_PARAMETERS.flatMap((entry) => Object.entries(entry.names).filter(([, setting]) => setting).map(([name, setting]) => `${entry.phase} ${name} ${setting}`));
-    expect(mapped).toEqual(['http_config_settings ssl ssl', 'http_response_headers_transform strict-transport-security security_header']);
+    expect(mapped).toEqual([
+      'http_config_settings ssl ssl',
+      'http_response_headers_transform strict-transport-security security_header',
+    ]);
     for (const entry of RULE_SETTING_PARAMETERS) {
       expect(isEditablePhase(entry.phase), entry.phase).toBe(true);
       for (const setting of Object.values(entry.names).filter(Boolean)) expect(ownerOnlySettingReason(setting), setting).not.toBeNull();
@@ -240,6 +256,7 @@ describe('the rule fields that stand in for an owner-only setting (#1931)', () =
     expect(touched('http_response_headers_transform', { headers: { 'X-Frame-Options': {} } })).toEqual([]);
     // The other editable phases set no zone setting, and a rule with no parameters touches nothing.
     expect(touched('http_request_dynamic_redirect', { ssl: 'off' })).toEqual([]);
+    expect(touched('http_request_transform', { ssl: 'off' })).toEqual([]);
     expect(ownerOnlyRuleTouches('http_config_settings', { expression: 'true' })).toEqual([]);
     expect(ownerOnlyRuleTouches('http_config_settings', { action_parameters: ['ssl'] })).toEqual([]);
   });

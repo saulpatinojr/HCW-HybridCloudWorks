@@ -5,14 +5,17 @@
  * reads them, to keep each file small; the behaviour is unchanged.
  *
  *   - An agent key may add and change rules but never remove one.
- *   - In the guarded phases (custom security rules and the rate limit) it
- *     may not switch a rule off or add one switched off, nor set a custom
- *     response.
+ *   - In the phases whose list in agent-phase-limits.js says so, it may not
+ *     switch a rule off or add one switched off (custom security rules, the
+ *     rate limit and, since #1933, redirects), nor set a custom response
+ *     (custom security rules and the rate limit, GUARDED_PHASES).
  *   - In any phase, it may not add, change, switch off or move a rule that
  *     sets an owner-only zone setting for the requests it matches, such as
  *     a configuration rule's `ssl` or a response header rule's
  *     Strict-Transport-Security (#1931). Such a rule the owner made may come
  *     back unchanged.
+ *   - Redirects and URL rewrites have more limits of their own
+ *     (agent-phase-limits.js, #1933).
  *
  * A super_admin person may do all of these.
  */
@@ -20,11 +23,11 @@ import { Refusal } from './input.js';
 import { isAgentUser } from '../agent-content/agent-keys.js';
 import { ownerOnlyRuleTouches } from './protected.js';
 import { actorOf } from './record.js';
+import { hasLimit, phasesWith, ruleNameOf } from './agent-phase-limits.js';
+import { canonical, isOn, rulesById } from './rule-shape.js';
 
-const FIREWALL_CUSTOM = 'http_request_firewall_custom';
-
-/** The phases whose rules protect the site: an agent key may not switch one off or give it a custom response. */
-export const GUARDED_PHASES = Object.freeze([FIREWALL_CUSTOM, 'http_ratelimit']);
+/** The phases whose rules protect the site: an agent key may not give one a custom response (nor switch one off). */
+export const GUARDED_PHASES = Object.freeze(phasesWith('noResponse'));
 
 /** A ruleset's version as the freshness check compares it: Cloudflare's version, else last_updated, else null. */
 export const versionOf = (ruleset) => (ruleset ? String(ruleset.version ?? ruleset.last_updated ?? '') || null : null);
@@ -51,46 +54,37 @@ export function refuseAgentRemoval(user, current, rules) {
   if (idsOf(current?.rules).some((id) => !kept.has(id))) throw ownerOnly(AGENT_REMOVAL_MESSAGE);
 }
 
-export const AGENT_DISABLE_MESSAGE =
-  'An agent key may not switch a security or rate limiting rule off, or add one that starts switched off: a rule switched off is removed in effect. Switching a rule off is done by the owner on the Cloudflare page.';
+/**
+ * The refusal of a rule switched off, naming the key and the kind of rule
+ * (#1933; until then one sentence for every caller and phase).
+ */
+export const agentDisableMessage = (user, phase) =>
+  `${actorOf(user)} (an agent key) may not switch a ${ruleNameOf(phase)} off, or add one that starts switched off: a rule switched off is removed in effect. Switching a rule off is done by the owner on the Cloudflare page.`;
 export const AGENT_RESPONSE_MESSAGE =
   'An agent key may not set a custom response (action_parameters.response) on a security or rate limiting rule. That is done by the owner on the Cloudflare page.';
 
-/** Whether a rule is switched on: Cloudflare reads a rule with no `enabled` as on. */
-const isOn = (rule) => rule?.enabled === undefined || rule?.enabled === true;
-
 /** Refuses (403) an agent key's custom response in a guarded phase. Needs no read, so it runs before any Cloudflare call. */
 export function refuseAgentResponse(user, phase, rules) {
-  if (!isAgentUser(user) || !GUARDED_PHASES.includes(phase)) return;
+  if (!isAgentUser(user) || !hasLimit(phase, 'noResponse')) return;
   const responds = rules.some((rule) => rule.action_parameters && typeof rule.action_parameters === 'object' && Object.hasOwn(rule.action_parameters, 'response'));
   if (responds) throw ownerOnly(AGENT_RESPONSE_MESSAGE);
 }
 
 /**
- * Refuses (403) an agent key's list, in a guarded phase, that switches a
- * rule off: a current rule that is on and comes back not on, or a new rule
- * (an id the phase does not hold) that is not on. A rule already off may
- * stay off.
+ * Refuses (403) an agent key's list, in a phase that may not have a rule
+ * switched off, that switches one off: a current rule that is on and comes
+ * back not on, or a new rule (an id the phase does not hold) that is not on.
+ * A rule already off may stay off.
  */
 export function refuseAgentDisable(user, phase, current, rules) {
-  if (!isAgentUser(user) || !GUARDED_PHASES.includes(phase)) return;
-  const before = new Map((Array.isArray(current?.rules) ? current.rules : []).filter((rule) => typeof rule?.id === 'string' && rule.id).map((rule) => [rule.id, rule]));
+  if (!isAgentUser(user) || !hasLimit(phase, 'noSwitchOff')) return;
+  const before = rulesById(current);
   const switchedOff = rules.some((rule) => {
     if (isOn(rule)) return false;
     const was = typeof rule.id === 'string' ? before.get(rule.id) : undefined;
     return !was || isOn(was);
   });
-  if (switchedOff) throw ownerOnly(AGENT_DISABLE_MESSAGE);
-}
-
-/** A value as text with every object's keys in order, so two equal rules give the same text whatever order their fields came in. */
-function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value ?? null);
+  if (switchedOff) throw ownerOnly(agentDisableMessage(user, phase));
 }
 
 /** The value a touch names in its rule: the field of action_parameters, or the header. */
@@ -129,9 +123,9 @@ const MAX_NAME_IN_MESSAGE = 64;
 /** The 403 refusal for one owner-only touch, naming the key, the setting and the reason. */
 function ownerOnlyRuleRefusal(user, phase, touch) {
   const name = touch.name.slice(0, MAX_NAME_IN_MESSAGE);
-  const what = touch.place === 'header' ? `the ${name} header` : `the field ${name}`;
+  const what = touch.place === 'header' ? `sets the ${name} header` : `sets the field ${name}`;
   const setting = touch.setting ? `the zone setting ${touch.setting}, which only the owner changes` : 'a zone setting this page does not know';
-  const message = `${actorOf(user)} (an agent key) may not add, change, switch off or move a rule in the ${phase} phase that sets ${what}: it changes ${setting}. ${touch.reason}`;
+  const message = `${actorOf(user)} (an agent key) may not add, change, switch off or move a rule in the ${phase} phase that ${what}: it stands in for ${setting}. ${touch.reason}`;
   return new Refusal(message, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason: touch.reason });
 }
 

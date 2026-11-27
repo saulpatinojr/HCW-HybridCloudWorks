@@ -1,6 +1,6 @@
 # ADR 0047: Cloudflare administration from the admin portal, and Claude Network Guy
 
-**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused); amended 2026-11-27 (#1931: an agent key cannot set an owner-only setting through a rule)
+**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused); amended 2026-11-27 (#1931: an agent key cannot set an owner-only setting through a rule); amended 2026-11-27 (#1933: an agent key's redirects go to https:// only, it keeps URL rewrites as they are, and six more TLS settings are the owner's)
 **Decision date:** 2026-11-26
 **Owners:** Site owner (workload and architecture)
 
@@ -97,7 +97,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
      its own, `*` only as the whole first part) and the full name that was
      checked is the one sent to Cloudflare. Only A, AAAA, CNAME, MX and TXT
      records are added or edited, judged by the record's current type.
-   - **Rules:** only five phases may be replaced: redirects
+   - **Rules:** only five phases may be replaced *(six since the
+     2026-11-26 amendment below added the rate limit, `http_ratelimit`)*:
+     redirects
      (`http_request_dynamic_redirect`), URL rewrites
      (`http_request_transform`), response headers
      (`http_response_headers_transform`), configuration rules
@@ -124,7 +126,10 @@ decision widens that for one system, Cloudflare, in a narrow way.
      certificate Cloudflare shows the site (`tls_client_auth`); a
      `super_admin` person may. *(Amended 2026-11-27 (#1931): nor set one
      through a rule, such as a configuration rule's `ssl`; see the third
-     amendment below.)*
+     amendment below. Amended 2026-11-27 (#1933): nor TLS 1.3, the cipher
+     list, automatic SSL mode, 0-RTT, SHA-1 certificates or TLS 1.2 only;
+     an agent key only adds https:// redirects after the ones there are,
+     and keeps URL rewrites as they are; see the fourth amendment below.)*
    - **The zone:** every change first reads the zone and is refused unless
      it is `hybridcloudworks.com`, so the list is never applied to another
      zone. *(Amended 2026-11-26 (#1911): unless it is the zone the request
@@ -226,7 +231,7 @@ throttle every visitor to the zone's proxied hosts, such as `api-azure` and
 in the Cloudflare dashboard. Each change reaches the owner's phone. The rule
 is no longer recorded in `infra/`, so it is not put back by an apply; the
 audit log is the record, as for zone settings. Where the consequences below
-say "five editable phases", read six. Revisit these limits when the zone
+say "five editable phases", read six (the bullets say six since #1933). Revisit these limits when the zone
 moves to a paid plan, which adds more rate limiting rules and more ways to
 change them.
 
@@ -383,12 +388,154 @@ route allowed.
   owner's path-matching rule sees, though a rule that matches on the host
   name is not affected. Both remain open to an agent key with the rules
   switch. The independent review for #1931 raised them as follow-ups;
-  closing them is a separate decision.
+  closing them is a separate decision. *(Amended 2026-11-27 (#1933): both
+  are closed for an agent key; see the next amendment.)*
+
+### Amendment 2026-11-27 (#1933): redirects, URL rewrites and six more TLS settings
+
+Amended 2026-11-27, from
+[#1933](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1933).
+After #1931, the independent review found three more ways an agent key
+with the rules or settings switch could weaken HTTPS or get round an owner
+rule. Each matters more once the site's own names are proxied
+([#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929)).
+A second independent review of this change found two more ways round the
+redirect limits, closed here as well.
+
+- **One list says what an agent key may not do in each phase.**
+  `AGENT_PHASE_LIMITS` in `functions/src/lib/cloudflare/agent-phase-limits.js`
+  names each phase's limits:
+  - no switching a rule off (custom security rules, the rate limit and
+    now redirects);
+  - no custom response (custom security rules and the rate limit);
+  - new rules only after the current ones (redirects);
+  - https:// targets only (redirects);
+  - keep as is (URL rewrites).
+- **An agent key only adds redirects, after the ones there are.** The
+  first redirect that matches a request is the one used: a redirect ends
+  the request, so later ones never run
+  ([actions](https://developers.cloudflare.com/ruleset-engine/rules-language/actions/)).
+  So an agent key could turn off one of the owner's redirects without
+  switching it off. It could change what the redirect matches, or put a
+  new redirect before it. That includes an http-to-https redirect, the
+  per-request form of Always Use HTTPS. This page does not know who made
+  a rule, so every redirect the phase holds now is treated as the
+  owner's. They must come back first, exactly as they are and in the same
+  order, and new redirects go after them; only a description may change.
+  The issue asked that an agent key not switch off "a redirect the owner
+  made"; this is the only way to meet that without a record of who made
+  each rule. It means the agent key cannot change a redirect it made
+  earlier either. The owner changes it, or removes it so the agent key
+  can add it again. A held rule (here and in the URL rewrite phase below)
+  is compared in full: every field counts except its description and
+  the fields Cloudflare sets itself and marks read-only (`version`,
+  `last_updated`, `categories`,
+  [rule object](https://developers.cloudflare.com/ruleset-engine/rulesets-api/json-object/)),
+  so a changed `ref` or `logging` is a change too. The check reads the
+  phase and then replaces it, and Cloudflare's replace takes no condition,
+  so a redirect the owner adds between the two can still be dropped. That
+  is caught only afterwards, by the warning the owner gets when the saved
+  version jumps (item 4).
+- **A new redirect from an agent key goes to an https:// address on the
+  site's own zones.** A redirect to `http://` sends that visitor to a page
+  without encryption, which is what Always Use HTTPS (`always_use_https`)
+  exists to stop. A redirect to another site lets anyone send visitors
+  there through the site's own address (an open redirect). So the target
+  must be on one of the managed zones, `hybridcloudworks.com` or
+  `hybridcloudinsights.com`, or one of their subdomains, the same rule
+  the cache purge already uses. A new redirect from an agent key is
+  refused unless:
+  - a fixed target (`target_url.value`) is an `https://` address on one of
+    those names, with no user name before the host (`https://zone@elsewhere`
+    goes to elsewhere), no port and no backslash;
+  - a target worked out per request (`target_url.expression`) starts with a
+    string, on its own or as the first part of `concat(`, that holds
+    `https://` and a host on one of those names. The result of `concat`
+    starts with its first part, so the scheme and host are fixed by text
+    the check can read. The host must be followed by a slash, or end a
+    string that is the whole address. Inside `concat(` it may also end the
+    string just before a part that always starts with a slash
+    (`http.request.uri.path`, `http.request.uri` or their `raw.` forms).
+    Otherwise the next part could carry the host on, as in
+    `concat("https://hybridcloudworks.com", ".elsewhere.com")`. Anything
+    else is refused to an agent key, because its result can be the
+    request's own `http://` address or another site: `wildcard_replace`, a
+    field such as `http.host` for the host, or a string with an escape in
+    it. This keeps the common "send www to the bare name" redirect,
+    `concat("https://hybridcloudworks.com", http.request.uri.path)`, open
+    to the agent key.
+  - *An assumption this rests on.* Accepting
+    `concat("https://<zone>", <path field>)` assumes that
+    `http.request.uri.path`, `http.request.uri` and their `raw.` forms
+    always start with `/`. They do for a request line in the usual form
+    (`GET /path HTTP/1.1`). This was not checked for a request line that
+    names a whole address (`GET https://host/path HTTP/1.1`) or for
+    CONNECT. If such a path could start with `@`, the zone would become a
+    user name before another host, so the address would lead off the
+    zone. The assumption is written beside `PATH_FIELDS` in
+    `agent-phase-limits.js` too.
+  - A fixed target's host must be written exactly as it is read: a
+    percent-encoded host, a trailing dot, a letter from another alphabet
+    or an IP address is refused, as is a tab or newline anywhere.
+  - the rule's parameters hold only what
+    [Cloudflare documents for a redirect](https://developers.cloudflare.com/rules/url-forwarding/single-redirects/settings/)
+    (`from_value` with `target_url`, `status_code` and
+    `preserve_query_string`), and its action is `redirect`.
+- **A rule list may not hold one id twice.** It is refused with 400 for
+  everyone, because the checks above compare each rule with the one of the
+  same id the phase holds now.
+- **An agent key keeps the URL rewrite phase as it is.** A URL rewrite
+  (`http_request_transform`) runs before the configuration rules, the
+  custom security rules, the rate limit, cache rules and Cloudflare's own
+  managed rules
+  ([phases list](https://developers.cloudflare.com/ruleset-engine/reference/phases-list/)),
+  and each of them then sees the rewritten path and query. Telling which
+  rewrites would change what an owner's rule matches would mean running
+  Cloudflare's rules language here, and Cloudflare's managed rules read
+  the path too, so an exact check is not possible. The safest rule that
+  works is that an agent key must send the phase's rules back exactly as
+  they are: it may not add, change, switch on or off, or move a rewrite.
+  It may still change a rule's description. **This takes URL rewrites away
+  from Claude Network Guy.** If the owner would rather keep them with the
+  agent and accept that a rewrite can change what a path-matching rule
+  sees, the `keepAsIs` entry is removed from the list; that is the
+  owner's decision.
+- **Six more settings are owner-only.** Each id was checked on
+  Cloudflare's own pages on 2026-11-27:
+  - `tls_1_3`: turning it off weakens HTTPS, and its `zrt` value allows
+    replayed early requests;
+  - `ciphers`: which encryption methods are allowed;
+  - `ssl_automatic_mode`: whether Cloudflare picks the SSL mode;
+  - `0rtt`: requests that can be replayed;
+  - `sha1_support`: certificates signed with SHA-1, a broken method;
+  - `tls_1_2_only`: an older switch that overlaps the minimum TLS version.
+
+  The settings route stays a list of what is refused rather than of what
+  is allowed, for two reasons. An allow-list would take away settings the
+  owner has already given Network Guy, and every allowed id would need
+  checking first. "Owner-only" here means the settings that decide how an
+  https:// connection is encrypted, and those can be listed. Four
+  settings nearby stay open on purpose:
+  - `automatic_https_rewrites` rewrites links inside pages;
+  - `opportunistic_encryption` offers encryption to http:// visitors,
+    whom Always Use HTTPS already sends to https://;
+  - `ssl_recommender` only enrols the zone in emailed recommendations;
+  - `replace_insecure_js` swaps script links to known unsafe services for
+    copies on cdnjs
+    ([Cloudflare's page](https://developers.cloudflare.com/waf/tools/replace-insecure-js-libraries/)).
+
+  Revisit if Cloudflare adds a setting in this family. Whether the
+  security level, Browser Integrity Check or the WAF should be owner-only
+  is a separate decision for the owner, not made here.
+- **Refusals name the key.** The new refusals, and the refusal of a rule
+  switched off, begin with the key's name, for example "Claude Network
+  Guy (an agent key) may not switch a redirect off".
+- **The owner is unchanged.** A `super_admin` person may do all of it.
 
 ## Consequences and accepted risks
 
 - **A stolen Network Guy key with every switch on could change zone
-  settings, add or edit DNS records and add or change rules in the five
+  settings, add or edit DNS records and add or change rules in the six
   editable phases,** within the token's own Cloudflare permissions. It
   could not delete a record or a ruleset, remove a rule, touch the site's own address,
   Terraform's records or phases, the owner-only settings (on the settings
@@ -397,10 +544,12 @@ route allowed.
   turning on only the switches a task needs, by the token's own permission
   list, and by the Telegram message each change sends.
 - **The rules switch can still redirect or reconfigure requests to the
-  API host.** The five editable phases apply to every host in the zone,
+  API host.** The six editable phases apply to every host in the zone,
   `api-azure.hybridcloudworks.com` included: a redirect can send the API's
-  callers elsewhere, a URL rewrite can change which route a request
-  reaches, a response header rule can change what the browser is told,
+  callers elsewhere (from an agent key, only a new redirect to an https://
+  address on the site's own zones, placed after the existing ones, since
+  #1933), a URL rewrite can change which route a request reaches (the
+  owner's alone since #1933), a response header rule can change what the browser is told,
   and a configuration rule can turn off a setting (such as the security
   level) for matching requests, though not an owner-only one (#1931). None of them can read or change the origin
   secret header, which is set in the read-only late-transform phase. This

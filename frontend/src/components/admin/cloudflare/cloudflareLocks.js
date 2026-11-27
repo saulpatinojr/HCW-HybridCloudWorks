@@ -84,13 +84,24 @@ export const READ_ONLY_PHASE_REASON =
 
 /** Zone settings an agent key may not change; a super admin may. */
 export const OWNER_ONLY_SETTINGS = Object.freeze(
-  ['ssl', 'min_tls_version', 'always_use_https', 'security_header', 'tls_client_auth'].map(
-    (setting) =>
-      Object.freeze({
-        setting,
-        reason:
-          'Only you change this one: an agent key is refused, because a wrong value breaks or weakens HTTPS for every visitor.',
-      })
+  [
+    'ssl',
+    'min_tls_version',
+    'always_use_https',
+    'security_header',
+    'tls_client_auth',
+    'tls_1_3',
+    'ciphers',
+    'ssl_automatic_mode',
+    '0rtt',
+    'sha1_support',
+    'tls_1_2_only',
+  ].map((setting) =>
+    Object.freeze({
+      setting,
+      reason:
+        'Only you change this one: an agent key is refused, because a wrong value breaks or weakens HTTPS for every visitor.',
+    })
   )
 );
 

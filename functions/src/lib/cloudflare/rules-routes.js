@@ -41,7 +41,16 @@
  * a rule switched off is a rule removed in effect; and it may not set a
  * custom response (`action_parameters.response`), the body Cloudflare sends
  * a blocked caller, which only a paid plan offers and is closed ahead of
- * time.
+ * time. Redirects may not be switched off by an agent key either (#1933).
+ *
+ * REDIRECTS AND URL REWRITES (#1933, agent-phase-limits.js). An agent key
+ * may only add redirects after the ones the phase holds now, which come
+ * back exactly as they are (the first redirect that matches is the one
+ * used); a new redirect must send visitors to an https:// address; and the
+ * URL rewrite phase comes back exactly as it is, because a rewrite changes
+ * the path every later rule sees. Each is 403 CLOUDFLARE_OWNER_ONLY,
+ * naming the key. A list that holds one rule id twice is refused for
+ * everyone (400).
  *
  * OWNER-ONLY SETTINGS IN A RULE (#1931). A rule can set some zone settings
  * for the requests it matches: a configuration rule's `ssl`, or a response
@@ -55,10 +64,10 @@ import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFie
 import { RATE_LIMIT_PHASE, rateLimitVerdict } from './rate-limit.js';
 import { recordChange, requireOurZone } from './record.js';
 import {
-  AGENT_DISABLE_MESSAGE,
   AGENT_REMOVAL_MESSAGE,
   AGENT_RESPONSE_MESSAGE,
   GUARDED_PHASES,
+  agentDisableMessage,
   concurrentWriteNote,
   refuseAgentDisable,
   refuseAgentOwnerOnlyRules,
@@ -66,8 +75,9 @@ import {
   refuseAgentResponse,
   versionOf,
 } from './rules-guards.js';
+import { refuseAgentPhaseLimits } from './agent-phase-limits.js';
 
-export { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, concurrentWriteNote, versionOf };
+export { AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, agentDisableMessage, concurrentWriteNote, versionOf };
 import { REDACTED_VALUE, REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
 
 export const PHASE_PATTERN = /^[a-z0-9_]{1,64}$/;
@@ -163,6 +173,18 @@ export async function getPhase({ request, client, zone }) {
 }
 
 const isRule = (rule) => Boolean(rule) && typeof rule === 'object' && !Array.isArray(rule);
+
+/**
+ * Whether a list holds one rule id more than once (#1933 review). A phase
+ * never holds two rules with one id, and the guards that compare a list
+ * with the phase as it is now read each id once. Only a non-empty text id
+ * counts: a new rule may carry no id, or a null or empty one, and Cloudflare
+ * gives it one when it saves.
+ */
+function holdsAnIdTwice(rules) {
+  const ids = rules.map((rule) => rule.id).filter((id) => typeof id === 'string' && id !== '');
+  return new Set(ids).size !== ids.length;
+}
 const withoutStamps = (rule) => Object.fromEntries(Object.entries(rule).filter(([key]) => !STAMPS.includes(key)));
 
 /** A field name as Cloudflare writes it: lower-case letters, digits and underscores. */
@@ -217,6 +239,7 @@ function rulesBody(phase, body) {
   if (!Array.isArray(body.rules) || body.rules.length > MAX_RULES) throw bad(`rules must be a list of at most ${MAX_RULES} rules.`);
   if (body.rules.length === 0) throw bad('rules may not be empty: an empty list deletes every rule in the phase, and deleting is done in the Cloudflare dashboard.');
   if (!body.rules.every(isRule)) throw bad('Each rule must be an object.');
+  if (holdsAnIdTwice(body.rules)) throw bad('Each rule id may appear only once in the list.');
   refuseRuleContents(phase, body.rules);
   const out = { rules: body.rules.map(withoutStamps) };
   if (body.description !== undefined) {
@@ -240,6 +263,7 @@ export async function putPhase(call) {
   refuseAgentRemoval(user, current, sent.rules);
   refuseAgentDisable(user, phase, current, sent.rules);
   refuseAgentOwnerOnlyRules(user, phase, current, sent.rules);
+  refuseAgentPhaseLimits(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
   const note = concurrentWriteNote(current, saved);
