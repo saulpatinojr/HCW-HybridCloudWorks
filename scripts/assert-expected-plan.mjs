@@ -144,7 +144,6 @@ import {
 import {
   declarationLines,
   findDeclaredAction,
-  KNOWN_AFTER_APPLY,
   matchesDeclaration,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
@@ -381,18 +380,6 @@ export const TIMER_SCHEDULES_APPLIED = [
  * reason }` and matches only those exact values. Delete it once its change
  * has applied. "Declaring an intended change" in the header has the rest.
  */
-/**
- * The comment infra/frontend.tf gives each of the site's own two records
- * (#1929), by address. The test holds these to the .tf text, so the declared
- * update and the configuration cannot drift apart.
- */
-export const SITE_RECORD_COMMENTS = Object.freeze({
-  "cloudflare_dns_record.site_apex":
-    "The site's own address (Static Web App), apex; proxy switch: site_proxied_hosts",
-  "cloudflare_dns_record.site_www":
-    "The site's own address (Static Web App), www; proxy switch: site_proxied_hosts",
-});
-
 export const DECLARED = [
   // Applied and deleted here on 2026-10-16, as the header asks. Each change,
   // with the reading that showed it live:
@@ -451,7 +438,8 @@ export const DECLARED = [
   //   not.
   // - #1590's Run Command identity, github_arc_run, and its two lab-host-arc
   //   credentials (unconditional in infra/oidc.tf). Its role assignment,
-  //   github_arc_run_operator[0], stays declared below.
+  //   github_arc_run_operator[0], was kept that morning and deleted later the
+  //   same day, below.
   // - #1617 PR 2's three deletes: the deploy identity's two `production`
   //   credentials and its github_deploy_swa_token grant. Their blocks are gone
   //   from infra/oidc.tf.
@@ -546,42 +534,15 @@ export const DECLARED = [
   // configuration read Succeeded on port 22, created at 02:25Z, and
   // `ssh hcw-lab hostname` answered through Arc from the owner's desktop.
   //
-  // #1929: the site's own apex and www, made by hand in the dashboard, are
-  // imported unchanged (DNS-only, the same content, ttl and type), so the run
-  // after the merge holds, for each of the two records:
-  //   - the import, declared by address (its id is found by the data source
-  //     in infra/frontend.tf and never written here);
-  //   - the same record's in-place update adding the comment, null -> the
-  //     text in infra/frontend.tf. A comment has no effect on DNS answers.
-  //     Read from the provider's source (5.29.0, dns_record ModifyPlan), not
-  //     from a plan: a changed comment leaves modified_on and
-  //     comment_modified_on unknown until the apply, declared with
-  //     KNOWN_AFTER_APPLY. Everything else (settings, tags, meta, proxiable,
-  //     created_on) keeps its state value.
-  // Nothing else may change on either record in that run; proxied and ttl in
-  // particular are not declared, so a plan that would proxy a name before the
-  // owner sets site_proxied_hosts is UNEXPECTED. Delete these eight entries
-  // once both records are in state with their comments.
-  ...Object.entries(SITE_RECORD_COMMENTS).flatMap(([address, comment]) => [
-    {
-      address,
-      action: "import",
-      reason: "#1929: the site's hand-made record brought under Terraform, unchanged",
-    },
-    {
-      address,
-      path: "comment",
-      before: null,
-      after: comment,
-      reason: "#1929: a comment on the imported record (no effect on DNS answers)",
-    },
-    ...["modified_on", "comment_modified_on"].map((path) => ({
-      address,
-      path,
-      after: KNOWN_AFTER_APPLY,
-      reason: `#1929: the record's ${path}, set by Cloudflare when the comment is written`,
-    })),
-  ]),
+  // #1929's eight entries (for each of the site's apex and www: the import,
+  // the comment null -> its text, and modified_on and comment_modified_on
+  // known after apply) applied in the owner's run of 2026-11-27: Cloudflare
+  // shows both CNAMEs carrying their Terraform comments since about 19:21
+  // UTC that day, still DNS-only, the apex at ttl 1 and www at ttl 60. They
+  // were deleted here with the lookup and the import blocks in
+  // infra/frontend.tf (#1937). A plan that changes either record now, a
+  // proxied or ttl change before the owner sets site_proxied_hosts above
+  // all, is UNEXPECTED and is read.
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied. Live "false" on
@@ -672,37 +633,16 @@ export const DECLARED = [
   // (the header: an unknown difference cannot be) and was read by hand
   // against the list in the pull request.
   //
-  // #1463: planned only once the owner has created the role and set
-  // storage_firewall_remover_enabled = true (infra/oidc.tf, count on that
-  // variable). Kept on 2026-11-27 because what decides it is the workspace
-  // value, which this file cannot read, and docs/standards/required-inputs.md
-  // §4.1 records it as MISSING. An assignment of HCW Storage Firewall Writer
-  // to github_manifest_window on the functions storage account was read live
-  // that day (created 2026-11-04), so the record may be stale: delete this
-  // entry once the workspace value is read as true.
-  {
-    address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
-    action: "create",
-    reason:
-      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
-  },
-
-  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity's
-  // role assignment, planned only once the owner has created HCW Arc Run
-  // Command Operator and set lab_arc_run_command_enabled = true
-  // (Required-Inputs §4.6b; infra/oidc.tf, count on that variable). The
-  // identity and its two credentials applied and were deleted here on
-  // 2026-11-27, above. This one is kept for the reason the #1463 entry gives:
-  // required-inputs.md §4.1 records the variable as MISSING, while an
-  // assignment of that role to github_arc_run on rg-lab-hybrid-prod-cus was
-  // read live that day (created 2026-11-09). Delete it once the workspace
-  // value is read as true.
-  {
-    address: "azurerm_role_assignment.github_arc_run_operator[0]",
-    action: "create",
-    reason:
-      "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
-  },
+  // #1463's github_manifest_window_storage_firewall[0] and #1590's
+  // github_arc_run_operator[0] (the two role assignments counted on
+  // storage_firewall_remover_enabled and lab_arc_run_command_enabled in
+  // infra/oidc.tf) applied: the owner confirmed on 2026-11-27 that both
+  // workspace variables are true, and both assignments were read live that
+  // day (HCW Storage Firewall Writer for github_manifest_window on the
+  // functions storage account, created 2026-11-04; HCW Arc Run Command
+  // Operator for github_arc_run on rg-lab-hybrid-prod-cus, created
+  // 2026-11-09). Both were deleted here that day, as the header asks; a plan
+  // that creates or destroys either now is UNEXPECTED and is read.
 
   // #1617, PR 1's six creates (github_frontend_deploy, its two `production`
   // environment credentials and HCW Static Web App Deployer on the one site,

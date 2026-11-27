@@ -15,10 +15,9 @@
 # 7. The adopted Web Analytics site (#1923): nothing planned while its two
 #    inputs are unset, and a site tag that disagrees with the site Terraform
 #    adopted stops the plan rather than being ignored.
-# 8. The site's own apex and www (#1929): imported DNS-only by default, the
-#    content read from the Static Web App, www proxied before the apex and
-#    never the apex alone, and the import stopped when the record it finds
-#    is not the CNAME it asked for.
+# 8. The site's own apex and www (#1929): DNS-only by default, the content
+#    read from the Static Web App, www proxied before the apex and never the
+#    apex alone.
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -69,35 +68,6 @@ override_resource {
   values = {
     id                = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web/providers/Microsoft.Web/staticSites/stapp-hcw"
     default_host_name = "example-host-0000.7.azurestaticapps.net"
-  }
-}
-
-# The site's apex and www records (#1929) are found by name before they are
-# imported. One made-up record per name, as Cloudflare holds them today.
-# A mock provider cannot import, so the two imported records are overridden
-# too (Terraform's own advice in its refusal); only their id is set, and
-# every configured argument is still planned from the configuration.
-override_resource {
-  target          = cloudflare_dns_record.site_apex
-  override_during = plan
-  values = {
-    id = "00000000000000000000000000000001"
-  }
-}
-
-override_resource {
-  target          = cloudflare_dns_record.site_www
-  override_during = plan
-  values = {
-    id = "00000000000000000000000000000002"
-  }
-}
-
-override_data {
-  target = data.cloudflare_dns_record.site
-  values = {
-    id   = "00000000000000000000000000000001"
-    type = "CNAME"
   }
 }
 
@@ -415,18 +385,4 @@ run "site_records_refuse_the_apex_alone" {
   }
 
   expect_failures = [var.site_proxied_hosts]
-}
-
-run "site_records_import_stops_on_a_record_that_is_not_the_cname" {
-  command = plan
-
-  override_data {
-    target = data.cloudflare_dns_record.site
-    values = {
-      id   = "00000000000000000000000000000001"
-      type = "A"
-    }
-  }
-
-  expect_failures = [data.cloudflare_dns_record.site]
 }

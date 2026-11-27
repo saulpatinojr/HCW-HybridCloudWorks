@@ -249,8 +249,12 @@ const OWNER_STEP = 'Change it on the Cloudflare page yourself, signed in as the 
  * polyfill.io) for copies on cdnjs, keeping their scheme
  * (https://developers.cloudflare.com/waf/tools/replace-insecure-js-libraries/,
  * read 2026-11-27). None of them decides how an https:// connection is
- * encrypted. Whether the security level, Browser Integrity Check or the WAF
- * should be the owner's is a separate decision, not made here.
+ * encrypted. The security level, Browser Integrity Check and the WAF switch
+ * (security_level, browser_check, waf) also stay open to agent keys: the
+ * owner decided so on 2026-11-27 ("the network guy is my proxy and should
+ * have that ability", #1935) and accepted the risk that an agent key can
+ * lower the zone's protection until someone notices; the Telegram message
+ * on every agent change is how it is noticed (ADR 0047, amendment #1935).
  */
 export const OWNER_ONLY_SETTINGS = Object.freeze(
   [

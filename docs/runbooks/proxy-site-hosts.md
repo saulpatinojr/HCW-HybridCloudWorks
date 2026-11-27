@@ -69,8 +69,7 @@ Then, for every run:
 1. Set the variable at
    <https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables> (a
    plain Terraform variable named `site_proxied_hosts`, not sensitive, HCL
-   off) and save it. Skip this step for Part 1, where the merge itself starts
-   the run.
+   off) and save it.
 2. Start a run at <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs>
    (**New run**, plan and apply). Wait until it stops at **Needs Confirmation**.
    Do not confirm yet.
@@ -93,25 +92,28 @@ Terraform yourself, check it holds only the row for that rollback above, and
 confirm it. The plan check will say UNEXPECTED for that run, which is
 expected; a session adds the declaration afterwards.
 
-## Part 1. Bring the two records under Terraform (happens once)
+## Part 1. Bring the two records under Terraform (done 2026-11-27)
 
-The pull request for #1929 step 2 adds the records with the switch at
-`"none"`. Its first run, after the merge, must show for **each** record:
+This happened once and is finished. The pull request for #1929 step 2 added
+the two records with the switch at `"none"`, together with two pieces needed
+only for that first run: a lookup that found each hand-made record by name
+(so no record id was ever written in the repository), and an import block
+for each (an instruction that tells Terraform to take over a record that
+already exists instead of making a new one). The plan check declared exactly
+what that run would do: for each record, the import, the `comment` going
+from empty to a sentence naming the switch, and two timestamps Cloudflare
+sets when the comment is written.
 
-- an import (Terraform takes over the record that is already there);
-- one change, the record's `comment` going from `null` to a sentence that
-  names the switch (a comment is a note on the record and changes no DNS
-  answer);
-- `modified_on` and `comment_modified_on` as "known after apply" (Cloudflare
-  stamps them when the comment is written).
-
-Nothing else. The pull request declares exactly that list, so run steps 3 to
-5 of "How every run in this runbook is checked" before confirming; a plan
-that changes `proxied`, `ttl` or `content` is reported as unexpected and must
-not be confirmed. The import finds each record by name, so no record id is
-written anywhere; if the zone does not hold exactly one CNAME at a name, the
-plan stops with "failed to find exactly one result" before anything is
-imported.
+The owner applied that run on 2026-11-27. Cloudflare shows both records
+carrying their new comments since about 19:21 UTC, still DNS-only, the apex
+at TTL 1 (automatic) and `www` at TTL 60. So both records are in Terraform's
+state (its record of what it manages), and
+[#1937](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1937)
+then removed the lookup, the import blocks and the plan check's eight
+declarations. Without the lookup, a record changed or deleted by hand no
+longer stops every plan in the workspace: the next plan simply shows the
+record being put back as `infra/frontend.tf` describes it, and the plan check
+reports that as unexpected for someone to read.
 
 ## Part 2. Before the switch (each is harmless while the names are DNS-only)
 
@@ -152,6 +154,41 @@ imported.
       from it. Email Obfuscation also needs a looser script policy than the
       site has
       ([CSPs with Cloudflare](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/content-security-policies/)).
+
+    **How to add it.**
+
+    1. On the admin page, open **Rules**, then the phase
+       `http_config_settings`, then **Edit these rules**.
+    2. The editor takes a JSON list: the whole list of rules in that phase.
+       The phase holds no rules today (Cloudflare answered "not found" for
+       it on 2026-11-27), so replace everything in the box with exactly
+       this, then **Replace the rules**:
+
+        ```json
+        [
+          {
+            "description": "Site apex and www: strict origin check, no HTML rewriting (#1929)",
+            "expression": "(http.host in {\"hybridcloudworks.com\" \"www.hybridcloudworks.com\"})",
+            "action": "set_config",
+            "action_parameters": {
+              "ssl": "strict",
+              "email_obfuscation": false,
+              "automatic_https_rewrites": false
+            },
+            "enabled": true
+          }
+        ]
+        ```
+
+       The `\"` inside `expression` is how JSON writes a quotation mark
+       inside text; Cloudflare stores it as
+       `(http.host in {"hybridcloudworks.com" "www.hybridcloudworks.com"})`.
+       The field names are Cloudflare's configuration rule settings
+       ([Configuration Rules settings](https://developers.cloudflare.com/rules/configuration-rules/settings/)).
+    3. **Success:** the phase shows one rule with that description, and
+       Cloudflare has given it an `id`. If the phase already holds rules
+       (someone added one since), keep them in the list and add this one
+       at the end, instead of replacing them.
 
 3. **Three zone settings**, owner only, on the same page (Settings) or in the
    Cloudflare dashboard. Each applies at once to the names already proxied
