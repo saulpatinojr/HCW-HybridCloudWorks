@@ -76,7 +76,8 @@ The token lives in one place only: the sensitive Terraform variable
 `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. It is not
 in Key Vault and not a GitHub Actions secret (the credential register,
 `functions/src/lib/credentials/register.js`, row
-`tfc-azure-cloudflare-api-token`, says so).
+`tfc-azure-cloudflare-api-token`, records it as stored in that workspace;
+`functions/src/lib/secret-catalog.js` has no Key Vault entry for it).
 
 1. Open [hcw-azure → Variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables).
 2. Edit `cloudflare_api_token`, paste the new token into the value field
