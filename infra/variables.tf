@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its two rules) Account Settings:Read and Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site) Account Settings:Read and Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1047,8 +1047,8 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
-# The Cloudflare ACCOUNT, not the zone: the Web Analytics site and its rules
-# in frontend.tf are account-level resources and the API takes the account id
+# The Cloudflare ACCOUNT, not the zone: the Web Analytics site in
+# frontend.tf is an account-level resource and the API takes the account id
 # in its path (the site also names the zone, by cloudflare_zone_id, since
 # #1923). An identifier, not a credential: the dashboard prints it on the
 # zone's Overview page under API, beside the zone id, and the GitHub
@@ -1064,7 +1064,7 @@ variable "cloudflare_zone_id" {
 # required variable would fail every plan — the merge's queued run, the
 # speculative plans, tfc-plan-check's read — until the owner has typed the
 # value into the workspace. Null keeps the apply whole: the Web Analytics
-# site is not imported, its two rules are not created, the outputs read
+# site is not imported, the outputs read
 # null and CF_WEB_ANALYTICS_SITE_TAG stays empty until this and
 # cloudflare_web_analytics_site_tag (below) are both set. CF_ACCOUNT_ID
 # follows this variable alone and is filled whenever it is set. Thirty-two lowercase hex characters, which is the shape
@@ -1148,19 +1148,15 @@ variable "cloudflare_web_analytics_site_tag" {
 # in the dashboard) carries BOTH, as two rows (the dashboard calls Write
 # "Edit"), before the run that imports the site. Without Read, even a plan
 # fails, at the import's first read, with "Authentication error (10000)"
-# (observed 2026-11-27 on the pull request's speculative plan). The same apply creates
-# the two exclusion rules (notes_excluded and api_excluded) through POST
-# /accounts/{account_id}/rum/v2/{ruleset_id}/rule. That endpoint lists no
-# permission in the schema (read 2026-11-27); every site endpoint and the bulk
-# rules endpoint (POST .../rum/v2/{ruleset_id}/rules) list Account Settings
-# → Write, so no further permission is expected, but that is inferred and
-# the apply is the first proof. The failure without it is the same shape as
-# the ruleset's: every record and the ruleset apply, and the new resources
-# error — by the documented pattern, "Authentication error (10000)", though
-# that exact code on these endpoints is inferred from the ruleset case rather
-# than observed. The widening is accepted for Web Analytics only: a site and
-# its rules hold no secret and serve no visitor-facing path, so the trade the
-# Turnstile note in frontend.tf refused still stands for anything that does.
+# (observed 2026-11-27 on the pull request's speculative plan). Without
+# Write, going by the API reference, the site is read and the update fails;
+# by the ruleset's pattern that is "Authentication error (10000)" too, though
+# that is inferred rather than observed. (No Web
+# Analytics rules are managed: the zone's Free plan allows none, see "WHY
+# THERE ARE NO RULES" in frontend.tf, so no rule endpoint is called.) The
+# widening is accepted for Web Analytics only: a site holds no secret and
+# serves no visitor-facing path, so the trade the Turnstile note in
+# frontend.tf refused still stands for anything that does.
 variable "cloudflare_origin_secret" {
   description = "Shared secret Cloudflare injects as x-hcw-origin-secret; MUST equal the CF-ORIGIN-SECRET value in Key Vault"
   type        = string

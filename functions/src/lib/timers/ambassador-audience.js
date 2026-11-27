@@ -22,8 +22,8 @@
  * `viewer { accounts(filter: { accountTag: $accountTag }) { … } }` and an
  * unfiltered `viewer { accounts }` is refused for any account the token
  * cannot read — so the account id is read as well as the site tag. The
- * filter is `{ siteTag, datetime_geq, datetime_lt }` over the month's UTC
- * window, and the figure is the group's `count`: Cloudflare's own dashboard
+ * filter is `{ siteTag, datetime_geq, datetime_lt, requestHost_in }` over
+ * the month's UTC window, and the figure is the group's `count`: Cloudflare's own dashboard
  * reads the total as `rumPageloadEventsAdaptiveGroups(filter, limit: 1)
  * { count sum { visits } }`, where `count` is "the number of pages viewed
  * by end-users" and `sum.visits` the visits (page loads whose referrer was
@@ -31,6 +31,21 @@
  * and from two independent clients of it (cloudflarer's analytics vignette
  * and a transcript of the dashboard's query); NOT measured against the live
  * API, which is why every name is listed here in one place.
+ *
+ * ONLY THE SITE'S OWN HOSTS ARE COUNTED (#1923): `requestHost_in` holds the
+ * read to the apex and www (SITE_HOSTS). The Web Analytics site belongs to
+ * the whole zone, and Cloudflare's automatic setup puts its beacon on every
+ * proxied name that serves HTML, which today is the notes site and the API
+ * host's landing page. Cloudflare can leave a host out with a Web Analytics
+ * rule, but the zone is on the Free plan, which allows none (an apply that
+ * tried was refused, 409, code 10012; infra/frontend.tf, "WHY THERE ARE NO
+ * RULES"). So the dashboard still shows those pages, and this read leaves
+ * them out. `requestHost_in` was read from the schema by introspection on
+ * 2026-11-27 and the live API accepted the query that day (a 7-day window
+ * with no page views yet). Which `requestHost` a page view on the apex and
+ * www is stored under has NOT been seen yet: before AMBASSADOR_AUDIENCE_MONTHLY
+ * is armed, read a window that has page views by `requestHost` and check the
+ * two names match SITE_HOSTS exactly, or the read records a quiet zero.
  *
  * The site is registered with the lite option (infra/frontend.tf), which
  * asks Cloudflare not to measure visitors in the EU: documented for the
@@ -87,6 +102,7 @@
  */
 import { CONTAINER } from '../ambassador/model.js';
 import { importedEvidenceId } from '../ambassador/evidence.js';
+import { SITE_ZONE } from '../cloudflare/protected.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { readSetting } from '../http/read-setting.js';
 import { sumCounts } from '../podcast/host-stats.js';
@@ -121,13 +137,20 @@ export const requirementFor = (programId) =>
 /** Who the rows say created them; the hub shows it beside the row. */
 export const CREATED_BY = 'ambassadorAudienceMonthly';
 
-/** The month's total: one group, no dimensions, as the Cloudflare dashboard reads it. */
-export const PAGE_VIEWS_QUERY = `query AudienceMonth($accountTag: String!, $siteTag: String!, $since: Time!, $until: Time!) {
+/**
+ * The hosts whose page views make the figure: the site's own address, the
+ * apex and www. Every other proxied name in the zone that serves HTML is
+ * measured by Cloudflare too, and left out here (the header says why).
+ */
+export const SITE_HOSTS = Object.freeze([SITE_ZONE, `www.${SITE_ZONE}`]);
+
+/** The month's total for the site's own hosts: one group, no dimensions, as the Cloudflare dashboard reads it. */
+export const PAGE_VIEWS_QUERY = `query AudienceMonth($accountTag: String!, $siteTag: String!, $since: Time!, $until: Time!, $hosts: [String!]!) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
       rumPageloadEventsAdaptiveGroups(
         limit: 1
-        filter: { siteTag: $siteTag, datetime_geq: $since, datetime_lt: $until }
+        filter: { siteTag: $siteTag, datetime_geq: $since, datetime_lt: $until, requestHost_in: $hosts }
       ) {
         count
         sum { visits }
@@ -198,7 +221,8 @@ export function audienceTitle({ label, pageViews, podcast }) {
 /** The row's description: the two figures, how each was measured, and when it was read. */
 export function audienceDescription({ month, pageViews, podcast, readAt }) {
   const lines = [
-    `Page views: ${count(pageViews)}. Cloudflare Web Analytics page loads on the site, ` +
+    `Page views: ${count(pageViews)}. Cloudflare Web Analytics page loads on the site ` +
+      `(${SITE_HOSTS.join(' and ')} only), ` +
       `${month.start} to ${month.end} (UTC), read from the GraphQL Analytics API ` +
       `(rumPageloadEventsAdaptiveGroups, count); aggregate page views. The site's lite option ` +
       `asks Cloudflare to exclude EU visitors, so treat the figure as a floor.`,
@@ -288,6 +312,7 @@ export async function readPageViews({
     siteTag: readSetting(env, SITE_TAG_SETTING),
     since: month.since,
     until: month.until,
+    hosts: [...SITE_HOSTS],
   };
   const deps = {
     method: 'POST',

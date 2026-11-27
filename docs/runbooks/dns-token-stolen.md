@@ -65,7 +65,7 @@ Issue a replacement token strictly restricted to needed permissions:
        Web Analytics site, #1923; without it even a plan fails with
        "Authentication error (10000)", seen 2026-11-27)
      - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site's
-       update and its two exclusion rules, #1923; the dashboard's `Edit` is
+       update, #1923; the dashboard's `Edit` is
        the permission the API reference and `infra/variables.tf` call
        `Write`, and the API reference accepts only `Read` for the read, so
        both rows are needed)

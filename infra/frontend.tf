@@ -552,14 +552,10 @@ resource "cloudflare_ruleset" "origin_secret" {
 # Terraform refuses a `removed` block while the resource block it names still
 # exists, so it is one pull request that does all of this together:
 #   1. Delete the import block and the site's resource block below.
-#   2. For the two rules, which read hcw[0].ruleset.id: replace each block
-#      with `removed { from = cloudflare_web_analytics_rule.<name>
-#      lifecycle { destroy = false } }`, which leaves the rule in Cloudflare
-#      (the default choice), or delete the block, which deletes the rule.
-#   3. Remove the two web_analytics_site_* outputs in outputs.tf, or set
+#   2. Remove the two web_analytics_site_* outputs in outputs.tf, or set
 #      them to null.
-#   4. Set CF_WEB_ANALYTICS_SITE_TAG to "" in functionapp.tf.
-#   5. Add `removed { from = cloudflare_web_analytics_site.hcw
+#   3. Set CF_WEB_ANALYTICS_SITE_TAG to "" in functionapp.tf.
+#   4. Add `removed { from = cloudflare_web_analytics_site.hcw
 #      lifecycle { destroy = false } }`, without [0]: it names the whole
 #      resource.
 # Only after that has applied are the two variables unset. Moving to another
@@ -571,7 +567,7 @@ resource "cloudflare_ruleset" "origin_secret" {
 # are `no_refresh` in its model), so after the import both are null in state
 # and the update sets them through the site's update endpoint, which is the
 # one Cloudflare's API schema documents them on (the create endpoint lists
-# neither). Then it creates the two rules below.
+# neither).
 #
 # THE ARGUMENTS, ONE BY ONE.
 #   - `zone_tag` names the zone. The import fills it from the site's ruleset,
@@ -602,12 +598,31 @@ resource "cloudflare_ruleset" "origin_secret" {
 #     serves Azure's HTML landing page at `/` (status 200, text/html), and
 #     that page carries the beacon.
 #   - notes, Obsidian Publish's pages: HTML that is not ours.
-# Neither is part of the figure, so a rule for each, below, takes it out of
-# measurement. (For api-azure, switching the landing page off with the
-# AzureWebJobsDisableHomepage app setting would also work; that is a change
-# to the app, a separate decision, and not taken here.) A new proxied record
-# that serves HTML is measured from its first request; add a rule for it
-# beside these if it should not be.
+# Neither is part of the figure, and both stay measured: the Cloudflare Web
+# Analytics dashboard shows their page views beside the site's own. That is
+# accepted.
+#
+# WHY THERE ARE NO RULES. A Web Analytics rule (`cloudflare_web_analytics_rule`)
+# can leave a host out of measurement, and #1923 first added one for each
+# name above. The 2026-11-27 apply could not create them:
+#
+#   POST .../rum/v2/<ruleset>/rule: 409 Conflict
+#   code 10012, "web_analytics.configuration.api.maxRulesError"
+#
+# Cloudflare limits the number of rules by plan, and the Free plan this zone
+# is on allows none ("For plans with a limit of zero, Web Analytics injects
+# the JS snippet on all subdomains",
+# https://developers.cloudflare.com/web-analytics/limits/, read 2026-11-27;
+# Free 0, Pro 5, Business 20, Enterprise 100). So there are no rules here,
+# and the figure is kept clean at the other end instead: the monthly read
+# (functions/src/lib/timers/ambassador-audience.js) asks Cloudflare only for
+# page views on the apex and www (`requestHost_in`). A new proxied record that
+# serves HTML is measured from its first request and shows on the dashboard,
+# but does not reach the figure. Do not add a rule back while the zone is on
+# the Free plan: every apply would fail on it. (For api-azure, switching the
+# landing page off with the AzureWebJobsDisableHomepage app setting would
+# also stop the beacon there; that is a change to the app, a separate
+# decision, and not taken here.)
 #
 # THE HAND-PLACED BEACON DOES THE COUNTING. The apex and www are DNS-only
 # (gray-clouded) records that resolve straight to the Static Web App (the
@@ -633,10 +648,8 @@ resource "cloudflare_ruleset" "origin_secret" {
 # THE TOKEN NEEDS Account → Account Settings → Read AND Write. The import
 # reads the site (GET, Read only) and the update writes it (PUT, Write only);
 # without Read even a plan fails, with "Authentication error (10000)" (seen
-# 2026-11-27). Write is listed for the bulk rules endpoint too. The single-rule endpoint the provider uses for
-# the rules below lists no permission at all, so that the same permission
-# covers it is inferred, not documented. The permission paragraph beside
-# cloudflare_origin_secret in variables.tf carries the full list.
+# 2026-11-27). The permission paragraph beside cloudflare_origin_secret in
+# variables.tf carries the full list.
 # =============================================================================
 locals {
   web_analytics_managed = var.cloudflare_account_id != null && var.cloudflare_web_analytics_site_tag != null
@@ -691,41 +704,4 @@ resource "cloudflare_web_analytics_site" "hcw" {
       error_message = "cloudflare_web_analytics_site_tag does not match the Web Analytics site Terraform already manages. Set the workspace variable back to that site's tag (Cloudflare dashboard, Analytics & Logs, Web Analytics, the site's Manage page), or to move to another site, follow the let-go steps in infra/frontend.tf first. Nothing has been changed."
     }
   }
-}
-
-# The two proxied names that serve HTML, left out of measurement (#1923). A
-# rule with `inclusive = false` excludes a host and its paths; Cloudflare
-# documents rules as "only available for sites proxied through Cloudflare",
-# which both are. Cloudflare's docs do not say how rules are ordered against
-# each other, so the runbook's check (cold-rebuild.md, Web Analytics) reads
-# both pages after the apply.
-#
-# Two things the provider (5.29.0) does differently for this resource:
-#   - It never reads a rule back from Cloudflare (its Read does nothing) and
-#     cannot import one. A change made to a rule in the dashboard is not
-#     seen by any plan; make changes here.
-#   - `ruleset_id` forces a new rule when it changes, and the site's
-#     `ruleset` is computed, so any planned update to the site above also
-#     plans each rule's replacement (a delete and a create of the same
-#     exclusion). That is expected, not drift.
-resource "cloudflare_web_analytics_rule" "notes_excluded" {
-  count = local.web_analytics_managed ? 1 : 0
-
-  account_id = var.cloudflare_account_id
-  ruleset_id = cloudflare_web_analytics_site.hcw[0].ruleset.id
-  host       = "notes.${var.domain}"
-  paths      = ["*"]
-  inclusive  = false
-  is_paused  = false
-}
-
-resource "cloudflare_web_analytics_rule" "api_excluded" {
-  count = local.web_analytics_managed ? 1 : 0
-
-  account_id = var.cloudflare_account_id
-  ruleset_id = cloudflare_web_analytics_site.hcw[0].ruleset.id
-  host       = "api-azure.${var.domain}"
-  paths      = ["*"]
-  inclusive  = false
-  is_paused  = false
 }
