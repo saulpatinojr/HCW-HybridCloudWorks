@@ -455,6 +455,19 @@ redirect limits, closed here as well.
     it. This keeps the common "send www to the bare name" redirect,
     `concat("https://hybridcloudworks.com", http.request.uri.path)`, open
     to the agent key.
+  - *An assumption this rests on.* Accepting
+    `concat("https://<zone>", <path field>)` assumes that
+    `http.request.uri.path`, `http.request.uri` and their `raw.` forms
+    always start with `/`. They do for a request line in the usual form
+    (`GET /path HTTP/1.1`). This was not checked for a request line that
+    names a whole address (`GET https://host/path HTTP/1.1`) or for
+    CONNECT. If such a path could start with `@`, the zone would become a
+    user name before another host, so the address would lead off the
+    zone. The assumption is written beside `PATH_FIELDS` in
+    `agent-phase-limits.js` too.
+  - A fixed target's host must be written exactly as it is read: a
+    percent-encoded host, a trailing dot, a letter from another alphabet
+    or an IP address is refused, as is a tab or newline anywhere.
   - the rule's parameters hold only what
     [Cloudflare documents for a redirect](https://developers.cloudflare.com/rules/url-forwarding/single-redirects/settings/)
     (`from_value` with `target_url`, `status_code` and

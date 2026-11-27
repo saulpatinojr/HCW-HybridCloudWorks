@@ -1500,6 +1500,25 @@ describe('rules', () => {
         ['a worked-out address on a name that only contains the zone', worked(`"https://evil.com.${ZONE_APEX}.attacker.net/"`)],
         ['a worked-out address with an empty part in the host', worked(`"https://.${ZONE_APEX}/"`)],
         ['a worked-out address whose string holds an escape', worked(`"https://${ZONE_APEX}\\"/"`)],
+        // Regression cases from the follow-up review of 0d9baa8d.
+        ['a fixed address with the zone’s host percent-encoded', fixed('https://%68ybridcloudworks.com/')],
+        ['a fixed address with another host percent-encoded', fixed('https://%65vil.com/')],
+        ['a worked-out address with the zone’s host percent-encoded', worked('"https://%68ybridcloudworks.com/"')],
+        ['a fixed address with a trailing dot after the zone', fixed(`https://${ZONE_APEX}./`)],
+        ['a worked-out address with a trailing dot after the zone', worked(`concat("https://${ZONE_APEX}.", http.request.uri.path)`)],
+        ['a fixed address with a Cyrillic letter that looks like o', fixed('https://hybridclоudworks.com/')],
+        ['a worked-out address with a Cyrillic letter that looks like o', worked('"https://hybridclоudworks.com/"')],
+        ['a fixed address with a tab inside the host', fixed(`https://${ZONE_APEX}\t.evil.com/`)],
+        ['a fixed address with a newline inside the host', fixed(`https://${ZONE_APEX}\n.evil.com/`)],
+        ['a worked-out address with a tab inside the host', worked(`"https://${ZONE_APEX}\t.evil.com/"`)],
+        ['a worked-out address with a newline inside the host', worked(`"https://${ZONE_APEX}\n.evil.com/"`)],
+        ['a raw string with a quote inside, after the zone', worked(`r#"https://${ZONE_APEX}"@evil.com/"#`)],
+        ['concat( nested inside concat(', worked(`concat(concat("https://${ZONE_APEX}", ".evil.com"), "/")`)],
+        ['concat( nested as the second part', worked(`concat("https://${ZONE_APEX}", concat(".evil.com", "/"))`)],
+        ['a fixed dotted IP address', fixed('https://192.168.1.1/')],
+        ['a fixed IP address written as one number', fixed('https://3232235777/')],
+        ['a worked-out dotted IP address', worked('"https://192.168.1.1/"')],
+        ['a worked-out IP address written as one number', worked('"https://3232235777/"')],
       ])('refuses an agent key adding a redirect to %s (#1933 review)', async (_label, parameters) => {
         const result = await send(NETWORK_GUY, REDIRECT, null, [redirect(parameters)], null);
         expectRefused(result, ["the site's own zones", ZONE_APEX, LAB_ZONE, 'always_use_https'], HTTPS_REDIRECT_REASON);

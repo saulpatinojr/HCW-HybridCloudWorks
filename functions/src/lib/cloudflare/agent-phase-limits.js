@@ -107,7 +107,10 @@ function onOurHttps(value) {
   } catch {
     return false;
   }
-  const checks = [url.protocol === 'https:', url.username === '', url.password === '', url.port === '', onManagedZone(url.hostname.toLowerCase())];
+  // The host as written must be the host URL reads, so a host it decodes
+  // (percent-encoding) or rewrites (a number read as an IP address) is refused.
+  const written = value.slice('https://'.length).split(/[/?#]/)[0].toLowerCase();
+  const checks = [url.protocol === 'https:', url.username === '', url.password === '', url.port === '', written === url.host, onManagedZone(url.hostname.toLowerCase())];
   return checks.every(Boolean);
 }
 
@@ -121,7 +124,16 @@ const EXPRESSION_START = /^\s*(concat\(\s*)?(?:r(#*)"([\s\S]*?)"\2|"([^"\\]*)")(
 /** The start of a string that fixes the address's scheme and host: https://, a host, then a slash or the string's end. */
 const HTTPS_HOST = /^https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)(\/|$)/i;
 
-/** The fields that always start with a slash, so a host written just before one is the whole host. */
+/**
+ * The fields taken to always start with a slash, so a host written just
+ * before one is the whole host. This is an assumption: a request line in
+ * the usual form (`GET /path HTTP/1.1`) gives a path that starts with `/`,
+ * and that is why concat("https://<zone>", <one of these>) is accepted. It
+ * was not checked for a request line that names a whole address
+ * (`GET https://host/path`) or for CONNECT. A path starting with `@` would
+ * make the zone a user name before another host, so if Cloudflare ever
+ * gives one, this list is wrong.
+ */
 const PATH_FIELDS = Object.freeze(['http.request.uri.path', 'http.request.uri', 'raw.http.request.uri.path', 'raw.http.request.uri']);
 
 /** Whether what follows a string inside concat( starts with one of PATH_FIELDS as the next part. */
