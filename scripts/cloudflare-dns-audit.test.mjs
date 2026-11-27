@@ -37,6 +37,7 @@ import {
   renderReport,
   resolveWindow,
   TFC_API,
+  TERRAFORM_SITE_CNAMES,
   TFC_WORKSPACE,
   fetchTerraformApplies,
   withinApply,
@@ -321,14 +322,38 @@ describe('the allowlist', () => {
   });
 
   it("allows the owner's dashboard edits, not the owner's API-token edits, and not another dashboard user", () => {
-    const dash = normalise(entry({ actor: OWNER_DASH, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
+    const dash = normalise(entry({ actor: OWNER_DASH, record: { name: 'blog.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(dash, settings)).toEqual({ verdict: 'EXPECTED', rule: 'owner-dashboard' });
-    const upper = normalise(entry({ actor: { ...OWNER_DASH, email: OWNER.toUpperCase() }, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
+    const upper = normalise(entry({ actor: { ...OWNER_DASH, email: OWNER.toUpperCase() }, record: { name: 'blog.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(upper, settings).verdict).toBe('EXPECTED');
-    const api = normalise(entry({ actor: { ...OWNER_DASH, context: 'api_token', token_name: 'personal', token_id: '0123456789abcdef0123456789abcdef' }, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
+    const api = normalise(entry({ actor: { ...OWNER_DASH, context: 'api_token', token_name: 'personal', token_id: '0123456789abcdef0123456789abcdef' }, record: { name: 'blog.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(api, settings).verdict).toBe('UNEXPECTED');
-    const other = normalise(entry({ actor: { ...OWNER_DASH, email: 'someone@example.com' }, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
+    const other = normalise(entry({ actor: { ...OWNER_DASH, email: 'someone@example.com' }, record: { name: 'blog.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(other, settings).verdict).toBe('UNEXPECTED');
+  });
+
+  it("reads the owner's dashboard edit of the apex or www CNAME as drift, and still allows the apex's other records (#1929)", () => {
+    expect(TERRAFORM_SITE_CNAMES).toEqual(['hybridcloudworks.com', 'www.hybridcloudworks.com']);
+    // Terraform manages these two CNAMEs, so a hand edit is drift for the next apply to undo, never EXPECTED.
+    for (const name of ['hybridcloudworks.com', 'www.hybridcloudworks.com', 'WWW.hybridcloudworks.com.']) {
+      const cname = normalise(entry({ actor: OWNER_DASH, record: { name, type: 'CNAME' } }));
+      expect(classify(cname, settings), name).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    }
+    // The apex's validation TXT, mail and CAA records stay the owner's to change in the dashboard.
+    for (const type of ['TXT', 'MX', 'CAA']) {
+      const record = normalise(entry({ actor: OWNER_DASH, record: { name: 'hybridcloudworks.com', type } }));
+      expect(classify(record, settings), type).toEqual({ verdict: 'EXPECTED', rule: 'owner-dashboard' });
+    }
+    // A bare owner delete names no record, so it could be one of the pair: never EXPECTED.
+    const bareOwnerDelete = normalise(entry({ actor: OWNER_DASH, action: 'delete', resource: { request: {}, response: {} } }));
+    expect(bareOwnerDelete.recordName).toBe('unknown');
+    expect(classify(bareOwnerDelete, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    // Another record type at www, and a CNAME elsewhere, are not the Terraform-managed pair.
+    const wwwTxt = normalise(entry({ actor: OWNER_DASH, record: { name: 'www.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(wwwTxt, settings).verdict).toBe('EXPECTED');
+    // The workspace's apply of the same CNAME is still EXPECTED under its own entry.
+    const apply = normalise(entry({ actor: TERRAFORM, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
+    expect(classify(apply, settings)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
   });
 
   it('is inactive, never permissive, when a setting it needs is unset', () => {

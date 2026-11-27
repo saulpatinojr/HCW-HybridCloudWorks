@@ -40,32 +40,32 @@ The same picture in words:
   behind Caddy that the site frames at `/tools/<id>`.
 - A Cloudflare Worker checks the API's health every five minutes and reports
   each result to Application Insights, where an alert watches it.
-- Every page carries a Cloudflare Web Analytics beacon, built in at deploy
-  time when the `CF_WEB_ANALYTICS_TOKEN` repository variable is set, so that
-  the site can state a monthly audience figure (owner decision 2026-10-20,
-  #1302: the Docker Captain application goes in on the Thought Leader track,
-  and the Microsoft MVP form asks for impact metrics). It counts page views
-  with no cookies, no client-side state and no fingerprinting, and the site
-  has Cloudflare's lite option, which asks Cloudflare not to measure
-  visitors in the EU — documented for the snippet Cloudflare's proxy injects,
-  unverified for the hand-placed one this site carries until the owner has
-  confirmed it on the site's Manage page in the Web Analytics dashboard — so
-  the figure is aggregate page views, read as a floor. Since
+- Page views are counted by Cloudflare Web Analytics, so that the site can
+  state a monthly audience figure (#1302). It counts page views with no
+  cookies, no client-side state and no fingerprinting, and the site has
+  Cloudflare's lite option, which asks Cloudflare not to measure visitors in
+  the EU, so the figure is aggregate page views, read as a floor. Since
   [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)
   Terraform manages the Web Analytics site Cloudflare keeps for the zone
-  (imported, with automatic setup on), which only reaches proxied names. The
-  site's own pages are DNS-only and keep the hand-placed beacon. The
-  proxied names that serve HTML, the `notes` pages and the Functions host's
-  landing page at `/` on `api-azure` (its API answers JSON, but that page is
-  HTML), are measured too and show on the Web Analytics dashboard: a Web
-  Analytics rule could leave them out, but the zone's Free plan allows none
-  ([Cloudflare's limits](https://developers.cloudflare.com/web-analytics/limits/)).
+  (imported, with automatic setup on): Cloudflare puts its beacon into the
+  HTML of names it proxies. A hand-placed beacon, built in at deploy time
+  from the `CF_WEB_ANALYTICS_TOKEN` repository variable, was tried for the
+  site's own DNS-only pages and shown on 2026-11-27 not to work (Cloudflare
+  answers its report with no `Access-Control-Allow-Origin` header, so the
+  browser blocks it); the variable was deleted and must stay unset. The
+  site's own pages are counted once the apex and `www` are proxied
+  ([#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929),
+  [Proxying the site's own names](../runbooks/proxy-site-hosts.md)). The
+  other proxied names that serve HTML, the `notes` pages and the Functions
+  host's landing page at `/` on `api-azure` (its API answers JSON, but that
+  page is HTML), are measured too and show on the Web Analytics dashboard: a
+  Web Analytics rule could leave them out, but the zone's Free plan allows
+  none ([Cloudflare's limits](https://developers.cloudflare.com/web-analytics/limits/)).
   The monthly read leaves them out instead, by asking only for page views on
-  the apex and `www`. Nothing is shown to
-  visitors: once a day the `ambassadorAudienceMonthly` timer reads the
-  previous month's total back from Cloudflare's GraphQL Analytics API with a
-  read-only token, adds the show's downloads from Podbean, and records one
-  evidence row per programme in the Ambassador hub, once per month.
+  the apex and `www`. Nothing is shown to visitors: once a day a timer reads
+  the previous month's total back from Cloudflare's GraphQL Analytics API
+  with a read-only token, adds the show's downloads from Podbean, and
+  records the figure once per month.
 
 | Layer | Technology |
 | --- | --- |

@@ -118,6 +118,49 @@ function isWorkspaceApply(change, settings) {
   );
 }
 
+/**
+ * The site's own apex and www CNAMEs, which Terraform manages since #1929
+ * (`cloudflare_dns_record.site_apex` and `site_www` in infra/frontend.tf). A
+ * dashboard edit of either is drift for the next apply to undo, not an
+ * expected owner edit, so `owner-dashboard` leaves them out. Every other
+ * record at those names (the apex's validation TXT, MX, CAA) stays the
+ * owner's to change by hand.
+ */
+export const TERRAFORM_SITE_CNAMES = Object.freeze([ZONE_NAME, `www.${ZONE_NAME}`]);
+
+/** Whether a change is to one of the site's Terraform-managed CNAMEs, case- and trailing-dot-insensitively. */
+export function isTerraformSiteCname(change) {
+  const name = String(change.recordName ?? '').toLowerCase().replace(/\.$/, '');
+  return String(change.recordType ?? '').toUpperCase() === 'CNAME' && TERRAFORM_SITE_CNAMES.includes(name);
+}
+
+/**
+ * Whether the entry says which record it touched. A bare delete with no
+ * sibling create in the window carries neither name nor type (both read
+ * `unknown`), so it could be one of the Terraform-managed CNAMEs: the owner's
+ * dashboard allowance does not cover it, and it reads UNEXPECTED (#1929).
+ */
+export function namesItsRecord(change) {
+  const known = (value) => {
+    const text = String(value ?? '').trim();
+    return text !== '' && text !== 'unknown';
+  };
+  return known(change.recordName) && known(change.recordType);
+}
+
+/**
+ * What makes a change the owner's own dashboard edit of a record Terraform
+ * does not manage: a dashboard session, a person, the owner, an entry that
+ * names its record, and not one of the two site CNAMEs (#1929).
+ */
+const OWNER_DASHBOARD_CHECKS = [
+  (change) => change.actorContext === 'dash',
+  (change) => change.actorType === 'user',
+  (change, settings) => isOwner(change, settings),
+  (change) => namesItsRecord(change),
+  (change) => !isTerraformSiteCname(change),
+];
+
 /** The two things Cloudflare's own certificate validation does to its TXT record. */
 const DCV_ACTIONS = new Set(['create', 'delete']);
 
@@ -195,12 +238,15 @@ export const ALLOWLIST = [
   {
     id: 'owner-dashboard',
     reason:
-      "The owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made " +
-      'by design; docs/runbooks/edge-dns-verification.md). A dashboard session signed in as the ' +
+      "The owner's own edits in the Cloudflare dashboard (the apex's validation TXT and the other " +
+      'records Terraform does not manage are changed there by design; docs/runbooks/edge-dns-verification.md). ' +
+      'The apex and `www` CNAMEs are left out: Terraform manages them since #1929, so a dashboard edit of ' +
+      'either is drift and reads UNEXPECTED, and so does an owner edit whose entry names no record ' +
+      '(a bare delete), since it could be either of them. A dashboard session signed in as the ' +
       `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
       'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',
-    matches: (change, settings) => change.actorContext === 'dash' && change.actorType === 'user' && isOwner(change, settings),
+    matches: (change, settings) => OWNER_DASHBOARD_CHECKS.every((check) => check(change, settings)),
   },
   {
     id: 'cloudflare-dcv',

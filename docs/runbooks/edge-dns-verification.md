@@ -38,13 +38,22 @@ recorded with its trigger stated as none.
 
 ## Read this first: only one hostname is proxied
 
+> **Changing with [#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929).**
+> The apex and `www` are in Terraform since #1929, still DNS-only. Once the
+> `site_proxied_hosts` switch proxies one of them, that name is expected to
+> answer from Cloudflare (`Server: cloudflare`, a `CF-RAY`, Cloudflare's
+> certificate), and the checks in
+> [Proxying the site's own names through Cloudflare](proxy-site-hosts.md)
+> replace the apex and `www` expectations below for it. Until then this
+> section stands as written.
+
 The obvious expectation — Cloudflare in front of the whole zone — is wrong
 here, and an operator holding it will raise a finding on every single run.
 
 | Hostname | Answers from | Proxied | Declared in |
 | --- | --- | :---: | --- |
-| `hybridcloudworks.com` (apex) | Azure, the Static Web App | no | not Terraform-managed |
-| `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no | not Terraform-managed |
+| `hybridcloudworks.com` (apex) | Azure, the Static Web App | no, until `site_proxied_hosts` is `"both"` | `infra/frontend.tf`, `cloudflare_dns_record.site_apex` (#1929) |
+| `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no, until `site_proxied_hosts` is `"www"` or `"both"` | `infra/frontend.tf`, `cloudflare_dns_record.site_www` (#1929) |
 | `api-azure.hybridcloudworks.com` | Cloudflare | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions` |
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
 | `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
@@ -53,16 +62,18 @@ here, and an operator holding it will raise a finding on every single run.
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 | `_cf-custom-hostname.go.hybridcloudworks.com` | nothing — a TXT record holding Linkie's ownership proof for `go` | n/a | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go_verification` |
 
-`infra/frontend.tf` declares exactly seven Cloudflare records. ADR 0024
+`infra/frontend.tf` declared exactly seven Cloudflare records until #1929 added the apex and `www`, which makes nine. ADR 0024
 (written when there was one) names `api-azure` in as many words as *the one
 proxied hostname*; `notes` is the second, added for Obsidian Publish (#1350).
 Four things about that table are deliberate rather than oversight:
 
-- **The apex and `www` are not in Terraform.** A Static Web App root domain
-  validates against a token Azure generates when the validation starts, so
-  pinning one in state would drift the moment Azure reissued it. They are
-  created by hand, per
-  [cutover runbook step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app).
+- **The apex and `www` records are in Terraform since #1929; the apex's
+  validation token is not.** A Static Web App root domain validates against
+  a token Azure generates when the validation starts, so pinning that TXT
+  record in state would drift the moment Azure reissued it; it stays a
+  hand-made record. The two CNAMEs were created by hand, per
+  [cutover runbook step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app),
+  and imported unchanged by #1929.
 - **`docs` is DNS-only.** GitHub issues and renews a Pages certificate by
   checking that the CNAME resolves to `*.github.io`; a proxied record answers
   with Cloudflare's addresses instead, and the domain sticks at "certificate
@@ -184,8 +195,8 @@ directly:
 ```
 
 Give it the record's TTL before calling it a finding: five minutes on the
-unproxied records Terraform manages, whatever the Cloudflare dashboard shows on
-the hand-made apex and `www`, and less than that on `api-azure`, which is
+unproxied records Terraform manages, 60 seconds on `www` and automatic (five
+minutes) on the apex while they are DNS-only, and less than that on `api-azure`, which is
 TTL-automatic because a proxied record accepts no other value.
 
 ### 2. The site answers
@@ -349,7 +360,7 @@ it to.
 | `hcp-terraform` | every DNS-record action by the HCP Terraform workspace's token | an account-owned API token (`actor.type` `account`, `actor.context` `api_token`) whose request came from the Cloudflare Terraform provider (user agent `terraform-provider-cloudflare/…`), not from the lab host's address, **while an apply of `hcw/hcw-azure` was in progress** by HCP Terraform's own run record (read with the `TFC_TOKEN` secret the repository already holds; two minutes before `applying-at` to five after the apply ended — `applied-at`, or `errored-at` / `canceled-at` / `force-canceled-at` for an apply that stopped early, which still wrote until then; the 6 and 10 Oct 2026 edits were exactly those). A user agent is a header anyone can send, so the apply is the identity. Without `TFC_TOKEN` the entry is inactive; the token name `hcp-terraform-cloudflare-dns` is matched too, should the log ever carry it |
 | `terraform-owner-token` | the owner's own `terraform` runs from the workstation with a user-owned token (the 2026-10-06 00:26Z edits) — kept as a separate entry so they stay visible: the workspace is the normal path | a user-owned API token (`actor.type` `user`, `actor.context` `api_token`) under the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` e-mail with the provider's user agent |
 | `caddy-acme` | the Caddy runtime token, **only** on a `TXT` record named `_acme-challenge.<lab name>` (`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`); an A record from it, or a challenge for `www`, is the finding the poller exists for | an API-token request from the lab host's address in the `CLOUDFLARE_CADDY_HOST_IP` repository variable (the token's client-IP filter allows that address alone), or the token name in `CLOUDFLARE_CADDY_TOKEN_NAME` should the log carry it |
-| `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made by design, above) | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable |
+| `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex's validation TXT and the other records Terraform does not manage are changed there by design, above), **except** the apex and `www` CNAMEs: Terraform manages those since #1929, so a dashboard edit of either reads UNEXPECTED as drift, and so does an owner edit whose log entry names no record (a bare delete), since it could be either | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable |
 | `cloudflare-dcv` | Cloudflare's own certificate validation: a `TXT` record named exactly `_acme-challenge.hybridcloudworks.com` (the apex, which validates the universal certificate for the apex and its wildcard), created and deleted minutes later when that certificate renews, which starts 30 days before it expires ([Certificate validity periods](https://developers.cloudflare.com/ssl/reference/certificate-validity-periods/)). The zone is a full setup, and for one Cloudflare "handles DCV automatically on your behalf using a TXT record" ([Changing DCV method](https://developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/), read 2026-11-02; the record's name is the `_acme-challenge.<domain>` of the [TXT method](https://developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/methods/txt/)). First seen 2026-10-26 ([#1421](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1421)). A challenge for any other name (`www`, a lab name), an update, or a `system` actor on any other record, stays UNEXPECTED | an actor whose only field is `type` `system`, with no context, id, e-mail, address or token fields, no request method and no user agent. Cloudflare's [audit-log reference](https://developers.cloudflare.com/fundamentals/account/account-security/audit-logs/) defines `system` as changes made automatically by Cloudflare systems; a token's request is authenticated and lands as `account` or `user` with `context` `api_token`, so a token cannot take this shape. That shape was read from the live entries of 2026-10-26, 10-27 and 10-30, not promised by the documentation, which says a system entry "may include associated user context": if a renewal entry ever carries more than `type`, the entry stops matching and the issue re-opens; re-read the shape before widening. Needs no variable; always active |
 
 A Terraform user agent is a header anyone can send, which is why
@@ -475,6 +486,7 @@ than assumed.
 - [DNS token stolen](../runbooks/dns-token-stolen.md) — the roll, when the daily DNS audit
   above names a token on a record it may not touch
 - [Cutover runbook, step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app)
-  — how the apex and `www` were bound, and why they are not in Terraform
+  — how the apex and `www` were bound to the Static Web App by hand; since
+  #1929 their CNAMEs are in Terraform and the apex's validation TXT is not
 - `infra/frontend.tf` — every record, the custom hostname binding, and the
   origin-secret ruleset, each beside its reason
