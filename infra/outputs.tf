@@ -211,21 +211,23 @@ output "workspace_id" {
 # put it there. `site_tag` is the site's identifier in the Cloudflare API
 # path. The API authenticates with an API token, and these are not one.
 #
-# Since #1923 the site is made on the zone with automatic setup, but the
-# token's job is unchanged: the site's own pages are DNS-only, so the beacon
-# the frontend build places with this token is still what counts them.
+# Since #1923 the site is the one Cloudflare made for the zone, imported, with
+# automatic setup on, but the token's job is unchanged: the site's own pages
+# are DNS-only, so the beacon the frontend build places with this token is
+# still what counts them. The run that imports the site also updates it, so
+# on that run the token reads (known after apply).
 #
 # `one()` over the splat, because the resource is counted on
-# cloudflare_account_id (frontend.tf): until the owner sets that variable
-# both outputs read null, and a consumer that gets null has its answer — the
+# cloudflare_account_id and cloudflare_web_analytics_site_tag (frontend.tf):
+# until the owner sets both, both outputs read null, and a consumer that gets null has its answer — the
 # site does not exist yet — instead of an index error on a list of zero.
 output "web_analytics_site_token" {
-  description = "Cloudflare Web Analytics site token, the public value the page's beacon carries; null until cloudflare_account_id is set (#1302)"
+  description = "Cloudflare Web Analytics site token, the public value the page's beacon carries; null until the Web Analytics inputs are set (#1302, #1923)"
   value       = one(cloudflare_web_analytics_site.hcw[*].site_token)
 }
 
 output "web_analytics_site_tag" {
-  description = "Cloudflare Web Analytics site tag, the site's identifier in the API path; null until cloudflare_account_id is set (#1302)"
+  description = "Cloudflare Web Analytics site tag, the site's identifier in the API path; null until the Web Analytics inputs are set (#1302, #1923)"
   value       = one(cloudflare_web_analytics_site.hcw[*].site_tag)
 }
 

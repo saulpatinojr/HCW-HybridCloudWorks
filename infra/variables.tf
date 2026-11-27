@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its notes rule) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its two rules) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1047,10 +1047,10 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
-# The Cloudflare ACCOUNT, not the zone: cloudflare_web_analytics_site and
-# cloudflare_web_analytics_rule in frontend.tf are account-level resources and
-# the API takes the account id in its path (the site also names the zone, by
-# cloudflare_zone_id, since #1923). An identifier, not a credential: the dashboard prints it on the
+# The Cloudflare ACCOUNT, not the zone: the Web Analytics site and its rules
+# in frontend.tf are account-level resources and the API takes the account id
+# in its path (the site also names the zone, by cloudflare_zone_id, since
+# #1923). An identifier, not a credential: the dashboard prints it on the
 # zone's Overview page under API, beside the zone id, and the GitHub
 # repository variable CLOUDFLARE_ACCOUNT_ID already holds the same value for
 # the daily DNS audit (docs/standards/required-inputs.md §4.2). Set it in the
@@ -1060,23 +1060,50 @@ variable "cloudflare_zone_id" {
 # like cloudflare_zone_id, because of what an unset value does to the plan.
 # The zone id is the address of every DNS record this estate serves on, so a
 # plan with no zone id has nothing to say and SHOULD fail. The account id
-# serves two resources that no visitor-facing path depends on, and a required
-# variable would fail every plan — the merge's queued run, the speculative
-# plans, tfc-plan-check's read — until the owner has typed the value into the
-# workspace. Null keeps the apply whole: the Web Analytics site, its notes
-# rule and its two app-setting readers are simply not created until the id is
-# set, and the outputs read null. Thirty-two lowercase hex characters, which is the shape
+# serves Web Analytics only, which no visitor-facing path depends on, and a
+# required variable would fail every plan — the merge's queued run, the
+# speculative plans, tfc-plan-check's read — until the owner has typed the
+# value into the workspace. Null keeps the apply whole: the Web Analytics
+# site is not imported, its two rules are not created and its two
+# app-setting readers stay empty until this and
+# cloudflare_web_analytics_site_tag (below) are both set, and the outputs
+# read null. Thirty-two lowercase hex characters, which is the shape
 # Cloudflare account ids take; a wrong value fails at plan time here rather
 # than at apply time as a 404 on /accounts/<id>/rum/site_info that names the
 # wrong thing.
 variable "cloudflare_account_id" {
-  description = "Cloudflare account id (32 hex characters) that owns the zone; null until set, which leaves the Web Analytics site and its rule uncreated (#1302, #1923)"
+  description = "Cloudflare account id (32 hex characters) that owns the zone; with cloudflare_web_analytics_site_tag, it brings the Web Analytics site under Terraform (#1302, #1923). Null until set."
   type        = string
   default     = null
 
   validation {
     condition     = var.cloudflare_account_id == null || can(regex("^[0-9a-f]{32}$", var.cloudflare_account_id))
     error_message = "cloudflare_account_id must be the 32-character lowercase hex account id the Cloudflare dashboard shows under API on the zone Overview page, or null."
+  }
+}
+
+# The tag of the Web Analytics site Cloudflare already made for the zone
+# (#1923), so Terraform imports that site instead of trying to create a
+# second one, which the API refuses. An identifier, not a credential: it is
+# the site's id in the API path, and the hand-placed beacon's token, not this,
+# is what pages carry. It is shown for the zone's site in the Cloudflare
+# dashboard's Web Analytics section, and the read-only list
+# GET /accounts/{account_id}/rum/site_info/list (Account Settings → Read)
+# returns it as `site_tag`; the admin Cloudflare page does not show Web
+# Analytics. Set it in the hcw-azure workspace as a plain Terraform variable,
+# beside
+# cloudflare_account_id. Null by default for the same reason as that one:
+# until both are set, nothing of Web Analytics is planned. The value is never
+# written in this public repository. Thirty-two lowercase hex characters, the
+# shape Cloudflare's API schema gives site tags.
+variable "cloudflare_web_analytics_site_tag" {
+  description = "Tag of the existing Cloudflare Web Analytics site for the zone (Cloudflare dashboard, Web Analytics); with cloudflare_account_id set, the site is imported (#1923). Null until set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cloudflare_web_analytics_site_tag == null || can(regex("^[0-9a-f]{32}$", var.cloudflare_web_analytics_site_tag))
+    error_message = "cloudflare_web_analytics_site_tag must be the 32-character lowercase hex tag of the zone's Web Analytics site, or null."
   }
 }
 
@@ -1113,13 +1140,13 @@ variable "cloudflare_account_id" {
 # cleanly and fails on the ruleset alone with "Authentication error (10000)",
 # which names neither the token nor the permission.
 #
-# AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. cloudflare_web_analytics_site
-# (frontend.tf) is created through POST /accounts/{account_id}/rum/site_info,
-# which Cloudflare's API schema lists under the permission Account →
-# Account Settings → Write. Add it to the same token
-# (hcp-terraform-cloudflare-dns in the dashboard) before the apply that
-# creates the site. Since #1923 the same apply also creates
-# cloudflare_web_analytics_rule.notes_excluded, through POST
+# AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. Since #1923 the Web Analytics
+# site (frontend.tf) is imported, read through GET and then updated through
+# PUT /accounts/{account_id}/rum/site_info/{site_id}; Cloudflare's API schema
+# lists Account → Account Settings → Read and Write for those. Add Write (it
+# includes Read) to the same token (hcp-terraform-cloudflare-dns in the
+# dashboard) before the apply that imports the site. The same apply creates
+# the two exclusion rules (notes_excluded and api_excluded) through POST
 # /accounts/{account_id}/rum/v2/{ruleset_id}/rule. That endpoint lists no
 # permission in the schema (read 2026-11-27); every site endpoint and the bulk
 # rules endpoint (POST .../rum/v2/{ruleset_id}/rules) list Account Settings

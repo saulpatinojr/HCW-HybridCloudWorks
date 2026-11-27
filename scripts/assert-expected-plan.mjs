@@ -61,8 +61,8 @@
  *
  * An update missing any of those markers is not guessed at: the check exits
  * 2. So does a change with no action list. An action it does not recognise,
- * such as `["forget"]`, and an import or a move, are UNEXPECTED even when the
- * action is a no-op.
+ * such as `["forget"]`, a move, and an import nobody declared are UNEXPECTED
+ * even when the action is a no-op.
  *
  * ## Declaring an intended change
  *
@@ -79,7 +79,11 @@
  *
  * A new or removed resource is declared by its action instead, since there
  * are no values to compare: `{ address, action: 'create', reason }` (or
- * `'delete'`), with the address exact, for_each key included (#816).
+ * `'delete'`), with the address exact, for_each key included (#816). An
+ * import block's import is declared the same way, `action: 'import'`
+ * (#1923). It covers the import alone: if the imported resource is also
+ * updated in the same plan, each changed attribute is declared beside it,
+ * like any update. The import id is never written in a declaration.
  *
  * `path` is written as this script prints it. The entry matches that address,
  * that path and exactly those two values, so a reviewer reads the expectation
@@ -125,7 +129,12 @@
 
 import { readFileSync } from "node:fs";
 
-import { actionsOf, classify, sideEffects } from "./lib/plan-actions.mjs";
+import {
+  actionsOf,
+  classify,
+  IMPORT_NOTE,
+  sideEffects,
+} from "./lib/plan-actions.mjs";
 import {
   declarationLines,
   findDeclaredAction,
@@ -502,24 +511,55 @@ export const DECLARED = [
   // before the first apply, the two runs are one, the undefined -> ""
   // entries match nothing, and the plan is read by hand the same way.
   //
-  // #1923: the owner set cloudflare_account_id on 2026-11-27 and Cloudflare
-  // refused the site's create (400, code 10029, autoInstallRequired), so
-  // nothing was created and the entry stays. The site is now made on the
-  // zone with automatic setup, and the same run also creates the rule that
-  // leaves notes.hybridcloudworks.com out of measurement. Both are creates
-  // at fixed addresses and match by address alone; delete both once the site
-  // and the rule exist.
+  // #1923 replaced that create. The owner set cloudflare_account_id on
+  // 2026-11-27 and Cloudflare refused the create (400, code 10029,
+  // autoInstallRequired): it had made a site for the zone itself on
+  // 2026-06-30. So the site is imported once cloudflare_account_id and
+  // cloudflare_web_analytics_site_tag are both set, and that run holds:
+  //   - the import, declared by address (its id is the owner's values and is
+  //     never written here);
+  //   - the same resource's in-place update, enabled and lite null -> true:
+  //     the provider never reads either back, so the import leaves both null.
+  //     The update also plans the site's computed values (site_token,
+  //     snippet, rules, ruleset) as (known after apply), which cannot be
+  //     declared and are read by hand;
+  //   - the two rules' creates;
+  //   - CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
+  //     values, which this public file does not hold, read by hand too.
+  // Delete these five entries once the site is in state and both rules exist.
   {
     address: "cloudflare_web_analytics_site.hcw[0]",
-    action: "create",
+    action: "import",
     reason:
-      "#1302/#1923: the Web Analytics site on the zone, created once cloudflare_account_id is set",
+      "#1923: the Web Analytics site Cloudflare made for the zone, brought under Terraform",
+  },
+  {
+    address: "cloudflare_web_analytics_site.hcw[0]",
+    path: "enabled",
+    before: null,
+    after: true,
+    reason:
+      "#1923: measurement on, set after the import (the provider never reads it back)",
+  },
+  {
+    address: "cloudflare_web_analytics_site.hcw[0]",
+    path: "lite",
+    before: null,
+    after: true,
+    reason:
+      "#1923: the lite option, set after the import (the provider never reads it back)",
   },
   {
     address: "cloudflare_web_analytics_rule.notes_excluded[0]",
     action: "create",
     reason:
-      "#1923: the rule that leaves notes.hybridcloudworks.com out of Web Analytics, created with the site",
+      "#1923: the rule that leaves notes.hybridcloudworks.com out of Web Analytics",
+  },
+  {
+    address: "cloudflare_web_analytics_rule.api_excluded[0]",
+    action: "create",
+    reason:
+      "#1923: the rule that leaves api-azure.hybridcloudworks.com's landing page out of Web Analytics",
   },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
@@ -605,8 +645,10 @@ export const DECLARED = [
   // Kept, because "not in this plan" cannot tell them from applied: the three
   // arming plans (PROBE_AI_PROVIDERS, AMBASSADOR_AUDIENCE_MONTHLY,
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
-  // (lab_ssh_loopback_only) and #1302's Web Analytics site create, with
-  // #1923's notes rule beside it since (cloudflare_account_id). Each is a value the owner sets in the workspace.
+  // (lab_ssh_loopback_only) and #1302's Web Analytics site, an import with
+  // two rule creates since #1923 (cloudflare_account_id and
+  // cloudflare_web_analytics_site_tag). Each is a value the owner sets in
+  // the workspace.
   //
   //
   // #1530's four declared changes (the Cosmos request-log filter moved into a
@@ -1035,8 +1077,15 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   for (const change of changes) {
     const actions = actionsOf(change);
     const action = classify(actions);
-    for (const note of sideEffects(change, actions))
-      unexpected.push(`${change.address}: ${note}`);
+    for (const note of sideEffects(change, actions)) {
+      // A declared import passes (#1923); every other side effect, and an
+      // import nobody declared, is named.
+      const declaredImport =
+        note === IMPORT_NOTE &&
+        findDeclaredAction(declared, change.address, "import");
+      if (declaredImport) matched.add(declaredImport);
+      else unexpected.push(`${change.address}: ${note}`);
+    }
     if (action === "no-op") continue;
     seen.add(change.address);
     unexpected.push(...checkChange(change, action, context));

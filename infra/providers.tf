@@ -6,7 +6,10 @@ terraform {
   # Upper-bounded (T-725). ">= 1.5" silently admits a future Terraform 2.x,
   # whose breaking changes would arrive as a surprise on whichever runner
   # upgraded first. The standard asks for pinned versions; this pins the major.
-  required_version = "~> 1.5"
+  # The floor is 1.7 since #1923: the Web Analytics import block in
+  # frontend.tf takes `for_each` (1.7) and an expression for its id (1.6).
+  # HCP Terraform and CI already run later 1.x releases.
+  required_version = "~> 1.7"
 
   required_providers {
     azurerm = {

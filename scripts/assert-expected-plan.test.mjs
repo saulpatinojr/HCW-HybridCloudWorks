@@ -747,6 +747,65 @@ describe('every change is read, not only the ones classify names (#719 review)',
     ]);
   });
 
+  it('passes a declared import at exactly its address, and only the import (#1923)', () => {
+    const declaration = { address: 'azurerm_key_vault.imported', action: 'import', reason: 'test' };
+    const importing = (address, actions = ['no-op']) => ({ address, change: { actions, importing: { id: 'x' } } });
+
+    let { plan } = fixture();
+    plan.resource_changes.push(importing('azurerm_key_vault.imported'));
+    let result = checkPlan(plan, { declared: [declaration] });
+    expect(result).toMatchObject({ ok: true, unexpected: [] });
+    expect(result.declared).toEqual([declaration]);
+    expect(declarationLines(result)).toEqual(['DECLARED    azurerm_key_vault.imported import (test)']);
+
+    // Another address is still named.
+    ({ plan } = fixture());
+    plan.resource_changes.push(importing('azurerm_key_vault.other'));
+    result = checkPlan(plan, { declared: [declaration] });
+    expect(result.unexpected).toEqual(['azurerm_key_vault.other: import']);
+    expect(result.unused).toEqual([declaration]);
+
+    // A declared create does not cover an import, and a declared import does not cover a create.
+    ({ plan } = fixture());
+    plan.resource_changes.push(importing('azurerm_key_vault.imported'));
+    expect(checkPlan(plan, { declared: [{ ...declaration, action: 'create' }] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: import',
+    ]);
+    ({ plan } = fixture());
+    plan.resource_changes.push({ address: 'azurerm_key_vault.imported', change: { actions: ['create'] } });
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual(['azurerm_key_vault.imported: create']);
+
+    // A move beside a declared import is still named.
+    ({ plan } = fixture());
+    plan.resource_changes.push({ ...importing('azurerm_key_vault.imported'), previous_address: 'azurerm_key_vault.old' });
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: moved from azurerm_key_vault.old',
+    ]);
+  });
+
+  it('holds an imported resource’s update to its own declarations, separately from the import (#1923)', () => {
+    const importDeclaration = { address: 'azurerm_key_vault.imported', action: 'import', reason: 'test' };
+    const update = {
+      address: 'azurerm_key_vault.imported',
+      change: {
+        actions: ['update'],
+        importing: { id: 'x' },
+        before: { enabled: null },
+        after: { enabled: true },
+        after_unknown: {},
+        before_sensitive: {},
+        after_sensitive: {},
+      },
+    };
+    const { plan } = fixture();
+    plan.resource_changes.push(update);
+    expect(checkPlan(plan, { declared: [importDeclaration] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: update enabled: null -> true',
+    ]);
+    const enabled = { address: 'azurerm_key_vault.imported', path: 'enabled', before: null, after: true, reason: 'test' };
+    expect(checkPlan(plan, { declared: [importDeclaration, enabled] })).toMatchObject({ ok: true, unexpected: [] });
+  });
+
   it('keeps a data source read quiet', () => {
     const { plan } = fixture();
     plan.resource_changes.push({ address: 'data.azurerm_client_config.current', change: { actions: ['read'] } });
@@ -892,8 +951,8 @@ describe('DECLARED', () => {
       expect(typeof declaration.address, label).toBe('string');
       expect(typeof declaration.reason === 'string' && declaration.reason.length > 0, label).toBe(true);
       if (declaration.action) {
-        // A create or delete (#816): no path, no values, nothing else.
-        expect(['create', 'delete'], label).toContain(declaration.action);
+        // A create, delete (#816) or import (#1923): no path, no values, nothing else.
+        expect(['create', 'delete', 'import'], label).toContain(declaration.action);
         expect(Object.keys(declaration).sort(), label).toEqual(['action', 'address', 'reason']);
       } else {
         expect(typeof declaration.path, label).toBe('string');
@@ -1239,55 +1298,118 @@ describe('DECLARED', () => {
     ]) {
       expect(paths, name).not.toContain(`app_settings.${name}`);
     }
-    // The three arming plans and the site create stay: "not in this plan"
-    // cannot tell them from applied, and each waits on a workspace value.
+    // The three arming plans and the site stay: "not in this plan" cannot
+    // tell them from applied, and each waits on a workspace value. The site
+    // is an import since #1923, no longer a create.
     const arming = (flag) =>
       DECLARED.filter((entry) => entry.path === `app_settings.${flag}`).map((entry) => [entry.before, entry.after]);
     expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_SWEEP_VISITOR_SESSIONS')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_PROBE_AI_PROVIDERS')).toEqual([['false', 'true']]);
-    expect(creates).toContain('cloudflare_web_analytics_site.hcw[0]');
+    expect(creates).not.toContain('cloudflare_web_analytics_site.hcw[0]');
+    expect(
+      DECLARED.filter((entry) => entry.address === 'cloudflare_web_analytics_site.hcw[0]' && entry.action).map(
+        (entry) => entry.action
+      )
+    ).toEqual(['import']);
   });
 
-  it('declares the Web Analytics site and its notes rule as creates, made the way Cloudflare accepts (#1923)', () => {
-    // Delete this test with the two declarations, once the site and the rule exist.
+  it('declares the Web Analytics site’s import and update and its two rules’ creates, and nothing that would recreate the site (#1923)', () => {
+    // Delete this test with the five declarations, once the site and the rules exist.
     const SITE = 'cloudflare_web_analytics_site.hcw[0]';
-    const RULE = 'cloudflare_web_analytics_rule.notes_excluded[0]';
-    for (const address of [SITE, RULE]) {
-      expect(DECLARED.filter((entry) => entry.address === address).map((entry) => entry.action), address).toEqual(['create']);
-    }
-    const block = (type, name) => {
-      const match = new RegExp(`resource "${type}" "${name}" \\{\\n([\\s\\S]*?)\\n\\}`).exec(infraSource);
-      expect(match, `${type}.${name} not found`).not.toBeNull();
-      return match[1];
+    const RULES = ['cloudflare_web_analytics_rule.notes_excluded[0]', 'cloudflare_web_analytics_rule.api_excluded[0]'];
+    const actionsAt = (address) =>
+      DECLARED.filter((entry) => entry.address === address && entry.action).map((entry) => entry.action);
+    // Cloudflare made the site for the zone itself; a create is what the API refused.
+    expect(actionsAt(SITE)).toEqual(['import']);
+    for (const rule of RULES) expect(actionsAt(rule), rule).toEqual(['create']);
+    // The import leaves enabled and lite null (the provider never reads them back), and the update sets them.
+    const siteUpdates = DECLARED.filter((entry) => entry.address === SITE && entry.path)
+      .map(({ path, before, after }) => [path, before, after])
+      .sort();
+    expect(siteUpdates).toEqual([
+      ['enabled', null, true],
+      ['lite', null, true],
+    ]);
+
+    const block = (header, label) => {
+      const start = infraSource.indexOf(`${header} {\n`);
+      expect(start, `${label} not found`).toBeGreaterThanOrEqual(0);
+      const body = infraSource.slice(start + header.length + 3);
+      return body.slice(0, body.indexOf('\n}'));
     };
-    const site = block('cloudflare_web_analytics_site', 'hcw');
-    const rule = block('cloudflare_web_analytics_rule', 'notes_excluded');
-    // Both counted on the account id, so the [0] addresses are the only ones a plan can hold.
-    for (const body of [site, rule]) {
-      expect(body).toMatch(/^\s*count\s*=\s*var\.cloudflare_account_id == null \? 0 : 1$/m);
+    const site = block('resource "cloudflare_web_analytics_site" "hcw"', 'the site');
+    const notes = block('resource "cloudflare_web_analytics_rule" "notes_excluded"', 'the notes rule');
+    const api = block('resource "cloudflare_web_analytics_rule" "api_excluded"', 'the api-azure rule');
+    const imports = [...infraSource.matchAll(/^import \{\n([\s\S]*?)\n\}/gm)]
+      .map((match) => match[1])
+      .filter((body) => body.includes('cloudflare_web_analytics_site.hcw'));
+    expect(imports).toHaveLength(1);
+    const [importBlock] = imports;
+
+    // One gate for all four: both inputs set. With either missing, nothing is imported or created.
+    expect(infraSource).toMatch(
+      /^\s*web_analytics_managed\s*=\s*var\.cloudflare_account_id != null && var\.cloudflare_web_analytics_site_tag != null$/m
+    );
+    for (const body of [site, notes, api]) {
+      expect(body).toMatch(/^\s*count\s*=\s*local\.web_analytics_managed \? 1 : 0$/m);
     }
-    // Cloudflare refused a host-only manual site for a domain that is a zone in
-    // the account (code 10029, autoInstallRequired): the site is made on the zone,
-    // with automatic setup written out (the provider reads it back) and no host.
+    // The provider's import id is `<account_id>/<site_id>`; for_each makes the import conditional.
+    expect(importBlock).toMatch(/^\s*to\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]$/m);
+    expect(importBlock).toMatch(/^\s*id\s*=\s*each\.value$/m);
+    expect(importBlock).toContain(
+      'for_each = local.web_analytics_managed ? { hcw = "${var.cloudflare_account_id}/${var.cloudflare_web_analytics_site_tag}" } : {}'
+    );
+    // for_each on an import block needs Terraform 1.7.
+    expect(infraSource).toMatch(/^\s*required_version\s*=\s*"~> 1\.7"$/m);
+
+    // The site as Cloudflare made it: on the zone, automatic setup written out (the provider reads it back), no host.
     expect(site).toMatch(/^\s*zone_tag\s*=\s*var\.cloudflare_zone_id$/m);
     expect(site).toMatch(/^\s*auto_install\s*=\s*true$/m);
     expect(site).toMatch(/^\s*enabled\s*=\s*true$/m);
+    expect(site).toMatch(/^\s*lite\s*=\s*true$/m);
     expect(site).not.toMatch(/^\s*host\s*=/m);
-    // The rule excludes the one proxied name that serves HTML, on the site's own ruleset.
-    expect(rule).toMatch(/^\s*ruleset_id\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]\.ruleset\.id$/m);
-    expect(rule).toMatch(/^\s*host\s*=\s*"notes\.\$\{var\.domain\}"$/m);
-    expect(rule).toMatch(/^\s*inclusive\s*=\s*false$/m);
-    expect(rule).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
-    // The plan the owner's run will hold: both creates beside the permanent diff pass the shipped list.
+    // Unsetting the inputs once the site is in state must stop the plan, not delete Cloudflare's site.
+    expect(site).toMatch(/^\s*prevent_destroy\s*=\s*true$/m);
+    // Each rule excludes one proxied name that serves HTML, on the site's own ruleset.
+    for (const [body, host] of [
+      [notes, 'notes'],
+      [api, 'api-azure'],
+    ]) {
+      expect(body).toMatch(/^\s*ruleset_id\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]\.ruleset\.id$/m);
+      expect(body).toContain(`host       = "${host}.\${var.domain}"`);
+      expect(body).toMatch(/^\s*inclusive\s*=\s*false$/m);
+      expect(body).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
+    }
+
+    // The owner's run, as the plan JSON will carry it: the import with its update, and the two creates.
+    // What is left is the site's computed values going unknown, read by hand, and never the import id.
+    const importId = 'account-placeholder/site-placeholder';
     const plan = expectedPlan();
     plan.resource_changes.push(
-      { address: SITE, change: { actions: ['create'] } },
-      { address: RULE, change: { actions: ['create'] } }
+      {
+        address: SITE,
+        change: {
+          actions: ['update'],
+          importing: { id: importId },
+          before: { enabled: null, lite: null, auto_install: true, site_token: 'token-before', rules: [] },
+          after: { enabled: true, lite: true, auto_install: true },
+          after_unknown: { site_token: true, rules: true },
+          before_sensitive: {},
+          after_sensitive: {},
+        },
+      },
+      ...RULES.map((address) => ({ address, change: { actions: ['create'] } }))
     );
     const result = checkPlan(plan);
-    expect(result.unexpected).toEqual([]);
-    expect(result.declared.map((entry) => entry.address)).toEqual(expect.arrayContaining([SITE, RULE]));
+    expect(result.declared.map((entry) => `${entry.address} ${entry.action ?? entry.path}`).sort()).toEqual(
+      [`${SITE} import`, `${SITE} enabled`, `${SITE} lite`, ...RULES.map((rule) => `${rule} create`)].sort()
+    );
+    expect(result.unexpected).toEqual([
+      `${SITE}: update rules: (a list of 0 items) -> (known after apply)`,
+      `${SITE}: update site_token: "token-before" -> (known after apply)`,
+    ]);
+    expect(result.unexpected.join('\n')).not.toContain(importId);
   });
 
   it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {
