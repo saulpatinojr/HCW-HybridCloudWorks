@@ -27,11 +27,15 @@ Determine whether any unauthorized alterations occurred prior to token revocatio
    - Filter by Action: `dns_record_create`, `dns_record_update`, `dns_record_delete`, `zone_setting_change`, `page_rule_create`, `custom_ssl_create`.
    - Filter by Token: identify calls authenticated by the compromised token.
 3. Check active DNS records:
-   Verify that every live DNS entry matches a `cloudflare_dns_record` resource in `infra/frontend.tf` or `infra-lab/dns.tf`. Those files are the full list; the main records are, for example:
-   - `hybridcloudworks.com` -> SWA alias / apex
-   - `www.hybridcloudworks.com` -> SWA alias
-   - `api-azure.hybridcloudworks.com` -> `func-site-prod-cus-01.azurewebsites.net`
-   - `lab.hybridcloudworks.com` -> Lab host IPv4
+   Compare every live DNS entry with the record table in
+   [`edge-dns-verification.md`](edge-dns-verification.md), which lists each
+   record and where it is declared. Two kinds:
+   - **Made by Terraform:** the `cloudflare_dns_record` resources in
+     `infra/frontend.tf` (for example `api-azure`, `docs`, `notes` and the
+     ownership TXT records) and `infra-lab/dns.tf` (the `lab` records).
+   - **Made by hand, not in Terraform:** the apex `hybridcloudworks.com` and
+     `www`, which point at the Static Web App. Check them against the table,
+     not against the Terraform files.
 4. If unauthorized records were created or modified:
    - Delete rogue records immediately via the Cloudflare dashboard.
    - Purge Cloudflare edge cache completely (Caching -> Configuration -> Purge Everything).
