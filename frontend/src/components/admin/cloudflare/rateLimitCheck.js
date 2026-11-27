@@ -31,14 +31,16 @@ const rulesWord = (n) => `${n} API rate limit rule${n === 1 ? '' : 's'}`;
 const isVerb = (n) => (n === 1 ? 'is' : 'are');
 
 /**
- * A rule that limits: Cloudflare treats a rule with no `enabled` flag as on
- * (only `false` is off), and a rule whose action is `log` (paid plans only)
- * records requests without limiting any, so it does not count.
+ * A rule that limits. On means what the server's agent guard means
+ * (rules-guards.js): no `enabled` flag (Cloudflare's default) or `true`; any
+ * other value (false, null, 0, the text 'false') counts as off, so an odd
+ * answer fails safe. A rule whose action is `log` (paid plans only) records
+ * requests without limiting any, so it does not count either.
  */
 const isOn = (rule) =>
   Boolean(rule) &&
   typeof rule === 'object' &&
-  rule.enabled !== false &&
+  (rule.enabled === undefined || rule.enabled === true) &&
   String(rule.action ?? '').toLowerCase() !== 'log';
 
 function onSentence(on, total) {

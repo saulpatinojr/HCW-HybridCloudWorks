@@ -108,6 +108,17 @@ describe('the rate limit verdict', () => {
     expect(expired.sentence).toContain('Your session has expired.');
   });
 
+  it('counts as on only a rule with no enabled flag or enabled true, as the server guard does', () => {
+    for (const enabled of [null, 0, 'false', 'true', 1]) {
+      expect(rateLimitVerdict({ ruleset: { rules: [rule({ enabled })] } })).toMatchObject({
+        state: 'off',
+        status: 'degraded',
+      });
+    }
+    expect(rateLimitVerdict({ ruleset: { rules: [rule({ enabled: true })] } }).state).toBe('on');
+    expect(rateLimitVerdict({ ruleset: { rules: [rule()] } }).state).toBe('on');
+  });
+
   it('does not count a rule that only logs, since it limits nothing', () => {
     const logging = rateLimitVerdict({ ruleset: { rules: [rule({ action: 'log' })] } });
     expect(logging).toMatchObject({ state: 'off', status: 'degraded' });
