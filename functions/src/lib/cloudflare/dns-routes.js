@@ -1,6 +1,12 @@
 /**
  * cloudflare/dns-routes.js — the Cloudflare page's DNS routes (#1905): list
- * every record, add one, edit one. There is no delete.
+ * the records a page at a time, add one, edit one. There is no delete.
+ *
+ * The list answers one Cloudflare page (100 records) per request (#1907),
+ * named by `?page=` (1-based, 1 to 1000, page 1 when left out), with the
+ * zone's totals, so a zone with thousands of records is read in short
+ * requests rather than one long one. A request makes at most two calls to
+ * Cloudflare: the lab zone's id lookup (the first time only) and the page.
  *
  * A name a caller sends is checked strictly (protected.js checkDnsName: no
  * empty part, `@` only on its own, `*` only as the whole first part) and
@@ -122,10 +128,30 @@ const pickDns = (record, zoneName) => ({
 /** What the audit row keeps of a record: never its content. */
 const routing = (record) => ({ proxied: record?.proxied ?? null, ttl: record?.ttl ?? null });
 
-/** GET cms/cloudflare/dns. Every record, up to the client's page cap; `truncated` when the zone holds more. */
-export async function listDns({ client, zone }) {
-  const { records, truncated } = await client.listDns();
-  return json(200, { ok: true, records: records.map((record) => pickDns(record, zone.name)), truncated });
+/** The highest page the list route reads (100,000 records at 100 a page). */
+export const MAX_DNS_PAGE = 1000;
+const PAGE_PATTERN = /^[1-9][0-9]{0,3}$/;
+
+/** The `?page=` a request names (1 when it names none), refused (400) when empty, repeated or outside 1 to MAX_DNS_PAGE. */
+export function pageOf(request) {
+  const values = request?.query?.getAll?.('page') ?? [];
+  if (values.length === 0) return 1;
+  const page = values.length === 1 && PAGE_PATTERN.test(values[0]) ? Number(values[0]) : 0;
+  if (page < 1 || page > MAX_DNS_PAGE) throw bad(`page must be a whole number from 1 to ${MAX_DNS_PAGE}, given once.`);
+  return page;
+}
+
+/**
+ * GET cms/cloudflare/dns. One page of records, each marked locked or not,
+ * with the page, its size, the zone's totals (null when Cloudflare sent
+ * none) and whether another page follows.
+ */
+export async function listDns({ request, client, zone }) {
+  const page = pageOf(request);
+  const { records, ...paging } = await client.listDnsPage(page);
+  // No page after the last one this route reads, so a caller is never offered page 1001.
+  const hasMore = paging.hasMore && page < MAX_DNS_PAGE;
+  return json(200, { ok: true, records: records.map((record) => pickDns(record, zone.name)), ...paging, hasMore });
 }
 
 /** Refuses a name protected in the zone (409, with the reason). */

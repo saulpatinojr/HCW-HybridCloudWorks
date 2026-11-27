@@ -41,9 +41,10 @@ const EDGE_TIMEOUT_MS = 100_000;
 const MIN_HEADROOM_MS = 5_000;
 
 /**
- * The client's timeout tables, read from its source. The lookup is the exact
- * name first (`FUNCTION_TIMEOUT_MS`), then a shape for routes whose name
- * carries an id (`PATTERN_TIMEOUT_MS`), then `DEFAULT_TIMEOUT_MS`. A route in
+ * The client's timeout tables, read from its source. The lookup drops any
+ * query string, then tries the exact name first (`FUNCTION_TIMEOUT_MS`),
+ * then a shape for routes whose name carries an id (`PATTERN_TIMEOUT_MS`),
+ * then `DEFAULT_TIMEOUT_MS`. A route in
  * neither table gets the default; `patternMs` says whether an id route is
  * caught by a shape instead.
  */
@@ -53,8 +54,9 @@ function clientTimeouts() {
   const table = source.match(/const FUNCTION_TIMEOUT_MS = \{([\s\S]*?)\n\};/);
   const patterns = source.match(/const PATTERN_TIMEOUT_MS = \[([\s\S]*?)\];\n/);
   const lookup =
-    source.includes('if (FUNCTION_TIMEOUT_MS[fnName]) return FUNCTION_TIMEOUT_MS[fnName];') &&
-    source.includes('PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(fnName));') &&
+    source.includes("const [route] = String(fnName).split('?');") &&
+    source.includes('if (FUNCTION_TIMEOUT_MS[route]) return FUNCTION_TIMEOUT_MS[route];') &&
+    source.includes('PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(route));') &&
     source.includes('return matched ? matched[1] : DEFAULT_TIMEOUT_MS;');
   if (!fallback || !table || !patterns || !lookup) {
     throw new Error(
