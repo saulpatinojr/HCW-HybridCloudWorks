@@ -1648,25 +1648,23 @@ describe('DECLARED', () => {
     expect(checkPlan(again).unexpected).toEqual([`${address}: create`]);
   });
 
-  it('prunes what applied by 2026-11-27, keeps the arming plans and the two gated role assignments, and nothing else', () => {
+  it('prunes what applied by 2026-11-27, keeps the four arming plans, and nothing else', () => {
     // The plan check on run-su7kVbxufZn3LPdW matched #1923's nine entries as DECLARED (they applied in that
     // run) and printed every other entry pruned that day as "declared, not in this plan"; run-uBChZAdiYBb1Rma1's
     // plan (commit a7aa1077) matched no declaration. Each pruned change is unconditional in infra/ or was read
-    // live that day. What stays waits on the owner: four arming plans (each flag live "false") and two role
-    // assignments counted on a workspace variable that docs/standards/required-inputs.md §4.1 records as
-    // MISSING (not set) for storage_firewall_remover_enabled and lab_arc_run_command_enabled.
+    // live that day. What stays waits on the owner: four arming plans (each flag live "false"). The two role
+    // assignments counted on storage_firewall_remover_enabled and lab_arc_run_command_enabled were pruned too,
+    // once the owner confirmed on 2026-11-27 that both workspace variables are true (both assignments were
+    // read live that day); docs/standards/required-inputs.md §4.1 records both as SET.
     expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${entry.before} -> ${entry.after}`}`)).toEqual([
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS: false -> true`,
-      'azurerm_role_assignment.github_manifest_window_storage_firewall[0] create',
-      'azurerm_role_assignment.github_arc_run_operator[0] create',
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE: false -> true`,
     ]);
-    // Both kept creates are counted on a workspace variable, so a plan without them says nothing about
-    // whether they applied: that depends on the value set in the workspace, which this file cannot read.
-    // The record of that value is required-inputs.md §4.1, and the default in the tree is false, so an
-    // unset variable plans nothing.
+    // The two pruned role assignments are still in infra/, counted on their workspace variable, so the prune
+    // hides no destroy. The default in the tree stays false (a fresh workspace plans nothing until the owner
+    // has made the role); the workspace holds true, so a plan that destroys either is UNEXPECTED and read.
     for (const [name, variable] of [
       ['github_manifest_window_storage_firewall', 'storage_firewall_remover_enabled'],
       ['github_arc_run_operator', 'lab_arc_run_command_enabled'],

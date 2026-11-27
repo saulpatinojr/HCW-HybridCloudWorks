@@ -438,7 +438,8 @@ export const DECLARED = [
   //   not.
   // - #1590's Run Command identity, github_arc_run, and its two lab-host-arc
   //   credentials (unconditional in infra/oidc.tf). Its role assignment,
-  //   github_arc_run_operator[0], stays declared below.
+  //   github_arc_run_operator[0], was kept that morning and deleted later the
+  //   same day, below.
   // - #1617 PR 2's three deletes: the deploy identity's two `production`
   //   credentials and its github_deploy_swa_token grant. Their blocks are gone
   //   from infra/oidc.tf.
@@ -632,37 +633,16 @@ export const DECLARED = [
   // (the header: an unknown difference cannot be) and was read by hand
   // against the list in the pull request.
   //
-  // #1463: planned only once the owner has created the role and set
-  // storage_firewall_remover_enabled = true (infra/oidc.tf, count on that
-  // variable). Kept on 2026-11-27 because what decides it is the workspace
-  // value, which this file cannot read, and docs/standards/required-inputs.md
-  // §4.1 records it as MISSING. An assignment of HCW Storage Firewall Writer
-  // to github_manifest_window on the functions storage account was read live
-  // that day (created 2026-11-04), so the record may be stale: delete this
-  // entry once the workspace value is read as true.
-  {
-    address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
-    action: "create",
-    reason:
-      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
-  },
-
-  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity's
-  // role assignment, planned only once the owner has created HCW Arc Run
-  // Command Operator and set lab_arc_run_command_enabled = true
-  // (Required-Inputs §4.6b; infra/oidc.tf, count on that variable). The
-  // identity and its two credentials applied and were deleted here on
-  // 2026-11-27, above. This one is kept for the reason the #1463 entry gives:
-  // required-inputs.md §4.1 records the variable as MISSING, while an
-  // assignment of that role to github_arc_run on rg-lab-hybrid-prod-cus was
-  // read live that day (created 2026-11-09). Delete it once the workspace
-  // value is read as true.
-  {
-    address: "azurerm_role_assignment.github_arc_run_operator[0]",
-    action: "create",
-    reason:
-      "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
-  },
+  // #1463's github_manifest_window_storage_firewall[0] and #1590's
+  // github_arc_run_operator[0] (the two role assignments counted on
+  // storage_firewall_remover_enabled and lab_arc_run_command_enabled in
+  // infra/oidc.tf) applied: the owner confirmed on 2026-11-27 that both
+  // workspace variables are true, and both assignments were read live that
+  // day (HCW Storage Firewall Writer for github_manifest_window on the
+  // functions storage account, created 2026-11-04; HCW Arc Run Command
+  // Operator for github_arc_run on rg-lab-hybrid-prod-cus, created
+  // 2026-11-09). Both were deleted here that day, as the header asks; a plan
+  // that creates or destroys either now is UNEXPECTED and is read.
 
   // #1617, PR 1's six creates (github_frontend_deploy, its two `production`
   // environment credentials and HCW Static Web App Deployer on the one site,
