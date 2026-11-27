@@ -21,9 +21,10 @@
  *      rows the Sev1 rule leaves out, no more and no fewer.
  *   3. The Sev2 rule exists while the filter does, is stateful, and pages
  *      the same action group.
- *   4. The plan declaration in assert-expected-plan.mjs carries the strings
- *      Terraform will render, so the owner's plan check reads the change as
- *      declared.
+ *   4. The change has applied (both rules read live with the new text on
+ *      2026-11-27), so its plan declaration is gone from
+ *      assert-expected-plan.mjs, and the plan check reads the same change, or
+ *      anything wider, as unexpected.
  *
  * None of this runs the KQL. Azure accepts or refuses the queries at apply,
  * and the validation query in the runbook above is how they are read against
@@ -156,19 +157,9 @@ describe('alert-host-storage-auth', () => {
   });
 });
 
-describe('the plan declaration', () => {
-  const entries = DECLARED.filter((entry) => entry.address === SEV1 || entry.address === SEV2);
-
-  it('declares the query, the description and the new rule, and nothing else on these two', () => {
-    expect(entries.map((entry) => [entry.address, entry.path ?? entry.action])).toEqual([
-      [SEV1, 'criteria[0].query'],
-      [SEV1, 'description'],
-      [SEV2, 'create'],
-    ]);
-    const [query, description] = entries;
-    expect(query.before).toBe('exceptions');
-    expect(query.after).toBe(APP_EXCEPTIONS_QUERY);
-    expect(description.after).toBe(APP_EXCEPTIONS_DESCRIPTION);
+describe('the plan declaration, pruned once applied (2026-11-27)', () => {
+  it('declares nothing on these two rules', () => {
+    expect(DECLARED.filter((entry) => entry.address === SEV1 || entry.address === SEV2)).toEqual([]);
   });
 
   /** The permanent diff with this change beside it, as `terraform show -json` carries it. */
@@ -193,9 +184,13 @@ describe('the plan declaration', () => {
     ],
   });
 
-  it('passes the plan this change produces', () => {
+  it('reads the plan this change produced as unexpected now that it has applied, naming all three parts', () => {
     const result = checkPlan(plan());
-    expect(result.unexpected).toEqual([]);
+    expect(result.ok).toBe(false);
+    const named = result.unexpected.join('\n');
+    expect(named).toContain(`${SEV1}: update criteria[0].query`);
+    expect(named).toContain(`${SEV1}: update description`);
+    expect(named).toContain(`${SEV2}: create`);
   });
 
   it('refuses a wider filter or a moved threshold arriving in the same plan', () => {

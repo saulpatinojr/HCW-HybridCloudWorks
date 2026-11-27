@@ -41,7 +41,6 @@ import {
   OVERDUE_LAST_DUE_BIN_AT,
   overdueQuery,
   redact,
-  SSH_LOGIN_ALERT_DESCRIPTION,
   sshLoginAlertQuery,
   secretsOf,
   TIMER_SCHEDULES_APPLIED,
@@ -1080,16 +1079,23 @@ describe('DECLARED', () => {
     expect(rows.length).toBeGreaterThan(20);
     expect(declaration.after).toBe(overdueQuery(rows));
     // Each declaration of this rule states its own shape. #964's changed the
-    // due-time line alone; #1302's, like #1009's and #1612's, was one row
-    // more. #1918's is one row more too: `before` is the query the rule holds
-    // in state (TIMER_SCHEDULES_APPLIED), and the only line the update adds
-    // is checkCloudflareRateLimit's row. Neither value carries the bin_at()
-    // line Kusto refuses (#964), applied away on 2026-10-15.
+    // due-time line alone; #1302's, like #1009's, #1612's and #1918's, was
+    // rows added. Whatever the shape, `before` is the query the rule holds in
+    // state (TIMER_SCHEDULES_APPLIED), and the rows the update adds are
+    // exactly the tree's rows that are not applied yet. Neither value carries
+    // the bin_at() line Kusto refuses (#964), applied away on 2026-10-15.
     expect(declaration.before).toBe(overdueQuery(TIMER_SCHEDULES_APPLIED));
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'checkCloudflareRateLimit')));
+    const applied = new Set(TIMER_SCHEDULES_APPLIED.map(([name]) => name));
+    const pending = rows.filter(([name]) => !applied.has(name));
+    expect(pending.length, 'a declared row change with no row the tree adds').toBeGreaterThan(0);
     const before = declaration.before.split('\n');
-    const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual(['  "checkCloudflareRateLimit", 1d, datetime(2026-01-01 12:40),']);
+    const added = declaration.after
+      .split('\n')
+      .filter((line) => !before.includes(line))
+      .map((line) => line.replace(/,$/, ''));
+    expect(added.sort()).toEqual(
+      pending.map(([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`).sort()
+    );
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
@@ -1170,29 +1176,37 @@ describe('DECLARED', () => {
     expect(DECLARED.some((entry) => /^app_settings\.GSC_/.test(entry.path ?? ''))).toBe(false);
   });
 
-  it('passes the plan after #1918’s merge (the disarmed flag and the overdue row), and the plan that arms it', () => {
-    const merged = fixture();
-    merged.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'false';
-    merged.plan.resource_changes.push(
-      timerRuleUpdate(
-        DECLARED.find(
-          (entry) =>
-            entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
-            entry.path === 'criteria[0].query'
-        )
-      )
+  it('reads #1918’s plans as unexpected now that the catalogue and the arming have both applied (pruned 2026-11-27)', () => {
+    // The disarmed flag and the overdue row applied, and the owner's arming
+    // after them: FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT read "true" live on
+    // 2026-11-27, and the live rule carries the row. So each of those plans,
+    // and a disarming, is unexpected now, and the row is applied.
+    const flag = 'FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT';
+    expect(DECLARED.filter((entry) => entry.path === `app_settings.${flag}`)).toEqual([]);
+    for (const [before, after] of [
+      [undefined, 'false'],
+      [undefined, 'true'],
+      ['false', 'true'],
+      ['true', 'false'],
+    ]) {
+      const { plan, app } = fixture();
+      if (before !== undefined) app.before.app_settings[flag] = before;
+      app.after.app_settings[flag] = after;
+      const result = checkPlan(plan);
+      expect(result.ok, `${before} -> ${after}`).toBe(false);
+      expect(result.unexpected.some((line) => line.includes(`app_settings.${flag}`)), `${before} -> ${after}`).toBe(true);
+    }
+    expect(TIMER_SCHEDULES_APPLIED).toContainEqual(['checkCloudflareRateLimit', '1d', '2026-01-01 12:40']);
+    const rows = treeTimerRows();
+    const readded = fixture();
+    readded.plan.resource_changes.push(
+      timerRuleUpdate({
+        address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue',
+        before: overdueQuery(rows.filter(([name]) => name !== 'checkCloudflareRateLimit')),
+        after: overdueQuery(rows),
+      })
     );
-    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
-
-    const armed = fixture();
-    armed.app.before.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'false';
-    armed.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'true';
-    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
-
-    // Absent straight to "true" would arm it before the disarmed flag ever applied: not declared.
-    const skipped = fixture();
-    skipped.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'true';
-    expect(checkPlan(skipped.plan).ok).toBe(false);
+    expect(checkPlan(readded.plan).ok).toBe(false);
     expect(infraSource).toMatch(/^\s*CHECK_CLOUDFLARE_RATE_LIMIT\s*=\s*"checkCloudflareRateLimit — /m);
   });
 
@@ -1277,11 +1291,15 @@ describe('DECLARED', () => {
     expect(result.unexpected.some((line) => line.includes('app_settings.COMMUNITY_DAYS_API_KEY'))).toBe(true);
   });
 
-  it('declares the Cloudflare admin token’s Key Vault reference and reads the zone id by hand (#1905)', () => {
+  it('no longer declares the Cloudflare admin token’s Key Vault reference now that it has applied, and reads the zone id by hand (#1905)', () => {
+    // The reference was present on the live app on 2026-11-27, so a plan that adds it again is unexpected.
+    expect(DECLARED.find((candidate) => candidate.path === 'app_settings.CLOUDFLARE_ADMIN_TOKEN')).toBeUndefined();
     const added = fixture();
     added.app.after.app_settings.CLOUDFLARE_ADMIN_TOKEN =
       '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ADMIN-TOKEN)';
-    expect(checkPlan(added.plan).ok).toBe(true);
+    const again = checkPlan(added.plan);
+    expect(again.ok).toBe(false);
+    expect(again.unexpected.some((line) => line.includes('app_settings.CLOUDFLARE_ADMIN_TOKEN'))).toBe(true);
     expect(infraSource).toContain('"CLOUDFLARE_ADMIN_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ADMIN-TOKEN)"');
     // The zone id is the owner's value, so its arrival is shown, not declared.
     const zone = fixture();
@@ -1326,9 +1344,9 @@ describe('DECLARED', () => {
     // timer_overdue left this list while #1302, the Second Brain and #1403
     // declared the rule again (three rows more); those applied and were
     // deleted on 2026-11-01. It left it again for #1612's one row
-    // (syncSearchConsole, applied and folded in by #1918), and stays out for
-    // #1918's (checkCloudflareRateLimit); put it back once that declaration
-    // is deleted.
+    // (syncSearchConsole, applied and folded in by #1918) and #1918's
+    // (checkCloudflareRateLimit, applied and folded in on 2026-11-27), and is
+    // back. Take it out again while a later row is declared.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',
@@ -1336,6 +1354,7 @@ describe('DECLARED', () => {
       'lab_hybrid_disk_used',
       'logs_daily_cap',
       'export_window_latency',
+      'timer_overdue',
     ]) {
       expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);
     }
@@ -1344,8 +1363,10 @@ describe('DECLARED', () => {
   it('prunes what applied by 2026-11-01 (Second Brain, Doc Vault, #1302, #1403, #1479), and keeps the arming plans', () => {
     const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
     const deletes = DECLARED.filter((entry) => entry.action === 'delete').map((entry) => entry.address);
-    // #1923 declares CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG again, as
-    // "" -> the owner's value; what was pruned is #1302's absent -> "".
+    // #1923 declared CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG again, as
+    // "" -> the owner's value, until that run applied on 2026-11-27; what was
+    // pruned on 2026-11-01 is #1302's absent -> "". An owner's value declared
+    // again by a later change is left to that change's own test.
     const paths = DECLARED.filter((entry) => entry.after !== OWNER_VALUE).map((entry) => entry.path);
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
@@ -1362,58 +1383,35 @@ describe('DECLARED', () => {
     ]) {
       expect(paths, name).not.toContain(`app_settings.${name}`);
     }
-    // The three arming plans and the site stay: "not in this plan" cannot
-    // tell them from applied, and each waits on a workspace value. The site
-    // is an import since #1923, no longer a create.
+    // The arming plans stay: "not in this plan" cannot tell them from
+    // applied, and each waits on a name the owner adds to enabled_timers. All
+    // four read "false" live on 2026-11-27. The Web Analytics site, kept here
+    // on 2026-11-01 and an import since #1923, applied on 2026-11-27 and has
+    // no declaration left (its own test below).
     const arming = (flag) =>
       DECLARED.filter((entry) => entry.path === `app_settings.${flag}`).map((entry) => [entry.before, entry.after]);
     expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_SWEEP_VISITOR_SESSIONS')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_PROBE_AI_PROVIDERS')).toEqual([['false', 'true']]);
-    expect(creates).not.toContain('cloudflare_web_analytics_site.hcw[0]');
-    expect(
-      DECLARED.filter((entry) => entry.address === 'cloudflare_web_analytics_site.hcw[0]' && entry.action).map(
-        (entry) => entry.action
-      )
-    ).toEqual(['import']);
+    expect(arming('FEATURE_FLAG_SYNC_SEARCH_CONSOLE')).toEqual([['false', 'true']]);
+    expect(DECLARED.filter((entry) => entry.address === 'cloudflare_web_analytics_site.hcw[0]')).toEqual([]);
   });
 
-  it('declares the Web Analytics site’s import and update, no Web Analytics rule, and nothing that would recreate the site (#1923)', () => {
-    // Delete this test with the nine declarations, once the site is in state and both settings hold the owner's values.
+  it('keeps the imported Web Analytics site with no declaration left, no Web Analytics rule, and nothing that would recreate it (#1923, applied 2026-11-27)', () => {
+    // The owner's apply on 2026-11-27 imported the site and set enabled, lite and the two app settings, and
+    // the nine declarations were deleted (the plan check on run-su7kVbxufZn3LPdW printed each as "declared,
+    // not in this plan"). Nothing about the site or those settings is declared now, so the same run again
+    // would be read by hand.
     const SITE = 'cloudflare_web_analytics_site.hcw[0]';
-    const actionsAt = (address) =>
-      DECLARED.filter((entry) => entry.address === address && entry.action).map((entry) => entry.action);
-    // Cloudflare made the site for the zone itself; a create is what the API refused.
-    expect(actionsAt(SITE)).toEqual(['import']);
+    expect(DECLARED.filter((entry) => entry.address === SITE)).toEqual([]);
+    expect(
+      DECLARED.filter((entry) => /^app_settings\.(CF_ACCOUNT_ID|CF_WEB_ANALYTICS_SITE_TAG)$/.test(entry.path ?? ''))
+    ).toEqual([]);
     // The zone's Free plan allows no Web Analytics rules: Cloudflare refused both creates on 2026-11-27
     // (409, code 10012, maxRulesError). None is declared and none is in the configuration, so a rule added
     // back fails here before it fails every apply; the audience read filters by host instead.
     expect(DECLARED.filter((entry) => entry.address.startsWith('cloudflare_web_analytics_rule.'))).toEqual([]);
     expect(infraSource).not.toMatch(/resource\s+"cloudflare_web_analytics_rule"/);
-    // The import leaves enabled and lite null (the provider never reads them back), and the update sets them.
-    const siteUpdates = DECLARED.filter((entry) => entry.address === SITE && entry.path)
-      .filter((entry) => entry.after !== KNOWN_AFTER_APPLY)
-      .map(({ path, before, after }) => [path, before, after])
-      .sort();
-    expect(siteUpdates).toEqual([
-      ['enabled', null, true],
-      ['lite', null, true],
-    ]);
-    // The four computed values with no plan modifier in provider 5.29.0 go unknown on that update.
-    const computed = DECLARED.filter((entry) => entry.address === SITE && entry.after === KNOWN_AFTER_APPLY)
-      .map((entry) => entry.path)
-      .sort();
-    expect(computed).toEqual(['rules', 'ruleset', 'site_token', 'snippet']);
-    // The two app settings take the owner's values, from "" and with neither value written here.
-    const ownerValues = DECLARED.filter((entry) => entry.after === OWNER_VALUE).map(({ address, path, before }) => [
-      address,
-      path,
-      before,
-    ]);
-    expect(ownerValues).toEqual([
-      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_ACCOUNT_ID', ''],
-      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_WEB_ANALYTICS_SITE_TAG', ''],
-    ]);
 
     const block = (header, label) => {
       const start = infraSource.indexOf(`${header} {\n`);
@@ -1454,7 +1452,7 @@ describe('DECLARED', () => {
     // (infra/tests/guards.tftest.hcl runs the mismatch).
     expect(site).toMatch(/^\s*condition\s*=\s*self\.site_tag == var\.cloudflare_web_analytics_site_tag$/m);
 
-    // The owner's run, as the plan JSON will carry it: the import with its update and the Function
+    // The owner's run, as its plan JSON carried it: the import with its update and the Function
     // App's two settings. Every value is a placeholder; none is printed.
     const importId = 'account-placeholder/site-placeholder';
     const accountId = 'account-placeholder-0123456789abcdef';
@@ -1486,50 +1484,79 @@ describe('DECLARED', () => {
         },
       }
     );
+    // That run has applied, so every part of it is unexpected now: the import, each site
+    // attribute and both settings are named, and the report still prints none of the values.
     const result = checkPlan(plan);
-    expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
-    expect(result.declared.map((entry) => `${entry.address} ${entry.action ?? entry.path}`).sort()).toEqual(
-      [
-        `${SITE} import`,
-        `${SITE} enabled`,
-        `${SITE} lite`,
-        ...['rules', 'ruleset', 'site_token', 'snippet'].map((path) => `${SITE} ${path}`),
-        'azurerm_function_app_flex_consumption.hcw app_settings.CF_ACCOUNT_ID',
-        'azurerm_function_app_flex_consumption.hcw app_settings.CF_WEB_ANALYTICS_SITE_TAG',
-      ].sort()
-    );
-    // The report names the stand-ins and never the values behind them.
-    const report = declarationLines(result).join('\n');
-    for (const value of [importId, accountId, siteTag, 'token-before', 'snippet-before', 'ruleset-before']) {
-      expect(report, value).not.toContain(value);
+    expect(result.ok).toBe(false);
+    expect(result.declared).toEqual([]);
+    const named = result.unexpected.join('\n');
+    for (const part of [
+      SITE,
+      `${SITE}: update enabled`,
+      `${SITE}: update lite`,
+      ...['rules', 'ruleset', 'site_token', 'snippet'].map((path) => `${SITE}: update ${path}`),
+      'app_settings.CF_ACCOUNT_ID',
+      'app_settings.CF_WEB_ANALYTICS_SITE_TAG',
+    ]) {
+      expect(named, part).toContain(part);
     }
-    expect(report).toContain(`${SITE} site_token: (known after apply)`);
-    expect(report).toContain(`app_settings.CF_ACCOUNT_ID: "" -> (the owner's value, not printed)`);
-
-    // Anything else on that run is still named: a computed value nobody declared, or a setting
-    // that was not "" before (the owner's value replacing another is a change to read).
-    const created = structuredClone(plan);
-    const siteChange = created.resource_changes.find((change) => change.address === SITE).change;
-    siteChange.before.created = '2026-06-30T00:00:00Z';
-    siteChange.after_unknown.created = true;
-    expect(checkPlan(created).unexpected).toEqual([`${SITE}: update created: "2026-06-30T00:00:00Z" -> (known after apply)`]);
-    const replaced = structuredClone(plan);
-    replaced.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change.before.app_settings.CF_ACCOUNT_ID =
-      'an-older-value';
-    expect(checkPlan(replaced).unexpected).toEqual([
-      'azurerm_function_app_flex_consumption.hcw: update app_settings.CF_ACCOUNT_ID: (set) -> (set)',
-    ]);
+    for (const value of [importId, accountId, siteTag, 'token-before', 'snippet-before', 'ruleset-before']) {
+      expect(named, value).not.toContain(value);
+    }
   });
 
-  it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {
-    // Delete this test with the declaration, once the create has applied.
+  it('prunes the Developer API container’s create once applied, with the container still in the spec (#1754, pruned 2026-11-27)', () => {
+    // The create applied by 2026-11-27, so a plan that creates it again is unexpected. The container stays
+    // in infra/cosmos-containers.json: a declaration pruned while its container was also removed would hide
+    // a destroy of the calls for speakers.
     const address = 'azurerm_cosmosdb_sql_container.hcw["developer_events"]';
-    expect(DECLARED.filter((entry) => entry.address === address).map((entry) => entry.action)).toEqual(['create']);
+    expect(DECLARED.filter((entry) => entry.address === address)).toEqual([]);
     const spec = JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-containers.json'), 'utf8'));
-    const container = spec.containers.find((entry) => entry.name === 'developer_events');
-    expect(container, 'developer_events is not in infra/cosmos-containers.json').toBeDefined();
-    // No computed properties, so no azapi_update_resource is planned beside the create.
-    expect(container.computedProperties ?? []).toEqual([]);
+    expect(spec.containers.map((entry) => entry.name)).toContain('developer_events');
+    const again = expectedPlan();
+    again.resource_changes.push({ address, change: { actions: ['create'] } });
+    expect(checkPlan(again).unexpected).toEqual([`${address}: create`]);
+  });
+
+  it('prunes what applied by 2026-11-27, keeps the arming plans and the two gated role assignments, and nothing else', () => {
+    // The plan check on run-su7kVbxufZn3LPdW printed every entry pruned that day as "declared, not in this
+    // plan", and run-uBChZAdiYBb1Rma1's plan (commit a7aa1077) matched no declaration. Each pruned change is
+    // unconditional in infra/ or was read live that day. What stays waits on the owner: four arming plans
+    // (each flag live "false") and two role assignments counted on a workspace variable that defaults to false.
+    expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${entry.before} -> ${entry.after}`}`)).toEqual([
+      `${FUNCTION_APP} app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS: false -> true`,
+      `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
+      `${FUNCTION_APP} app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS: false -> true`,
+      'azurerm_role_assignment.github_manifest_window_storage_firewall[0] create',
+      'azurerm_role_assignment.github_arc_run_operator[0] create',
+      `${FUNCTION_APP} app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE: false -> true`,
+    ]);
+    // Both kept creates are gated, so a plan without them says nothing about whether they applied.
+    for (const [name, variable] of [
+      ['github_manifest_window_storage_firewall', 'storage_firewall_remover_enabled'],
+      ['github_arc_run_operator', 'lab_arc_run_command_enabled'],
+    ]) {
+      expect(infraSource, name).toMatch(
+        new RegExp(`resource "azurerm_role_assignment" "${name}" \\{\\n\\s*count\\s*=\\s*var\\.${variable} \\? 1 : 0\\n`)
+      );
+      expect(infraSource, variable).toMatch(new RegExp(`variable "${variable}" \\{[\\s\\S]*?\\n\\s*default\\s*=\\s*false\\n`));
+    }
+    // The pruned creates and settings are still in infra/, so the prune hides no destroy or removal.
+    for (const [type, name] of [
+      ['azurerm_user_assigned_identity', 'github_arc_run'],
+      ['azurerm_federated_identity_credential', 'github_arc_run_env_lab_host_arc'],
+      ['azurerm_federated_identity_credential', 'github_arc_run_env_lab_host_arc_immutable'],
+      ['azurerm_storage_container', 'interviews_audio'],
+      ['azurerm_role_assignment', 'func_interviews_audio_owner'],
+      ['azurerm_monitor_scheduled_query_rules_alert_v2', 'host_storage_auth'],
+      ['azurerm_monitor_scheduled_query_rules_alert_v2', 'app_exceptions'],
+    ]) {
+      expect(infraSource, name).toContain(`resource "${type}" "${name}" {`);
+    }
+    expect(infraSource).toMatch(/^\s*name\s*=\s*"expire-interview-audio"$/m);
+    expect(infraSource).toMatch(/^\s*"LABS_VISITOR_SESSIONS_ENABLED"\s*=\s*var\.labs_visitor_sessions_enabled/m);
+    expect(infraSource).toMatch(/^\s*BRAIN_INDEX_RECONCILE\s*=\s*"brainIndexReconcile — /m);
+    expect(infraSource).toContain('"CLOUDFLARE_ADMIN_TOKEN" = "@Microsoft.KeyVault(');
   });
 
   it('prunes alert-kv-config-write’s provider entries once applied (#1216)', () => {
@@ -1640,13 +1667,12 @@ describe('DECLARED', () => {
     ]);
   });
 
-  it('declares #1617’s three deletes with their blocks gone from infra/, and prunes PR 1’s six applied creates with their blocks kept', () => {
-    // PR 2 deletes the deploy identity's production pair and its site role,
-    // now that deploy-functions.yml names production-backend and the
-    // frontend signs in as github_frontend_deploy. Each delete is declared,
-    // and its block is gone from the tree (a declared delete whose block
-    // still stood would match nothing and hide nothing, but it would say the
-    // wrong thing to whoever reads the plan).
+  it('prunes #1617’s three applied deletes with their blocks gone from infra/, and PR 1’s six applied creates with their blocks kept', () => {
+    // PR 2 deleted the deploy identity's production pair and its site role,
+    // once deploy-functions.yml named production-backend and the frontend
+    // signed in as github_frontend_deploy. The deletes applied by 2026-11-27
+    // and their declarations went. Their blocks stay gone from the tree: a
+    // block put back would plan an undeclared create of a trust PR 2 removed.
     const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
     const block = (address) => `resource "${address.split('.')[0]}" "${address.split('.')[1]}"`;
     for (const address of [
@@ -1654,7 +1680,7 @@ describe('DECLARED', () => {
       'azurerm_federated_identity_credential.github_production_immutable',
       'azurerm_role_assignment.github_deploy_swa_token',
     ]) {
-      expect(byAction('delete'), address).toContain(address);
+      expect(byAction('delete'), address).not.toContain(address);
       expect(infraSource, `${address} is still declared in infra/`).not.toContain(`${block(address)} {`);
     }
     // PR 1's six creates applied on 2026-11-09 (the commit status on
@@ -1748,21 +1774,31 @@ describe('DECLARED', () => {
     expect(sshLoginAlertQuery(true)).toBe(rendered);
   });
 
-  it('declares alert-lab-ssh-login’s loopback rule and description, and nothing else of the rule, if it declares them at all (#953 stage 3)', () => {
+  it('no longer declares alert-lab-ssh-login’s loopback rule or description now that #953 stage 3 has applied (pruned 2026-11-27)', () => {
+    // Read live on 2026-11-27: the rule's query says `let LoopbackOnly = true;` and its description is the
+    // tree's. So the stage 3 plan again (false -> true) is unexpected, and so is turning the loopback off.
     const address = 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected';
-    const entries = DECLARED.filter((entry) => entry.address === address);
-    if (entries.length === 0) return;
-    expect(entries.map((entry) => entry.path).sort()).toEqual(['criteria[0].query', 'description']);
-    const query = entries.find((entry) => entry.path === 'criteria[0].query');
-    expect(query.before).toBe(sshLoginAlertQuery(false));
-    expect(query.after).toBe(sshLoginAlertQuery(true));
-    const after = query.after.split('\n');
-    const changed = query.before.split('\n').filter((line, i) => line !== after[i]);
-    expect(changed).toEqual(['let LoopbackOnly = false;']);
-    const description = entries.find((entry) => entry.path === 'description');
-    expect(description.after).toBe(SSH_LOGIN_ALERT_DESCRIPTION);
-    expect(sshLoginRule()).toContain(`description         = "${SSH_LOGIN_ALERT_DESCRIPTION}"`);
-    expect(description.before).not.toBe(description.after);
+    expect(DECLARED.filter((entry) => entry.address === address)).toEqual([]);
+    for (const [before, after] of [
+      [false, true],
+      [true, false],
+    ]) {
+      const plan = expectedPlan();
+      plan.resource_changes.push({
+        address,
+        change: {
+          actions: ['update'],
+          before: { criteria: [{ query: sshLoginAlertQuery(before) }] },
+          after: { criteria: [{ query: sshLoginAlertQuery(after) }] },
+          after_unknown: {},
+          before_sensitive: {},
+          after_sensitive: {},
+        },
+      });
+      const result = checkPlan(plan);
+      expect(result.ok, `${before} -> ${after}`).toBe(false);
+      expect(result.unexpected.some((line) => line.includes('criteria[0].query')), `${before} -> ${after}`).toBe(true);
+    }
   });
 });
 

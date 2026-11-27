@@ -144,9 +144,7 @@ import {
 import {
   declarationLines,
   findDeclaredAction,
-  KNOWN_AFTER_APPLY,
   matchesDeclaration,
-  OWNER_VALUE,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
@@ -277,8 +275,11 @@ export function overdueQuery(rows, { lastDue = OVERDUE_LAST_DUE } = {}) {
 
 /**
  * alert-lab-ssh-login's query (infra/lab-hybrid.tf) as Terraform renders it,
- * with var.lab_ssh_loopback_only at `loopbackOnly`. The `false` rendering is
- * the deployed query, read from Azure on 2026-10-17.
+ * with var.lab_ssh_loopback_only at `loopbackOnly`. The `false` rendering was
+ * the deployed query read from Azure on 2026-10-17; the `true` rendering
+ * (#953 stage 3) had applied by 2026-11-27, read live that day. Kept, and held
+ * to the heredoc by assert-expected-plan.test.mjs, for the next declaration of
+ * this rule.
  *
  * @param {boolean} loopbackOnly
  * @returns {string}
@@ -318,13 +319,9 @@ export const APP_EXCEPTIONS_QUERY = `exceptions | where not(${HOST_STORAGE_AUTH_
 export const APP_EXCEPTIONS_DESCRIPTION =
   "More than 5 application exceptions in 15 minutes, not counting the Functions host's own storage sign-in failures (403 AuthenticationFailed) that follow a Terraform apply; alert-host-storage-auth watches those.";
 
-/** alert-lab-ssh-login's description in infra/lab-hybrid.tf (#953 stage 3). */
-export const SSH_LOGIN_ALERT_DESCRIPTION =
-  "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
-
 /**
- * `local.timer_schedules` as applied: the 30 rows the live alert-timer-overdue
- * carries. 26 of them are what #964 read back on 2026-10-15; the other three
+ * `local.timer_schedules` as applied: the 31 rows the live alert-timer-overdue
+ * carries. 26 of them are what #964 read back on 2026-10-15; the next three
  * (ambassadorAudienceMonthly, brainIndexReconcile, sweepVisitorSessions) were
  * declared by #1302, the Second Brain and #1403 and folded in on 2026-11-01,
  * when the plan check on the run for 1ccc72a (actions run 41200891363) showed
@@ -332,6 +329,9 @@ export const SSH_LOGIN_ALERT_DESCRIPTION =
  * syncSearchConsole, was declared by #1612 and folded in on 2026-11-26 (#1918):
  * the plan check on the run for 442a24b (actions run 42728440587, 2026-11-10)
  * printed that declaration as "declared, not in this plan", so it had applied.
+ * The 31st, checkCloudflareRateLimit, was declared by #1918 and folded in on
+ * 2026-11-27: the plan check on run-su7kVbxufZn3LPdW printed it as "declared,
+ * not in this plan", and the live rule's query read that day carries the row.
  * Pinned
  * rather than read from the tree, as #1009 did, so a timer added while a
  * declaration of this rule waits below makes assert-expected-plan.test.mjs
@@ -343,6 +343,7 @@ export const TIMER_SCHEDULES_APPLIED = [
   ["brainIndexReconcile", "15m", "2026-01-01 00:00"],
   ["buildWeeklyNewsletter", "7d", "2026-01-05 13:00"],
   ["checkAgentHealth", "5m", "2026-01-01 00:00"],
+  ["checkCloudflareRateLimit", "1d", "2026-01-01 12:40"],
   ["checkLiveLinks", "7d", "2026-01-05 06:00"],
   ["cleanupRejectedContent", "1d", "2026-01-01 04:00"],
   ["cleanupSoftDeletedContent", "4h", "2026-01-01 00:00"],
@@ -407,6 +408,54 @@ export const DECLARED = [
   // - #1768's Platform Management budget amount, 25 -> 35. Applied 2026-11-23,
   //   owner confirmed; deleted here the same day.
   //
+  // Applied and deleted here on 2026-11-27, as the header asks. The plan
+  // check on run-su7kVbxufZn3LPdW (the #1923 Web Analytics import, which the
+  // owner then applied) printed every entry below as "declared, not in this
+  // plan", and the plan of run-uBChZAdiYBb1Rma1 (commit a7aa1077, applied at
+  // about 10:10 UTC the same day) matched no declaration at all: "OK — the
+  // plan carries the known permanent diff and nothing else". Each change is
+  // either unconditional in infra/, so a plan without it means it is in
+  // state, or was read live that day with read-only az calls:
+  // - #953 (LAB-7) stage 3, alert-lab-ssh-login's loopback rule and its
+  //   description (var.lab_ssh_loopback_only, default true). The live rule's
+  //   query reads `let LoopbackOnly = true;` and its description is the new
+  //   one. sshLoginAlertQuery() above stays, held to the heredoc by
+  //   assert-expected-plan.test.mjs, should the rule be declared again.
+  // - #1923's nine entries: the Web Analytics site's import, its enabled and
+  //   lite updates, its four computed values (KNOWN_AFTER_APPLY) and
+  //   CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
+  //   values (OWNER_VALUE). The owner's 2026-11-27 apply imported and updated
+  //   the site; the two Web Analytics rules that run also tried to create
+  //   were refused by Cloudflare (409, code 10012, maxRulesError: the zone's
+  //   Free plan allows none), never reached state and are gone from infra/.
+  //   The import block stays in infra/frontend.tf and is skipped now that the
+  //   site is in state; a plan that imports or updates the site again is
+  //   unexpected and is read.
+  // - #1400/#1403's LABS_VISITOR_SESSIONS_ENABLED appearing as "false" (set
+  //   from var.labs_visitor_sessions_enabled, always present); live "false".
+  //   Opening the door ("false" -> "true") was never declared and still is
+  //   not.
+  // - #1590's Run Command identity, github_arc_run, and its two lab-host-arc
+  //   credentials (unconditional in infra/oidc.tf). Its role assignment,
+  //   github_arc_run_operator[0], stays declared below.
+  // - #1617 PR 2's three deletes: the deploy identity's two `production`
+  //   credentials and its github_deploy_swa_token grant. Their blocks are gone
+  //   from infra/oidc.tf.
+  // - #1565's interviews-audio container, its expire-interview-audio rule
+  //   (rule[4] of the cleanup policy) and func_interviews_audio_owner
+  //   (unconditional in infra/storage.tf).
+  // - #1918's daily Cloudflare rate limit check: its flag added disarmed, the
+  //   checkCloudflareRateLimit row on alert-timer-overdue (folded into
+  //   TIMER_SCHEDULES_APPLIED above; the live query carries the row), and the
+  //   owner's arming (FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT live "true").
+  // - #1822's FEATURE_FLAG_BRAIN_INDEX_RECONCILE arriving as "true"; live
+  //   "true". The key is always present in infra/functionapp.tf, so the
+  //   absent -> "true" shape can never plan again.
+  // - #1754's developer_events Cosmos container (infra/cosmos-containers.json).
+  // - #1905's CLOUDFLARE_ADMIN_TOKEN Key Vault reference; present live.
+  // - T-511's alert-app-exceptions query and description, and the new
+  //   alert-host-storage-auth; both rules live with the new text.
+  //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
   // PROBE_AI_PROVIDERS to enabled_timers arms it. Everything else declared
@@ -421,8 +470,8 @@ export const DECLARED = [
   // PROBE_AI_PROVIDERS also plans no diff. The probe's last run, 2026-10-05
   // 06:15 UTC, logged "disabled - skipping". Its next run (Mondays 06:15 UTC)
   // says which: delete this entry once it runs instead of skipping. Read
-  // again on 2026-10-17: the live setting is still "false", so it has not
-  // applied and the entry stays.
+  // again on 2026-10-17 and on 2026-11-27: the live setting is still
+  // "false", so it has not applied and the entry stays.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS",
@@ -483,107 +532,10 @@ export const DECLARED = [
   // configuration read Succeeded on port 22, created at 02:25Z, and
   // `ssh hcw-lab hostname` answered through Arc from the owner's desktop.
   //
-  // #953 (LAB-7) stage 3: port 22 closed to the internet, so
-  // alert-lab-ssh-login also pages a login that does not arrive from the
-  // loopback, where Arc SSH reaches sshd (var.lab_ssh_loopback_only false ->
-  // true). Delete both entries once that run has applied.
-  {
-    address:
-      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
-    path: "criteria[0].query",
-    before: sshLoginAlertQuery(false),
-    after: sshLoginAlertQuery(true),
-    reason:
-      "#953 stage 3: port 22 closed; a login not through Arc SSH pages",
-  },
-  {
-    address:
-      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
-    path: "description",
-    before:
-      "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (or, once lab_ssh_loopback_only is set, not through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.",
-    after: SSH_LOGIN_ALERT_DESCRIPTION,
-    reason: "#953 stage 3: the description says the loopback rule is in force",
-  },
-  // #1302: the monthly audience read, in two runs. The first is the plan
-  // after the merge, with cloudflare_account_id unset in the workspace: the
-  // Function App gains the analytics token's Key Vault reference, the site
-  // tag and the account id as "", and the timer's flag disarmed, and
-  // alert-timer-overdue watches ambassadorAudienceMonthly, one row more in
-  // its datatable. The second is the owner's, once cloudflare_account_id is
-  // set: the site is created, CF_ACCOUNT_ID goes "" -> the id and
-  // CF_WEB_ANALYTICS_SITE_TAG goes "" -> known after apply. That run is read
-  // by hand: the header then said an unknown difference cannot be declared, and
-  // the account id is the owner's value, not this file's to write. The
-  // create matches by address alone, so it is declared now and reads as
-  // "declared, not in this plan" until that run, like PROBE_AI_PROVIDERS
-  // above; delete it once the site exists. Should the owner set the variable
-  // before the first apply, the two runs are one, the undefined -> ""
-  // entries match nothing, and the plan is read by hand the same way.
-  //
-  // #1923 replaced that create. The owner set cloudflare_account_id on
-  // 2026-11-27 and Cloudflare refused the create (400, code 10029,
-  // autoInstallRequired): it had made a site for the zone itself on
-  // 2026-06-30. So the site is imported once cloudflare_account_id and
-  // cloudflare_web_analytics_site_tag are both set, and that run holds:
-  //   - the import, declared by address (its id is the owner's values and is
-  //     never written here);
-  //   - the same resource's in-place update, enabled and lite null -> true:
-  //     the provider never reads either back, so the import leaves both null.
-  //     The update also plans the site's four computed values that carry no
-  //     plan modifier in provider 5.29.0 (site_token, snippet, rules,
-  //     ruleset) as (known after apply), declared with KNOWN_AFTER_APPLY.
-  //     site_tag, id and created keep their state value
-  //     (UseNonNullStateForUnknown), so they plan no change;
-  //   - CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
-  //     values, declared with OWNER_VALUE so neither is written here. The
-  //     site tag is known at plan time, for the same plan modifier.
-  // The same run also attempted to create two Web Analytics rules, to leave
-  // the notes site and the API's landing page out of measurement. Cloudflare
-  // refused both attempts on 2026-11-27 (409, code 10012, maxRulesError: the
-  // zone's Free plan allows no rules), so neither exists in Cloudflare or in
-  // state, no removed block is needed, and both are gone from the
-  // configuration; the audience read filters by host instead.
-  // Delete these nine entries once the site is in state with enabled and
-  // lite set, and both app settings hold the owner's values.
-  {
-    address: "cloudflare_web_analytics_site.hcw[0]",
-    action: "import",
-    reason:
-      "#1923: the Web Analytics site Cloudflare made for the zone, brought under Terraform",
-  },
-  {
-    address: "cloudflare_web_analytics_site.hcw[0]",
-    path: "enabled",
-    before: null,
-    after: true,
-    reason:
-      "#1923: measurement on, set after the import (the provider never reads it back)",
-  },
-  {
-    address: "cloudflare_web_analytics_site.hcw[0]",
-    path: "lite",
-    before: null,
-    after: true,
-    reason:
-      "#1923: the lite option, set after the import (the provider never reads it back)",
-  },
-  ...["site_token", "snippet", "rules", "ruleset"].map((path) => ({
-    address: "cloudflare_web_analytics_site.hcw[0]",
-    path,
-    after: KNOWN_AFTER_APPLY,
-    reason: `#1923: the site's ${path}, read again by the provider after its update`,
-  })),
-  ...["CF_ACCOUNT_ID", "CF_WEB_ANALYTICS_SITE_TAG"].map((name) => ({
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: `app_settings.${name}`,
-    before: "",
-    after: OWNER_VALUE,
-    reason: `#1923: ${name} set from the owner's workspace values`,
-  })),
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
-  // because this file cannot read what has applied.
+  // because this file cannot read what has applied. Live "false" on
+  // 2026-11-27.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
@@ -592,27 +544,12 @@ export const DECLARED = [
     reason:
       "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
   },
-  // #1400 and #1403: the visitor sessions' door, declared at last. The code
-  // had read LABS_VISITOR_SESSIONS_ENABLED since #1016 and nothing in infra/
-  // set it, so this is the setting appearing, closed ("false" is what the
-  // variable labs_visitor_sessions_enabled defaults to, and the same door the
-  // absent setting gave). Delete this entry once it has applied; the opening
-  // plan ("false" -> "true") is the owner's workspace edit and is deliberately
-  // not declared, so it shows as UNEXPECTED and is read.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.LABS_VISITOR_SESSIONS_ENABLED",
-    before: undefined,
-    after: "false",
-    reason:
-      "#1400/#1403: LABS_VISITOR_SESSIONS_ENABLED declared in Terraform, closed by default",
-  },
   // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
   // one (false -> true) until the arming apply has run too: it is the plan the
   // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this
   // file cannot read what has applied. A disarming plan (true -> false) is
   // deliberately not declared: it shows as UNEXPECTED, which is the prompt to
-  // read it.
+  // read it. Live "false" on 2026-11-27.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
@@ -662,14 +599,11 @@ export const DECLARED = [
   //   removals. The owner confirmed run-BN7KzWpfvXom9SFC on 2026-10-31, and
   //   the plan check read it back as status "applied" on 2026-11-01 (actions
   //   run 41256643007).
-  // Kept, because "not in this plan" cannot tell them from applied: the three
-  // arming plans (PROBE_AI_PROVIDERS, AMBASSADOR_AUDIENCE_MONTHLY,
-  // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
-  // (lab_ssh_loopback_only) and #1302's Web Analytics site, an import with
-  // two rule creates since #1923 (cloudflare_account_id and
-  // cloudflare_web_analytics_site_tag). Each is a value the owner sets in
-  // the workspace.
-  //
+  // Kept then, because "not in this plan" cannot tell them from applied: the
+  // three arming plans, #953 stage 3's two entries and #1302's Web Analytics
+  // site, each a value the owner sets in the workspace. #953 stage 3 and the
+  // site (an import since #1923) applied and were deleted on 2026-11-27,
+  // above; the arming plans stay.
   //
   // #1530's four declared changes (the Cosmos request-log filter moved into a
   // workspace transformation rule) applied in run-fQRFPxBy7CowV6zG on
@@ -687,6 +621,10 @@ export const DECLARED = [
   // data_collection_rule_id "" -> (known after apply), was never declared
   // (the header: an unknown difference cannot be) and was read by hand
   // against the list in the pull request.
+  //
+  // #1463: planned only once the owner has created the role and set
+  // storage_firewall_remover_enabled = true (infra/oidc.tf, count on that
+  // variable, default false).
   {
     address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
     action: "create",
@@ -694,27 +632,12 @@ export const DECLARED = [
       "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
   },
 
-  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity for
-  // lab-host-arc-run.yml and its two lab-host-arc environment credentials,
-  // planned from the merge; and its role assignment, planned only once the
-  // owner has created HCW Arc Run Command Operator and set
-  // lab_arc_run_command_enabled = true (Required-Inputs §4.6b). Delete all
-  // four once they have applied.
-  {
-    address: "azurerm_user_assigned_identity.github_arc_run",
-    action: "create",
-    reason: "#1590: the identity lab-host-arc-run.yml signs in as, holding only the Run Command role",
-  },
-  {
-    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc",
-    action: "create",
-    reason: "#1590: trusts the lab-host-arc environment's subject for the Run Command identity, so every sign-in waits for that environment's reviewers",
-  },
-  {
-    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc_immutable",
-    action: "create",
-    reason: "#1590: the immutable-ID form of the same lab-host-arc subject",
-  },
+  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity's
+  // role assignment, planned only once the owner has created HCW Arc Run
+  // Command Operator and set lab_arc_run_command_enabled = true
+  // (Required-Inputs §4.6b; infra/oidc.tf, count on that variable, default
+  // false). The identity and its two credentials applied and were deleted
+  // here on 2026-11-27, above. Delete this one once it has applied.
   {
     address: "azurerm_role_assignment.github_arc_run_operator[0]",
     action: "create",
@@ -728,104 +651,7 @@ export const DECLARED = [
   // on 2026-11-09 from the merge of #1633 (HCP Terraform commit status
   // Success on 3ba8f791 at 23:39Z) and were deleted here, as the header asks.
   // The owner then set FRONTEND_DEPLOY_CLIENT_ID from the new identity.
-  //
-  // #1617, PR 2: the three deletes that finish it. This pull request moves
-  // deploy-azure-frontend.yml onto github_frontend_deploy and
-  // deploy-functions.yml onto the reviewed `production-backend`
-  // environment, so nothing signs in through these three any more: the
-  // deploy identity's two `production` credentials, and its HCW Static Web
-  // App Deployer grant on the site, which the frontend identity holds
-  // instead. Delete these three once they have applied, and with them the
-  // test in assert-expected-plan.test.mjs that asserts they are declared
-  // ("declares #1617's three deletes ..."), or it fails.
-  {
-    address: "azurerm_federated_identity_credential.github_production",
-    action: "delete",
-    reason:
-      "#1617: the deploy identity stops trusting the production environment; deploy-functions.yml names production-backend and the frontend signs in as github_frontend_deploy",
-  },
-  {
-    address: "azurerm_federated_identity_credential.github_production_immutable",
-    action: "delete",
-    reason: "#1617: the immutable-ID form of the same production subject, on the deploy identity",
-  },
-  {
-    address: "azurerm_role_assignment.github_deploy_swa_token",
-    action: "delete",
-    reason:
-      "#1617: HCW Static Web App Deployer on the site for the deploy identity; github_frontend_deploy holds it for the frontend deploy",
-  },
-
-  // #1565 (ADR 0040 D10): the interviews-audio container and its retention
-  // rule, slice A of the interviews feature. The rule is the policy's fifth
-  // (index 4, after expire-recording-uploads); the -1 values are what the
-  // azurerm 5.12.0 provider writes for every day setting the rule does not
-  // name, read from a local plan of the same block, not guessed. 365 is
-  // var.interview_audio_retention_days at its default; a different workspace
-  // value changes both 365s. Delete both entries once the run has applied.
-  {
-    address: "azurerm_storage_container.interviews_audio",
-    action: "create",
-    reason: "#1565 ADR 0040 D10: the private interviews-audio container for guest recordings and transcripts",
-  },
-  {
-    address: "azurerm_storage_management_policy.cleanup",
-    path: "rule[4]",
-    before: undefined,
-    after: {
-        actions: [
-          {
-            base_blob: [
-              {
-                auto_tier_to_hot_from_cool_enabled: null,
-                delete_after_days_since_creation_greater_than: 365,
-                delete_after_days_since_last_access_time_greater_than: -1,
-                delete_after_days_since_modification_greater_than: -1,
-                tier_to_archive_after_days_since_creation_greater_than: -1,
-                tier_to_archive_after_days_since_last_access_time_greater_than: -1,
-                tier_to_archive_after_days_since_last_tier_change_greater_than: -1,
-                tier_to_archive_after_days_since_modification_greater_than: -1,
-                tier_to_cold_after_days_since_creation_greater_than: -1,
-                tier_to_cold_after_days_since_last_access_time_greater_than: -1,
-                tier_to_cold_after_days_since_modification_greater_than: -1,
-                tier_to_cool_after_days_since_creation_greater_than: -1,
-                tier_to_cool_after_days_since_last_access_time_greater_than: -1,
-                tier_to_cool_after_days_since_modification_greater_than: -1
-              }
-            ],
-            snapshot: [],
-            version: [
-              {
-                change_tier_to_archive_after_days_since_creation: -1,
-                change_tier_to_cool_after_days_since_creation: -1,
-                delete_after_days_since_creation: 365,
-                tier_to_archive_after_days_since_last_tier_change_greater_than: -1,
-                tier_to_cold_after_days_since_creation_greater_than: -1
-              }
-            ]
-          }
-        ],
-        enabled: true,
-        filters: [
-          {
-            blob_types: [
-              "blockBlob"
-            ],
-            match_blob_index_tag: [],
-            prefix_match: [
-              "interviews-audio/audio/"
-            ]
-          }
-        ],
-        name: "expire-interview-audio"
-      },
-    reason: "#1565 ADR 0040 D10: expire-interview-audio deletes interviews-audio/audio/ and its previous versions after var.interview_audio_retention_days",
-  },
-  {
-    address: "azurerm_role_assignment.func_interviews_audio_owner",
-    action: "create",
-    reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
-  },
+  // PR 2's three deletes applied and were deleted here on 2026-11-27, above.
 
   // #1612: the admin Search Console page. Its catalogue plan (the timer's
   // flag "false", the four GSC_* settings at their defaults, and its row on
@@ -834,10 +660,11 @@ export const DECLARED = [
   // in this plan". #1918 deleted those entries and folded the row into
   // TIMER_SCHEDULES_APPLIED. The arming plan (false -> true) stays until the
   // owner adds SYNC_SEARCH_CONSOLE to enabled_timers and that run has
-  // applied, like the other arming plans. The owner's own values for the
-  // three empty GSC_* settings ("" -> a value) are workspace edits and
-  // deliberately not declared: they show as UNEXPECTED and are read by hand,
-  // since this file holds no real identifier.
+  // applied, like the other arming plans (live "false" on 2026-11-27). The
+  // owner's own values for the three empty GSC_* settings ("" -> a value)
+  // are workspace edits and deliberately not declared: they show as
+  // UNEXPECTED and are read by hand, since this file holds no real
+  // identifier.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
@@ -846,124 +673,12 @@ export const DECLARED = [
     reason: "#1612: SYNC_SEARCH_CONSOLE added to enabled_timers, arming the twice-daily run",
   },
 
-  // #1918: the daily check that the Cloudflare API rate limit rule is on
-  // (functions/src/lib/timers/cloudflare-rate-limit.js). The plan after the
-  // merge adds the checkCloudflareRateLimit timer's flag, disarmed, and one
-  // row to alert-timer-overdue's datatable. Delete those two once that run
-  // has applied, and fold the row into TIMER_SCHEDULES_APPLIED above. The
-  // arming plan (false -> true) stays until the owner adds
-  // CHECK_CLOUDFLARE_RATE_LIMIT to enabled_timers and that run has applied.
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
-    path: "criteria[0].query",
-    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
-    after: overdueQuery([
-      ...TIMER_SCHEDULES_APPLIED,
-      ["checkCloudflareRateLimit", "1d", "2026-01-01 12:40"],
-    ]),
-    reason: "#1918: alert-timer-overdue watches checkCloudflareRateLimit (daily 12:40 UTC)",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT",
-    before: undefined,
-    after: "false",
-    reason: "#1918: the daily Cloudflare rate limit check catalogued, disarmed",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT",
-    before: "false",
-    after: "true",
-    reason: "#1918: CHECK_CLOUDFLARE_RATE_LIMIT added to enabled_timers, arming the daily check",
-  },
-
-  // #1822: the Second Brain index timer, brainIndexReconcile, gets its own
-  // flag. This timer was already running when it was catalogued, so its
-  // flag must arrive as "true": the functions that read it stop the daily
-  // rebuild of the search index when it is "false". So only that plan is
-  // declared. The owner adds BRAIN_INDEX_RECONCILE to enabled_timers after
-  // the merge and before confirming a run. A plan that adds the flag as
-  // "false" (the name is not in enabled_timers yet) is deliberately NOT
-  // declared: it shows as UNEXPECTED, which is the prompt to add the name
-  // and plan again, not to confirm. Delete this entry once it has applied.
-  // Pausing the timer later ("true" -> "false") is not declared either, like
-  // every other disarming plan.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_BRAIN_INDEX_RECONCILE",
-    before: undefined,
-    after: "true",
-    reason:
-      "#1822: the Second Brain index timer catalogued with BRAIN_INDEX_RECONCILE already in enabled_timers, so it keeps running",
-  },
-
-  // #1754 (ADR 0042): the Developer API's container, developer_events, added
-  // to infra/cosmos-containers.json. It holds the calls for speakers and the
-  // talk proposals sent to them, one partition per event. It has no computed
-  // properties, so the plan shows this one create and no azapi update beside
-  // it. Until it has applied, the call-for-speakers routes answer 500.
-  // Delete this entry once the run has applied.
-  {
-    address: 'azurerm_cosmosdb_sql_container.hcw["developer_events"]',
-    action: "create",
-    reason:
-      "#1754 ADR 0042: the developer_events container for calls for speakers and their proposals",
-  },
-
   // #1777 and #1811: the two switches the owner armed on 2026-11-25,
   // PROPOSAL_STRIP_ENABLED (the yearly clean-up of talk proposals) and
   // CONTENT_ARCHIVE_ENABLED (the yearly content archive), each "false" to
   // "true". The owner confirmed that Terraform run the same day, so both
   // declarations are gone. From here on a plan that changes either setting,
   // in either direction, is read as unexpected and shown to the owner.
-
-  // #1905: the Cloudflare page's admin token, a new Key Vault reference on
-  // the Function App, unresolved until the owner pastes
-  // CLOUDFLARE-ADMIN-TOKEN on the Keys tab. Delete this entry once the run
-  // has applied. CF_ZONE_ID arrives in the same run (undefined -> the zone
-  // id) and is deliberately NOT declared: its value is the owner's
-  // cloudflare_zone_id, which this public file does not hold, so it shows as
-  // UNEXPECTED and is read by hand (it must match the zone id the DNS
-  // records already use).
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CLOUDFLARE_ADMIN_TOKEN",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ADMIN-TOKEN)",
-    reason: "#1905: the Cloudflare admin token's Key Vault reference for the Cloudflare page",
-  },
-
-  // The app-exceptions alert stops counting the storage errors that follow
-  // every Terraform apply (T-511), and a second rule watches for those errors
-  // lasting an hour. The plan shows two changed attributes on the existing
-  // rule (its query and its description) and one new rule, beside the
-  // permanent diff. `before` is what the rule has held since 2026-08-25: the
-  // bare table name, and the description below. Delete all three entries
-  // once the apply has run and verify-alert-state.yml reads both rules OK,
-  // and host-storage-auth-alert.test.mjs's "declares" test with them.
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.app_exceptions",
-    path: "criteria[0].query",
-    before: "exceptions",
-    after: APP_EXCEPTIONS_QUERY,
-    reason:
-      "alert-app-exceptions leaves out the host's storage sign-in failures that follow an apply (T-511)",
-  },
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.app_exceptions",
-    path: "description",
-    before: "More than 5 application exceptions in 15 minutes.",
-    after: APP_EXCEPTIONS_DESCRIPTION,
-    reason: "alert-app-exceptions' description says what it leaves out",
-  },
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.host_storage_auth",
-    action: "create",
-    reason:
-      "alert-host-storage-auth: the same storage failures lasting four quarter hours, Sev2",
-  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
