@@ -118,7 +118,7 @@ revoked alone.
      | --- | --- | --- |
      | Zone | Read | The zone's name and status (needed for everything) |
      | Zone Settings | Edit | The Settings tab |
-     | DNS | Edit | The DNS tab |
+     | DNS (not **DNS Settings**) | Edit | The DNS tab. **DNS Settings** is a separate permission for zone-wide DNS options and does not let the page read records: with only that one, the DNS tab is refused (HTTP 403) |
      | Cache Purge | Purge | The Cache tab |
      | Transform Rules | Edit | Rules: header and URL rewrites |
      | Single Redirect | Edit | Rules: redirects |
@@ -594,6 +594,7 @@ change sends (and Cloudflare's own audit log).
 | "An agent key may not switch a security or rate limiting rule off" or "An agent key may not set a custom response" | Network Guy tried to switch a custom security or rate limiting rule off, add one switched off, or set a custom response | Do it yourself on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules), if it should happen |
 | "Check this Cloudflare change" on Telegram | A change landed but its audit row failed, or a DNS edit came back with a protected name | See the two warnings under Part 3 |
 | A part of the page says the token cannot read it | The token lacks that permission | Edit the token in Cloudflare and add it (Part 2, step 2) |
+| DNS records cannot be read (HTTP 403) while the rest of the zone reads | The token has no **Zone \| DNS** permission for that zone (often **DNS Settings** was picked instead), or the zone is missing from its Zone Resources | Edit the token: add **Zone \| DNS \| Edit**, check the zone is listed, save, reload the Overview |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
 | "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
