@@ -29,10 +29,14 @@ Determine whether any unauthorized alterations occurred prior to token revocatio
 3. Check active DNS records:
    Compare every live DNS entry with the record table in
    [`edge-dns-verification.md`](edge-dns-verification.md), which lists each
-   record and where it is declared. Two kinds:
+   site record and where it is declared, and the lab records with
+   `infra-lab/dns.tf`. Three kinds:
    - **Made by Terraform:** the `cloudflare_dns_record` resources in
      `infra/frontend.tf` (for example `api-azure`, `docs`, `notes` and the
-     ownership TXT records) and `infra-lab/dns.tf` (the `lab` records).
+     ownership TXT records); the table lists them.
+   - **Lab records, made by Terraform in `infra-lab/dns.tf`:** the `lab`
+     records and the two `_acme-challenge` delegation CNAMEs. The table does
+     not list these, so compare them with that file directly.
    - **Made by hand, not in Terraform:** the apex `hybridcloudworks.com` and
      `www`, which point at the Static Web App. Check them against the table,
      not against the Terraform files.
