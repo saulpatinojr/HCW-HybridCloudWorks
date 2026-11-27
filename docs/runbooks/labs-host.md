@@ -618,11 +618,17 @@ step 6 is one last run over SSH, from the workstation with the key.
    `lab_arc_run_command_enabled`, value `true`, **HCL** ticked,
    **Sensitive** not ticked, description `Grant lab-host-arc-run.yml the HCW
    Arc Run Command Operator role on rg-lab-hybrid-prod-cus (#1590)`. Save,
-   then **New run** (top right of the workspace) and confirm it. Success is
-   a plan with one create, `azurerm_role_assignment.github_arc_run_operator[0]`.
-   If the plan sits at "refreshing" for minutes instead, the role from step
-   3 does not exist yet: cancel the run, set the variable back to `false`,
-   and do step 3 again.
+   then **New run** (top right of the workspace). Success is a plan with
+   one create, `azurerm_role_assignment.github_arc_run_operator[0]`.
+   **Done 2026-11-27:** the variable is `true` and the assignment exists
+   (created 2026-11-09), so its declaration left `scripts/assert-expected-plan.mjs`
+   that day. Doing this step again (a rebuilt subscription) is therefore the
+   one case where `tfc-plan-check` reports this create as UNEXPECTED on
+   purpose: if that single create is the plan's only change, confirm it;
+   if anything else is there, stop and read it. If the plan sits at
+   "refreshing" for minutes instead, the role from step 3 does not exist
+   yet: cancel the run, set the variable back to `false`, and do step 3
+   again.
 5. **Seed the client id.** PowerShell, from the repository root on `main`.
    The script reads the `arc_run_client_id` output from the workspace and
    sets the repository **secret** `ARC_RUN_CLIENT_ID`, beside the ones it
