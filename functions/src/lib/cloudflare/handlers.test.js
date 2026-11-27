@@ -37,7 +37,7 @@ import { AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_ME
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
-import { HTTPS_REDIRECT_REASON, KEEP_REWRITES_REASON } from './agent-phase-limits.js';
+import { HTTPS_REDIRECT_REASON, KEEP_REDIRECTS_REASON, KEEP_REWRITES_REASON } from './agent-phase-limits.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'not-a-real-cloudflare-token-EXAMPLE-0123456789';
@@ -417,6 +417,8 @@ describe('zone settings', () => {
     ['ciphers', [], ['ECDHE-ECDSA-AES128-GCM-SHA256']],
     ['ssl_automatic_mode', 'auto', 'custom'],
     ['0rtt', 'off', 'on'],
+    ['sha1_support', 'off', 'on'],
+    ['tls_1_2_only', 'off', 'on'],
   ])('refuses an agent key %s (#1933) and lets a super_admin person change it', async (settingId, before, after) => {
     const routes = { [`GET ${ZONE_PATH}/settings/${settingId}`]: ok({ id: settingId, value: before }), [`PATCH ${ZONE_PATH}/settings/${settingId}`]: ok({ id: settingId, value: after }) };
     const agent = setup({ user: NETWORK_GUY, routes });
@@ -1209,17 +1211,21 @@ describe('rules', () => {
   });
 
   describe('an agent key may add or change rules, never remove one', () => {
-    const KEPT = { id: 'rule-a', expression: 'true', action: 'redirect', action_parameters: TO_HTTPS };
-    const OTHER = { id: 'rule-b', expression: 'false', action: 'redirect', action_parameters: TO_HTTPS };
-    const withRules = (rules) => entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, version: '3', rules });
+    // A phase with no limits of its own (#1933 gave redirects and URL rewrites theirs).
+    const HEADERS = 'http_response_headers_transform';
+    const header = (name) => ({ action: 'rewrite', action_parameters: { headers: { [name]: { operation: 'set', value: '1' } } } });
+    const KEPT = { id: 'rule-a', expression: 'true', ...header('x-a') };
+    const OTHER = { id: 'rule-b', expression: 'false', ...header('x-b') };
+    const NEW = { expression: 'true', ...header('x-new') };
+    const withRules = (rules) => entrypoint(HEADERS, { id: 'r2', phase: HEADERS, version: '3', rules });
 
     it.each([
       ['leaves one out', [KEPT]],
-      ['leaves every one out for new ones', [RULE]],
+      ['leaves every one out for new ones', [NEW]],
       ['keeps the rule but drops its id', [KEPT, { ...OTHER, id: undefined }]],
     ])('refuses an agent key’s list that %s with 403, writing nothing', async (label, rules) => {
-      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
-      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules }), {}));
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(HEADERS) } });
+      const res = parse(await handlers.putPhase(replace(HEADERS, { rules }), {}));
       expect(res.status).toBe(403);
       expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_REMOVAL_MESSAGE });
       expect(res.body.error).toBe('An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page.');
@@ -1229,27 +1235,38 @@ describe('rules', () => {
     });
 
     it.each([
-      ['adds a rule and keeps every current one', [KEPT, OTHER, RULE]],
+      ['adds a rule and keeps every current one', [KEPT, OTHER, NEW]],
       ['changes a current rule and keeps the rest', [{ ...KEPT, expression: 'http.host eq "blog.example"' }, OTHER]],
       ['puts the current rules in another order', [OTHER, KEPT]],
     ])('lets an agent key replace a phase when its list %s', async (label, rules) => {
-      const { handlers, api } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
-      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules }), {}));
+      const { handlers, api } = setup({ user: NETWORK_GUY, routes: { ...withRules([KEPT, OTHER]), ...put(HEADERS) } });
+      const res = parse(await handlers.putPhase(replace(HEADERS, { rules }), {}));
       expect(res.status).toBe(200);
       expect(WRITES(api)).toHaveLength(1);
     });
 
     it('lets an agent key add the first rules to a phase with none', async () => {
-      const { handlers } = setup({ user: NETWORK_GUY, routes: put(REDIRECT) });
-      expect(parse(await handlers.putPhase(replace(REDIRECT, { rules: [RULE], expectedVersion: null }), {})).status).toBe(200);
+      const { handlers } = setup({ user: NETWORK_GUY, routes: put(HEADERS) });
+      expect(parse(await handlers.putPhase(replace(HEADERS, { rules: [NEW], expectedVersion: null }), {})).status).toBe(200);
     });
 
     it('lets a super_admin person remove a rule', async () => {
-      const { handlers, api, store } = setup({ routes: { ...withRules([KEPT, OTHER]), ...put(REDIRECT) } });
-      const res = parse(await handlers.putPhase(replace(REDIRECT, { rules: [KEPT] }), {}));
+      const { handlers, api, store } = setup({ routes: { ...withRules([KEPT, OTHER]), ...put(HEADERS) } });
+      const res = parse(await handlers.putPhase(replace(HEADERS, { rules: [KEPT] }), {}));
       expect(res.status).toBe(200);
       expect(api.calls[2].body).toEqual({ rules: [KEPT] });
-      expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ zone: ZONE_APEX, family: 'rules', phase: REDIRECT, count: 1 });
+      expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ zone: ZONE_APEX, family: 'rules', phase: HEADERS, count: 1 });
+    });
+
+    it.each([
+      ['an agent key', NETWORK_GUY],
+      ['the owner', PERSON],
+    ])('refuses a list that holds one rule id twice, from %s, before calling Cloudflare (#1933)', async (_who, user) => {
+      const { handlers, api } = setup({ user, routes: { ...withRules([KEPT, OTHER]), ...put(HEADERS) } });
+      const res = parse(await handlers.putPhase(replace(HEADERS, { rules: [KEPT, OTHER, { ...KEPT }] }), {}));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Each rule id may appear only once in the list.');
+      expect(api.fetch).not.toHaveBeenCalled();
     });
   });
 
@@ -1455,16 +1472,11 @@ describe('rules', () => {
         expectRefused(result, ['its action must be redirect'], HTTPS_REDIRECT_REASON);
       });
 
-      it('refuses an agent key changing an https redirect to an http:// one', async () => {
-        const held = { id: 'redir-1', ...redirect(fixed('https://example.net/')) };
-        const result = await send(NETWORK_GUY, REDIRECT, [held], [{ ...held, action_parameters: fixed('http://example.net/') }]);
-        expectRefused(result, ['always_use_https'], HTTPS_REDIRECT_REASON);
-      });
-
       it.each([
         ['a fixed https:// address', fixed('https://example.net/')],
         ['a fixed HTTPS:// address in capitals', fixed('HTTPS://example.net/')],
         ['concat( starting with an https:// string', worked('concat("https://example.net", http.request.uri.path)')],
+        ['concat( starting with an HTTPS:// string in capitals', worked('concat("HTTPS://example.net", http.request.uri.path)')],
         ['concat( starting with a raw https:// string', worked('concat(r"https://example.net", http.request.uri.path)')],
         ['concat( starting with a raw https:// string with #', worked('concat(r#"https://example.net"#, http.request.uri.path)')],
         ['an https:// string on its own', worked('"https://example.net/"')],
@@ -1472,14 +1484,6 @@ describe('rules', () => {
         const result = await send(NETWORK_GUY, REDIRECT, null, [redirect(parameters)], null);
         expect(result.res.status).toBe(200);
         expect(WRITES(result.api)).toHaveLength(1);
-      });
-
-      it('lets an owner’s http:// redirect come back unchanged while the agent key adds another, but not be switched on', async () => {
-        const old = { id: 'redir-old', ...redirect(fixed('http://example.net/')), enabled: false };
-        const added = await send(NETWORK_GUY, REDIRECT, [old], [{ ...old, description: 'kept as it is' }, redirect(fixed('https://example.net/'))]);
-        expect(added.res.status).toBe(200);
-        const switchedOn = await send(NETWORK_GUY, REDIRECT, [old], [{ ...old, enabled: true }]);
-        expectRefused(switchedOn, ['always_use_https'], HTTPS_REDIRECT_REASON);
       });
 
       it('lets the owner add any redirect, switch one off and remove one', async () => {
@@ -1490,34 +1494,43 @@ describe('rules', () => {
       });
     });
 
-    describe('a redirect that matches on the scheme stands in for always_use_https', () => {
-      it('lets an agent key keep the owner’s http-to-https redirect as it is and add others', async () => {
-        const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE], [{ ...UPGRADE, description: 'Send http to https' }, redirect(fixed('https://example.net/'))]);
+    describe('the redirects the phase holds now come first, as they are; new ones go after them', () => {
+      // Any redirect the phase holds now may be the owner's: this page does not know who made a rule.
+      const OLD_HTTP = { id: 'redir-old', ...redirect(fixed('http://example.net/')), enabled: false };
+
+      it('lets an agent key keep the owner’s redirects as they are, a description changed, and add https:// ones after them', async () => {
+        const rules = [{ ...UPGRADE, description: 'Send http to https' }, OLD_HTTP, redirect(fixed('https://example.net/'))];
+        const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE, OLD_HTTP], rules);
         expect(result.res.status).toBe(200);
+        expect(WRITES(result.api)).toHaveLength(1);
+      });
+
+      it('lets an agent key add a redirect that matches on the scheme after the ones there are', async () => {
+        const added = { expression: 'http.request.scheme eq "http"', action: 'redirect', action_parameters: worked('concat("https://", http.host, http.request.uri.path)') };
+        expect((await send(NETWORK_GUY, REDIRECT, [UPGRADE], [UPGRADE, added])).res.status).toBe(200);
       });
 
       it.each([
-        ['makes it match nothing', { ...UPGRADE, expression: 'false' }],
-        ['changes where it sends visitors', { ...UPGRADE, action_parameters: worked('concat("https://example.net", http.request.uri.path)') }],
-      ])('refuses an agent key that %s', async (_label, changed) => {
-        const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE], [changed]);
-        expectRefused(result, ['matches on ssl', 'the zone setting always_use_https'], ownerOnlySettingReason('always_use_https'));
+        ['makes the owner’s http-to-https redirect match nothing', [{ ...UPGRADE, expression: '(http.request.uri.path eq "/nothing")' }, OLD_HTTP]],
+        ['changes where it sends visitors, to another https:// address', [{ ...UPGRADE, action_parameters: worked('concat("https://example.net", http.request.uri.path)') }, OLD_HTTP]],
+        ['changes the status code', [{ ...UPGRADE, action_parameters: { from_value: { ...UPGRADE.action_parameters.from_value, status_code: 307 } } }, OLD_HTTP]],
+        ['puts a new https:// redirect before it, which would answer first', [redirect(fixed('https://example.net/')), UPGRADE, OLD_HTTP]],
+        ['moves one past another', [OLD_HTTP, UPGRADE]],
+        ['switches the owner’s old http:// redirect on', [UPGRADE, { ...OLD_HTTP, enabled: true }]],
+        ['changes the owner’s https:// redirect to http://', [{ ...UPGRADE, action_parameters: fixed('http://example.net/') }, OLD_HTTP]],
+      ])('refuses an agent key that %s', async (_label, rules) => {
+        const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE, OLD_HTTP], rules);
+        expectRefused(result, ['may not change, switch on or off, or move a redirect', 'new ones after them'], KEEP_REDIRECTS_REASON);
       });
 
-      it('refuses an agent key switching it off, naming the key', async () => {
+      it('refuses an agent key switching the owner’s redirect off, naming the key', async () => {
         const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE], [{ ...UPGRADE, enabled: false }]);
         expectRefused(result, ['may not switch a redirect off']);
       });
 
-      it('refuses an agent key adding a redirect that matches on the scheme', async () => {
-        const added = { expression: 'http.request.scheme eq "http"', action: 'redirect', action_parameters: worked('concat("https://", http.host, http.request.uri.path)') };
-        const result = await send(NETWORK_GUY, REDIRECT, null, [added], null);
-        expectRefused(result, ['matches on http.request.scheme', 'the zone setting always_use_https'], ownerOnlySettingReason('always_use_https'));
-      });
-
-      it('lets the owner change it', async () => {
-        const result = await send(PERSON, REDIRECT, [UPGRADE], [{ ...UPGRADE, expression: '(not ssl and http.host ne "lab.example")' }]);
-        expect(result.res.status).toBe(200);
+      it('lets the owner change, move and switch off redirects', async () => {
+        const rules = [{ ...OLD_HTTP, enabled: true }, { ...UPGRADE, expression: '(not ssl and http.host ne "lab.example")', enabled: false }];
+        expect((await send(PERSON, REDIRECT, [UPGRADE, OLD_HTTP], rules)).res.status).toBe(200);
       });
     });
 

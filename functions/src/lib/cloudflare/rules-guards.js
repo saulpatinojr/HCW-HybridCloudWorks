@@ -11,10 +11,11 @@
  *     (custom security rules and the rate limit, GUARDED_PHASES).
  *   - In any phase, it may not add, change, switch off or move a rule that
  *     sets an owner-only zone setting for the requests it matches, such as
- *     a configuration rule's `ssl`, a response header rule's
- *     Strict-Transport-Security (#1931) or a redirect that matches on the
- *     request's scheme (#1933). Such a rule the owner made may come back
- *     unchanged.
+ *     a configuration rule's `ssl` or a response header rule's
+ *     Strict-Transport-Security (#1931). Such a rule the owner made may come
+ *     back unchanged.
+ *   - Redirects and URL rewrites have more limits of their own
+ *     (agent-phase-limits.js, #1933).
  *
  * A super_admin person may do all of these.
  */
@@ -86,10 +87,9 @@ export function refuseAgentDisable(user, phase, current, rules) {
   if (switchedOff) throw ownerOnly(agentDisableMessage(user, phase));
 }
 
-/** The value a touch names in its rule: the field of action_parameters, the header, or (for a match on a field) the rule's whole parameters. */
+/** The value a touch names in its rule: the field of action_parameters, or the header. */
 function touchedValue(rule, touch) {
   const parameters = rule.action_parameters;
-  if (touch.place === 'expression') return parameters ?? null;
   return touch.place === 'header' ? parameters.headers[touch.key] : parameters[touch.key];
 }
 
@@ -123,7 +123,7 @@ const MAX_NAME_IN_MESSAGE = 64;
 /** The 403 refusal for one owner-only touch, naming the key, the setting and the reason. */
 function ownerOnlyRuleRefusal(user, phase, touch) {
   const name = touch.name.slice(0, MAX_NAME_IN_MESSAGE);
-  const what = { header: `sets the ${name} header`, expression: `matches on ${name}` }[touch.place] ?? `sets the field ${name}`;
+  const what = touch.place === 'header' ? `sets the ${name} header` : `sets the field ${name}`;
   const setting = touch.setting ? `the zone setting ${touch.setting}, which only the owner changes` : 'a zone setting this page does not know';
   const message = `${actorOf(user)} (an agent key) may not add, change, switch off or move a rule in the ${phase} phase that ${what}: it stands in for ${setting}. ${touch.reason}`;
   return new Refusal(message, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY', reason: touch.reason });

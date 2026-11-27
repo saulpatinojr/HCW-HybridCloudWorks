@@ -182,8 +182,8 @@ describe('the allow-list of rule phases', () => {
 });
 
 describe('the owner-only settings', () => {
-  it('lists the nine settings that decide how connections are encrypted, each with a reason telling the owner what to do', () => {
-    // The last four since #1933, each id checked on Cloudflare's own page on 2026-11-27.
+  it('lists the eleven settings that decide how connections are encrypted, each with a reason telling the owner what to do', () => {
+    // The last six since #1933, each id checked on Cloudflare's own page on 2026-11-27.
     expect(OWNER_ONLY_SETTINGS.map((entry) => entry.setting)).toEqual([
       'ssl',
       'min_tls_version',
@@ -194,6 +194,8 @@ describe('the owner-only settings', () => {
       'ciphers',
       'ssl_automatic_mode',
       '0rtt',
+      'sha1_support',
+      'tls_1_2_only',
     ]);
     for (const entry of OWNER_ONLY_SETTINGS) {
       expect(ownerOnlySettingReason(entry.setting)).toMatch(/Change it on the Cloudflare page yourself/);
@@ -229,15 +231,11 @@ describe('the rule fields that stand in for an owner-only setting (#1931)', () =
     ]);
   });
 
-  it('maps ssl (configuration rules), the Strict-Transport-Security header (HSTS) and a redirect matching on the scheme to owner-only settings', () => {
+  it('maps only ssl (configuration rules) and the Strict-Transport-Security header (HSTS) to owner-only settings', () => {
     const mapped = RULE_SETTING_PARAMETERS.flatMap((entry) => Object.entries(entry.names).filter(([, setting]) => setting).map(([name, setting]) => `${entry.phase} ${name} ${setting}`));
     expect(mapped).toEqual([
       'http_config_settings ssl ssl',
       'http_response_headers_transform strict-transport-security security_header',
-      'http_request_dynamic_redirect ssl always_use_https',
-      'http_request_dynamic_redirect http.request.scheme always_use_https',
-      'http_request_dynamic_redirect http.request.full_uri always_use_https',
-      'http_request_dynamic_redirect raw.http.request.full_uri always_use_https',
     ]);
     for (const entry of RULE_SETTING_PARAMETERS) {
       expect(isEditablePhase(entry.phase), entry.phase).toBe(true);
@@ -256,27 +254,11 @@ describe('the rule fields that stand in for an owner-only setting (#1931)', () =
       ['strict-transport-security', 'security_header'],
     ]);
     expect(touched('http_response_headers_transform', { headers: { 'X-Frame-Options': {} } })).toEqual([]);
-    // A redirect is read by its expression, not its parameters, and a rule with no parameters touches nothing.
+    // The other editable phases set no zone setting, and a rule with no parameters touches nothing.
     expect(touched('http_request_dynamic_redirect', { ssl: 'off' })).toEqual([]);
     expect(touched('http_request_transform', { ssl: 'off' })).toEqual([]);
     expect(ownerOnlyRuleTouches('http_config_settings', { expression: 'true' })).toEqual([]);
     expect(ownerOnlyRuleTouches('http_config_settings', { action_parameters: ['ssl'] })).toEqual([]);
-  });
-
-  it('finds a redirect that matches on the request’s scheme, outside quoted text only (#1933)', () => {
-    const reads = (expression) => ownerOnlyRuleTouches('http_request_dynamic_redirect', { expression }).map(({ name, setting }) => [name, setting]);
-    expect(reads('not ssl')).toEqual([['ssl', 'always_use_https']]);
-    expect(reads('(not ssl and http.host eq "example.com")')).toEqual([['ssl', 'always_use_https']]);
-    expect(reads('http.request.scheme eq "http"')).toEqual([['http.request.scheme', 'always_use_https']]);
-    expect(reads('starts_with(http.request.full_uri, "http://")')).toEqual([['http.request.full_uri', 'always_use_https']]);
-    expect(reads('starts_with(raw.http.request.full_uri, r"http://")')).toEqual([['raw.http.request.full_uri', 'always_use_https']]);
-    // Not a match: the name inside quoted text, plain or raw, or as part of a longer name.
-    expect(reads('http.request.uri.path eq "/ssl-guide"')).toEqual([]);
-    expect(reads('http.request.uri.path eq r#"/not ssl"#')).toEqual([]);
-    expect(reads('http.request.uri.path eq "/a\\"ssl"')).toEqual([]);
-    expect(reads('cf.ssl_thing eq 1')).toEqual([]);
-    expect(reads('http.host eq "www.example.com"')).toEqual([]);
-    expect(reads(undefined)).toEqual([]);
   });
 });
 

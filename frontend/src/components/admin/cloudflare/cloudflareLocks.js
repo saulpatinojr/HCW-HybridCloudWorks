@@ -94,6 +94,8 @@ export const OWNER_ONLY_SETTINGS = Object.freeze(
     'ciphers',
     'ssl_automatic_mode',
     '0rtt',
+    'sha1_support',
+    'tls_1_2_only',
   ].map(
     (setting) =>
       Object.freeze({

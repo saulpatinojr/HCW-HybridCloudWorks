@@ -33,9 +33,3 @@ export function rulesById(current) {
   const rules = Array.isArray(current?.rules) ? current.rules : [];
   return new Map(rules.filter((rule) => typeof rule?.id === 'string' && rule.id).map((rule) => [rule.id, rule]));
 }
-
-/** Whether a rule sent comes back doing exactly what the phase's rule of the same id does now. */
-export function unchangedFrom(held, rule) {
-  const was = typeof rule?.id === 'string' ? held.get(rule.id) : undefined;
-  return Boolean(was) && behaviourOf(was) === behaviourOf(rule);
-}

@@ -43,16 +43,18 @@
  * a blocked caller, which only a paid plan offers and is closed ahead of
  * time. Redirects may not be switched off by an agent key either (#1933).
  *
- * REDIRECTS AND URL REWRITES (#1933, agent-phase-limits.js). An agent key's
- * new or changed redirect must send visitors to an https:// address, and
- * an agent key must send the URL rewrite phase back exactly as it is,
- * because a rewrite changes the path every later rule sees. Each is 403
- * CLOUDFLARE_OWNER_ONLY, naming the key.
+ * REDIRECTS AND URL REWRITES (#1933, agent-phase-limits.js). An agent key
+ * may only add redirects after the ones the phase holds now, which come
+ * back exactly as they are (the first redirect that matches is the one
+ * used); a new redirect must send visitors to an https:// address; and the
+ * URL rewrite phase comes back exactly as it is, because a rewrite changes
+ * the path every later rule sees. Each is 403 CLOUDFLARE_OWNER_ONLY,
+ * naming the key. A list that holds one rule id twice is refused for
+ * everyone (400).
  *
  * OWNER-ONLY SETTINGS IN A RULE (#1931). A rule can set some zone settings
- * for the requests it matches: a configuration rule's `ssl`, a response
- * header rule's Strict-Transport-Security (HSTS), or a redirect that
- * matches on the request's scheme (always_use_https, #1933). An agent key may not
+ * for the requests it matches: a configuration rule's `ssl`, or a response
+ * header rule's Strict-Transport-Security (HSTS). An agent key may not
  * change those settings on the settings route, so it may not add, change,
  * switch off or move a rule that sets one either (403
  * CLOUDFLARE_OWNER_ONLY, naming the key and the setting). The list of such
@@ -171,6 +173,16 @@ export async function getPhase({ request, client, zone }) {
 }
 
 const isRule = (rule) => Boolean(rule) && typeof rule === 'object' && !Array.isArray(rule);
+
+/**
+ * Whether a list holds one rule id more than once (#1933 review). A phase
+ * never holds two rules with one id, and the guards that compare a list
+ * with the phase as it is now read each id once.
+ */
+function holdsAnIdTwice(rules) {
+  const ids = rules.map((rule) => rule.id).filter((id) => id !== undefined);
+  return new Set(ids).size !== ids.length;
+}
 const withoutStamps = (rule) => Object.fromEntries(Object.entries(rule).filter(([key]) => !STAMPS.includes(key)));
 
 /** A field name as Cloudflare writes it: lower-case letters, digits and underscores. */
@@ -225,6 +237,7 @@ function rulesBody(phase, body) {
   if (!Array.isArray(body.rules) || body.rules.length > MAX_RULES) throw bad(`rules must be a list of at most ${MAX_RULES} rules.`);
   if (body.rules.length === 0) throw bad('rules may not be empty: an empty list deletes every rule in the phase, and deleting is done in the Cloudflare dashboard.');
   if (!body.rules.every(isRule)) throw bad('Each rule must be an object.');
+  if (holdsAnIdTwice(body.rules)) throw bad('Each rule id may appear only once in the list.');
   refuseRuleContents(phase, body.rules);
   const out = { rules: body.rules.map(withoutStamps) };
   if (body.description !== undefined) {
