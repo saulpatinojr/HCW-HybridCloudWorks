@@ -55,11 +55,16 @@ owner changes the variable only after that pull request has merged.
 
 **Both directions are declared together.** The pull request for a forward
 step also declares going back from it, so a rollback checks clean from the
-first moment. For `www` that means the first two rows of the table: both
-are on `main` from the pull request that declared step 1, and both stay
-there until `www` is settled, so a run in either direction reads as
-DECLARED. They are removed in the pull request that declares step 4 (the
-apex), or when `www` goes back to `none` for good.
+first moment. For `www` that means the first two rows of the table. Both
+are on `main` from the pull request that declared step 1, and they stay
+there for as long as `www` is proxied, step 4 included, because a rollback
+("Going back" below) or the certificate procedure under it may set `www`
+back to `none` at any time. The pull request for step 4 adds the apex's two
+rows beside them. The `www` rows are removed only when the site goes back
+to `none` for good, and the apex rows only when the apex goes back for
+good. A run that moves both names at once (from `both` to `none` for the
+certificate procedure, and back) reads as both names' rows together, each
+checked on its own record.
 
 The declarations for one row share a `step` name in
 `scripts/assert-expected-plan.mjs`, so they count only together: a plan
@@ -71,10 +76,10 @@ on its own as UNEXPECTED.
 
 | Step | Variable change | What the pull request declares (and nothing else) |
 | --- | --- | --- |
-| Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply. Step `#1929 step 1`, **declared, with the next row, in the pull request that closes this row; see the CHANGELOG.** |
+| Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply. Step `#1929 step 1`, **declared in the same pull request as the next row** (see the CHANGELOG). |
 | Part 3, step 2 (test) and any rollback of `www` | `www` to `none` | `cloudflare_dns_record.site_www`: `proxied` `true` -> `false`, `ttl` `1` -> `60`, `modified_on` known after apply. Step `#1929 step 1 back`, **declared in the same pull request as step 1**. |
-| Part 3, step 2 (back on) | `none` to `www` | the step 1 row, still on `main` (both `www` rows stay until `www` is settled) |
-| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. The same pull request declares the next row and removes the two `www` rows. |
+| Part 3, step 2 (back on) | `none` to `www` | the step 1 row, still on `main` (both `www` rows stay for as long as `www` is proxied) |
+| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. The same pull request declares the next row; the two `www` rows stay. |
 | Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply |
 
 Then, for every run:

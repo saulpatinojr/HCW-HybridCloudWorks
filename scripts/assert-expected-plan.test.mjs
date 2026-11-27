@@ -1069,11 +1069,19 @@ describe('declarations that share a step (#1929)', () => {
       expect(new Set(result.declared)).toEqual(new Set([one, oneStamp]));
       expect(new Set(result.unused)).toEqual(new Set([two, twoStamp]));
     }
-    // Only the computed value differs: it is covered, but neither step opens, so nothing is missing or credited.
+    // Only the computed value differs: neither step opens, and a computed value that belongs to a step covers
+    // its difference only while that step is in the plan, so the lone unknown value is named, as it would be
+    // with nothing declared. Nothing is credited and no step is reported as missing a part.
     const stampOnly = checkPlan(stamped([]), { declared: [one, oneStamp, two, twoStamp] });
-    expect(stampOnly.unexpected).toEqual([]);
+    expect(stampOnly.ok).toBe(false);
+    expect(stampOnly.unexpected).toEqual([`${ADDRESS}: update m: "then" -> (known after apply)`]);
     expect(stampOnly.declared).toEqual([]);
     expect(incompleteSteps([one, oneStamp], new Set([oneStamp]))).toEqual([]);
+    // A computed value without a step keeps the rule it had before steps: it covers its difference on its own.
+    const looseStamp = { address: ADDRESS, path: 'm', after: KNOWN_AFTER_APPLY, reason: 'no step' };
+    const loose = checkPlan(stamped([]), { declared: [looseStamp] });
+    expect(loose.ok).toBe(true);
+    expect(loose.declared).toEqual([looseStamp]);
   });
 });
 
@@ -1670,7 +1678,7 @@ describe('DECLARED', () => {
     // the provider's to set: its ModifyPlan (5.29.0) leaves it unknown when proxied or ttl changes, keeps
     // comment_modified_on (the comment is unchanged), proxiable, meta, settings and tags from state, and sets
     // tags_modified_on to null with no tags; id and created_on are held by plan modifiers. So none of those is
-    // declared. Both directions stay declared until www is settled (docs/runbooks/proxy-site-hosts.md).
+    // declared. Both directions stay declared for as long as www is proxied (docs/runbooks/proxy-site-hosts.md).
     expect(wwwDeclared.map(({ path, step, before, after }) => [path, step, before, after])).toEqual([
       ['proxied', STEP, false, true],
       ['ttl', STEP, 60, 1],
@@ -1809,17 +1817,30 @@ describe('DECLARED', () => {
     const backLoose = back.map(({ step: _step, ...rest }) => rest);
     expect(checkPlan(backPlan(), { declared: [...forward, ...backLoose] }).unexpected).toEqual([]);
 
-    // An unrelated change to www (its comment, here), with both steps declared: only the comment is named.
-    // modified_on goes unknown with it and is covered by both steps' computed entries, but neither step opens,
-    // so there is no "missing" line and nothing is credited.
+    // An unrelated change to www (its comment, here), with both steps declared: the comment is named, and so
+    // is the modified_on the provider leaves unknown with it. Both steps' computed entries match that unknown
+    // value, but neither step is in the plan, and a step's computed entry covers its value only while its step
+    // is. There is no "missing" line and nothing is credited.
+    const STAMP_LINE = `${RECORDS[1]}: update modified_on: "2026-11-27T19:21:00Z" -> (known after apply)`;
     for (const declared of [DECLARED, forward]) {
       const commented = expectedPlan();
       commented.resource_changes.push(update(RECORDS[1], { comment: 'A different comment' }));
       const result = checkPlan(commented, { declared });
       expect(result.ok).toBe(false);
-      expect(result.unexpected).toEqual([`${RECORDS[1]}: update comment: ${JSON.stringify(COMMENTS[RECORDS[1]])} -> "A different comment"`]);
+      expect(result.unexpected).toEqual([
+        `${RECORDS[1]}: update comment: ${JSON.stringify(COMMENTS[RECORDS[1]])} -> "A different comment"`,
+        STAMP_LINE,
+      ]);
       expect(result.declared.filter((entry) => entry.address === RECORDS[1])).toEqual([]);
     }
+
+    // A lone unknown modified_on on www, nothing else changing: neither step is in the plan, so it is named.
+    const stampOnly = expectedPlan();
+    stampOnly.resource_changes.push(update(RECORDS[1], {}));
+    const lone = checkPlan(stampOnly);
+    expect(lone.ok).toBe(false);
+    expect(lone.unexpected).toEqual([STAMP_LINE]);
+    expect(lone.declared.filter((entry) => entry.address === RECORDS[1])).toEqual([]);
 
     // The same run with any apex change too: the apex has no declaration, so each of its changes is named,
     // and www's step still matches.
@@ -1906,8 +1927,8 @@ describe('DECLARED', () => {
     // assignments counted on storage_firewall_remover_enabled and lab_arc_run_command_enabled were pruned too,
     // once the owner confirmed on 2026-11-27 that both workspace variables are true (both assignments were
     // read live that day); docs/standards/required-inputs.md §4.1 records both as SET. Since then, #1929
-    // step 1's www entries, forward (site_proxied_hosts "none" -> "www") and back, stay until www is settled:
-    // they go when the apex step is declared, or when www goes back to "none" for good.
+    // step 1's www entries, forward (site_proxied_hosts "none" -> "www") and back, stay for as long as www is
+    // proxied, step 4 included: they go only when the site goes back to "none" for good.
     const values = (entry) =>
       entry.after === KNOWN_AFTER_APPLY ? '(known after apply)' : `${entry.before} -> ${entry.after}`;
     expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${values(entry)}`}`)).toEqual([

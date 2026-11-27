@@ -132,6 +132,16 @@ export function findDeclaredAction(declared, address, action) {
  */
 const opensStep = (declaration) => declaration.after !== KNOWN_AFTER_APPLY;
 
+/**
+ * Whether a declaration covers its difference only while its step is in the
+ * plan: a computed value that belongs to a step (#1929). Such an entry
+ * matches any unknown value at its path, so on its own it would wave through
+ * a lone unknown `modified_on`. A computed value without a step covers its
+ * difference whatever else the plan holds, as before steps existed.
+ */
+export const coversOnlyInItsStep = (declaration) =>
+  Boolean(declaration.step) && declaration.after === KNOWN_AFTER_APPLY;
+
 /** The steps this plan holds: those with at least one matched declaration that opens a step. */
 export function presentSteps(declared, matched) {
   return new Set(declared.filter((d) => d.step && matched.has(d) && opensStep(d)).map((d) => d.step));

@@ -113,6 +113,9 @@
  * two steps on one record (forward and back) can both be declared. A step
  * that is not in the plan prints as NOTEs, as it does once it has applied.
  * Every declaration that covers a difference is credited, not only the first.
+ * A `KNOWN_AFTER_APPLY` entry with a `step` covers its difference only while
+ * its step is in the plan: a lone unknown `modified_on` is UNEXPECTED, as it
+ * is with nothing declared. One without a `step` covers it as before.
  *
  * `tfc-plan-check.yml` reads the declarations on the ref it was dispatched
  * from (normally `main`), not those at the commit the run was planned for.
@@ -153,6 +156,7 @@ import {
   sideEffects,
 } from "./lib/plan-actions.mjs";
 import {
+  coversOnlyInItsStep,
   creditedDeclarations,
   declarationLines,
   describeIncomplete,
@@ -160,6 +164,7 @@ import {
   incompleteSteps,
   KNOWN_AFTER_APPLY,
   matchesDeclaration,
+  presentSteps,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
@@ -582,10 +587,12 @@ export const DECLARED = [
   // its ttl at 60 (or changes ttl alone) names the missing one instead of
   // passing. modified_on alone never counts as either step, because any
   // change to the record leaves it unknown.
-  // Both steps stay here, so either direction checks clean, from now until
-  // www is settled: they are deleted in the pull request that declares the
-  // next step (www to "both", the apex), or when www goes back to "none" for
-  // good. The runbook's table says the same.
+  // Both steps stay here, so either direction checks clean, for as long as
+  // www is proxied: a rollback, or the certificate procedure in the
+  // runbook's "Going back", may set www back to "none" at any time, step 4
+  // included. The pull request for step 4 (www to "both", the apex) adds the
+  // apex's two steps beside these. These two are deleted only when the site
+  // goes back to "none" for good. The runbook's table says the same.
   {
     address: "cloudflare_dns_record.site_www",
     path: "proxied",
@@ -792,7 +799,7 @@ function toleratedPaths() {
  * The UNEXPECTED lines for one update (#719): every difference that is
  * neither tolerated nor declared.
  */
-function checkUpdate(change, { tolerated, declared, matched, secrets }) {
+function checkUpdate(change, { tolerated, declared, matched, pending, secrets }) {
   const address = change.address;
   const absent = MARKERS.filter((key) => !Object.hasOwn(change.change, key));
   if (absent.length > 0) {
@@ -821,10 +828,11 @@ function checkUpdate(change, { tolerated, declared, matched, secrets }) {
       matchesDeclaration(d, address, difference),
     );
     for (const declaration of covering) matched.add(declaration);
-    if (covering.length === 0)
-      lines.push(
-        `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`,
-      );
+    const line = `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`;
+    if (covering.length === 0) lines.push(line);
+    // Covered only by computed values of steps: whether that holds is known
+    // once every change has been read, so checkPlan decides (#1929).
+    else if (covering.every(coversOnlyInItsStep)) pending.push({ line, covering });
   }
   return lines;
 }
@@ -895,6 +903,7 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
     tolerated: toleratedPaths(),
     declared,
     matched,
+    pending: [],
     secrets: secretsOf(plan),
   };
 
@@ -926,7 +935,13 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   // A step's declarations stand or fall together (#1929): a plan that carries
   // part of a step names the rest, rather than passing as if it were whole.
   // A step is in the plan only when one of its declared values matched; a
-  // computed value alone (modified_on) never opens one.
+  // computed value alone (modified_on) never opens one. A difference covered
+  // only by computed values of steps that are not in the plan is named, as
+  // it would be with no declaration at all.
+  const present = presentSteps(declared, matched);
+  for (const { line, covering } of context.pending) {
+    if (!covering.some((d) => present.has(d.step))) unexpected.push(line);
+  }
   const incomplete = incompleteSteps(declared, matched);
   unexpected.push(...incomplete.map(describeIncomplete));
   const credited = creditedDeclarations(declared, matched);
