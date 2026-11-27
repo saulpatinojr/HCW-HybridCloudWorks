@@ -41,11 +41,57 @@ record always has TTL automatic (Cloudflare's rule, and Terraform sets it).
 Both records carry `prevent_destroy`, so a plan that would delete either one
 stops instead.
 
-The variable is set at
-<https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables> as a plain
-Terraform variable (not sensitive, HCL off). After saving it, start a run
-from <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs> and confirm
-it once the plan shows only the change expected for that step (below).
+## How every run in this runbook is checked
+
+The plan check (`tfc-plan-check`, a workflow that reads the plan HCP
+Terraform is holding and compares it with a list of expected changes) only
+passes a change that is **declared** in `scripts/assert-expected-plan.mjs`
+on `main`. It reads that list from `main`, not from the run's commit, so the
+declaration has to be merged before the run is checked.
+
+**Before each switch step**, a session prepares a small pull request that
+declares exactly that step's change (the table below), and merges it. The
+owner changes the variable only after that pull request has merged. A
+session also merges the declarations for going back one step as soon as a
+forward step has applied, so they are already on `main` if a rollback is
+needed.
+
+| Step | Variable change | What the pull request declares (and nothing else) |
+| --- | --- | --- |
+| Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply |
+| Part 3, step 2 (test) and any rollback of `www` | `www` to `none` | `cloudflare_dns_record.site_www`: `proxied` `true` -> `false`, `ttl` `1` -> `60`, `modified_on` known after apply |
+| Part 3, step 2 (back on) | `none` to `www` | the step 1 row again (its entry stays until this run has applied) |
+| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply |
+| Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply |
+
+Then, for every run:
+
+1. Set the variable at
+   <https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables> (a
+   plain Terraform variable named `site_proxied_hosts`, not sensitive, HCL
+   off) and save it. Skip this step for Part 1, where the merge itself starts
+   the run.
+2. Start a run at <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs>
+   (**New run**, plan and apply). Wait until it stops at **Needs Confirmation**.
+   Do not confirm yet.
+3. Open
+   <https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml>,
+   select **Run workflow**, leave the branch at `main` and both boxes empty
+   (it then reads the workspace's latest run), and select **Run workflow**.
+4. Open the run when it finishes and read its summary. **A pass** is a green
+   run whose summary starts **Expected.** ("The plan carries only the known
+   permanent diff, plus any change declared ... Safe to confirm.") and lists
+   each change of this step as `DECLARED`. **UNEXPECTED** means the plan holds
+   something not in the table: do not confirm, and give the run link to a
+   session. **Could not read the plan** says nothing about the plan: run it
+   again, and if it repeats, give the link to a session.
+5. Confirm the run in HCP Terraform (**Confirm & Apply**).
+
+**In an emergency rollback** where the going-back declarations are somehow
+not on `main` yet, do not wait for a pull request: read the plan in HCP
+Terraform yourself, check it holds only the row for that rollback above, and
+confirm it. The plan check will say UNEXPECTED for that run, which is
+expected; a session adds the declaration afterwards.
 
 ## Part 1. Bring the two records under Terraform (happens once)
 
@@ -59,7 +105,8 @@ The pull request for #1929 step 2 adds the records with the switch at
 - `modified_on` and `comment_modified_on` as "known after apply" (Cloudflare
   stamps them when the comment is written).
 
-Nothing else. `tfc-plan-check` holds the plan to exactly that list; a plan
+Nothing else. The pull request declares exactly that list, so run steps 3 to
+5 of "How every run in this runbook is checked" before confirming; a plan
 that changes `proxied`, `ttl` or `content` is reported as unexpected and must
 not be confirmed. The import finds each record by name, so no record id is
 written anywhere; if the zone does not hold exactly one CNAME at a name, the
@@ -148,11 +195,11 @@ imported.
 
 ### Step 1: proxy `www`
 
-Set `site_proxied_hosts` to `www` and start a run. **The plan should show**
-one change on `cloudflare_dns_record.site_www`: `proxied` from `false` to
-`true` and `ttl` from `60` to `1` (and its `modified_on` known after apply).
-Nothing on the apex. That pull request's declarations are added to
-`scripts/assert-expected-plan.mjs` before the run, as for any change.
+Once the step 1 declarations have merged, follow "How every run in this
+runbook is checked" with `site_proxied_hosts` set to `www`. **The plan should
+show** one change on `cloudflare_dns_record.site_www`: `proxied` from `false`
+to `true` and `ttl` from `60` to `1` (and its `modified_on` known after
+apply). Nothing on the apex.
 
 Wait five minutes after the apply, then:
 
@@ -217,10 +264,12 @@ Wait five minutes after the apply, then:
 
 ### Step 2: test going back, on `www`
 
-Set `site_proxied_hosts` to `none`, run, wait five minutes, and run check 1:
-`www` is a CNAME to `azurestaticapps.net` again, and check 2 shows no `Server:
-cloudflare`. Then set it to `www` again, run, and repeat checks 1 and 2. This
-proves the rollback before it is ever needed.
+Once the going-back declarations for `www` are on `main`, follow "How every
+run in this runbook is checked" with `site_proxied_hosts` set to `none`. Wait
+five minutes and run check 1: `www` is a CNAME to `azurestaticapps.net`
+again, and check 2 shows no `Server: cloudflare`. Then do the same with
+`www` again and repeat checks 1 and 2. This proves the rollback before it is
+ever needed.
 
 ### Step 3: leave `www` proxied through one real deploy
 
@@ -231,15 +280,19 @@ without a hard refresh, and check 2's `CacheControl` is unchanged.
 
 ### Step 4: proxy the apex
 
-Set `site_proxied_hosts` to `both` and start a run. **The plan should show**
-one change on `cloudflare_dns_record.site_apex`: `proxied` from `false` to
-`true` (its `ttl` is already 1). Then run checks 1 to 6 with
+Once the step 4 declarations have merged, follow "How every run in this
+runbook is checked" with `site_proxied_hosts` set to `both`. **The plan
+should show** one change on `cloudflare_dns_record.site_apex`: `proxied` from
+`false` to `true` (its `ttl` is already 1, and its `modified_on` is known
+after apply). Then run checks 1 to 6 with
 `https://hybridcloudworks.com/` in place of the `www` addresses.
 
 ## Going back
 
 At any point: set `site_proxied_hosts` one step back (`both` to `www`, `www`
-to `none`), start a run and confirm it. Resolvers may keep a proxied answer
+to `none`) and follow "How every run in this runbook is checked"; the
+going-back declarations are already on `main` (see that section, including
+what to do in an emergency if they are not). Resolvers may keep a proxied answer
 for up to five minutes, because proxied records always have a five-minute
 TTL ([TTL](https://developers.cloudflare.com/dns/manage-dns-records/reference/ttl/)).
 The Part 2 changes do not need undoing: the configuration rule does nothing

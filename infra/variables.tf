@@ -1267,6 +1267,13 @@ variable "cloudflare_ip_ranges" {
 
 # -----------------------------------------------------------------------------
 # Domain
+# -----------------------------------------------------------------------------
+variable "domain" {
+  description = "Base domain for all services"
+  type        = string
+  default     = "hybridcloudworks.com"
+}
+
 # Which of the site's own names go through Cloudflare's proxy (#1929). The
 # apex and www records are in infra/frontend.tf. "none" is how they were made
 # and stays the default, so merging the change that added this switch changes
@@ -1285,13 +1292,6 @@ variable "site_proxied_hosts" {
     condition     = contains(["none", "www", "both"], var.site_proxied_hosts)
     error_message = "site_proxied_hosts must be \"none\", \"www\" or \"both\". There is no value for the apex alone: www goes first (docs/runbooks/proxy-site-hosts.md)."
   }
-}
-
-# -----------------------------------------------------------------------------
-variable "domain" {
-  description = "Base domain for all services"
-  type        = string
-  default     = "hybridcloudworks.com"
 }
 
 # -----------------------------------------------------------------------------

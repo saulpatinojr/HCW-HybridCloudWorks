@@ -104,7 +104,7 @@ silently deploy the workload into a platform landing zone.
 | `cloudflare_zone_id` | no | Cloudflare zone the rules attach to |
 | `budget_alert_email` | no | Budget alert action group |
 
-**Terraform variables — defaulted.** The other 66 carry defaults and need no
+**Terraform variables — defaulted.** The rest carry defaults and need no
 workspace entry. The table below lists the ones that are posture switches
 rather than settings (the count is left out because it drifted; #1929 found
 "twelve" over sixteen rows and added a seventeenth) — every one but `labs_public_submission_enabled` defaults

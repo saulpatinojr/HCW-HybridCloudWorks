@@ -195,8 +195,9 @@ export const ALLOWLIST = [
   {
     id: 'owner-dashboard',
     reason:
-      "The owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made " +
-      'by design; docs/runbooks/edge-dns-verification.md). A dashboard session signed in as the ' +
+      "The owner's own edits in the Cloudflare dashboard (the apex's validation TXT and the other " +
+      'records Terraform does not manage are changed there by design; the apex and `www` CNAMEs are ' +
+      'in Terraform since #1929; docs/runbooks/edge-dns-verification.md). A dashboard session signed in as the ' +
       `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
       'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',

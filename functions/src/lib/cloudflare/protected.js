@@ -63,7 +63,8 @@ export const LAB_ZONE = 'hybridcloudinsights.com';
 /** The lab host's name (infra-lab/variables.tf `lab_hostname`). */
 const LAB = `lab.${ZONE_APEX}`;
 
-const SITE = 'The site itself, on the Static Web App. Managed by Terraform in infra/frontend.tf since #1929, including whether Cloudflare proxies it (the site_proxied_hosts switch); a change here is undone by the next run.';
+const SITE =
+  "The site itself, on the Static Web App. Its CNAME is managed by Terraform in infra/frontend.tf since #1929, including whether Cloudflare proxies it (the site_proxied_hosts switch), so a change to it here is undone by the next run. The apex's other records (Azure's validation TXT, mail, CAA) are changed in the Cloudflare dashboard by hand; the validation TXT must never be deleted, because Azure reads it again if the apex has to be validated again.";
 const FRONTEND = 'Managed by Terraform in infra/frontend.tf; a change here is undone by the next run.';
 const LAB_RECORD = 'The lab host, managed by Terraform in infra-lab/dns.tf.';
 
