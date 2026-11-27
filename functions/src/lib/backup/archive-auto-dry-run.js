@@ -53,7 +53,8 @@ const PRESS_AGAIN = 'Open the Archive card on Health, Overview and press Dry run
  * dry-run report describes the backup, make one. The owner's answer to
  * "how does a yearly run start" was "by itself" (ADR 0046, question 4), so
  * the yearly check does not wait for someone to press Dry run. The archive
- * then starts at the next daily check, if that report shows nothing to
+ * then starts as soon as that dry run finishes (the job that writes its
+ * report runs the daily check again), if that report shows nothing to
  * decide. A dry run writes no archive and changes no record.
  *
  * CAPPED, so a dry run that keeps failing is not started every morning for

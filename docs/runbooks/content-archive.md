@@ -359,7 +359,7 @@ names; treat that as a sign it holds what people typed.
 | **Last archive: 2026**, with a time, and "60 files (one per container), … records, … compressed" | That year's archive is finished. The numbers are from its manifest | Do the read-back check once ([Reading an archive back](#reading-an-archive-back)) |
 | "50 of 60 files are in the Archive tier; the daily check moves the rest" | The archive is finished and listed, and some files are still online. Moving a file can fail; the next daily check (03:00 UTC) tries again | Nothing, unless it says so for more than two days; then say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
 | In red: "file(s) the archive's list names are not in storage" | A file the manifest lists has been deleted | Say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
-| "could not start today: no dry run has been made yet", "the newest dry run did not finish", or "the newest dry-run report was made from an older backup" | An archive never starts unless a finished dry-run report describes the very backup it would read. When that is the only thing missing, the daily check (03:00 UTC) starts the dry run itself, and the archive starts the day after if the report shows nothing to decide | Nothing. You can also press **Dry run** yourself |
+| "could not start today: no dry run has been made yet", "the newest dry run did not finish", or "the newest dry-run report was made from an older backup" | An archive never starts unless a finished dry-run report describes the very backup it would read. When that is the only thing missing, the daily check (03:00 UTC) starts the dry run itself, and the archive starts as soon as that dry run finishes, if the report shows nothing to decide | Nothing. You can also press **Dry run** yourself; the archive then starts as soon as yours finishes |
 | "could not start today: the newest dry-run report was made before the list of what is kept last changed", or "does not cover every container an archive would write" | The list changed after the report was made (a decision of yours was put into the code, for example), so the report no longer describes what an archive would write | Nothing: the daily check starts a new dry run, once for each backup and each version of the list |
 | "could not start today: the newest dry-run report met a record too large to search whole … in content (1 record)" | One record in a kept container was too deep or too big for the dry run to look through all of it for names that look like a secret, so the report cannot vouch for that container. The sentence names each such container and how many records, and the container's row in the "Every container" table says it in red. Since the fix for [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) the limits are the database's own (128 levels deep, and 1,048,576 objects and lists, the most 2 MB of JSON can hold at two brackets each), so a record the database can store is searched whole. The limits count levels and objects, not bytes: a long value alone does not cut a record short, because only field names are read | If the report was made before that fix was deployed, press **Dry run** now, or wait: the automatic dry run after the next Sunday full backup replaces the old report by itself, so the button only saves up to a week. If a new report still says it, say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with the container's name; a session decides with you what to do with that container |
 | On your phone: "the dry run did not finish", or "no more automatic dry runs" | The daily check starts at most one dry run by itself for each backup. If that one did not finish it tells you once and starts no other for that backup; after three in a row (one a week) it stops starting them at all | Press **Dry run** on the card yourself. If it fails again, [Health → Alerts](https://hybridcloudworks.com/admin/health?tab=alerts) has the failed job's message |
@@ -478,14 +478,22 @@ waiting, no count that disagrees with the backup).
 
 You do not have to press Dry run for that. On the first morning everything
 else holds, the daily check starts a dry run of the new backup by itself.
-The next morning it reads the report: if it is clean the archive starts, and
-if it is not, nothing starts and your phone gets the message "Content
-archive of 2026 is waiting for you".
+The moment that dry run finishes, the job that writes its report runs the
+same check again: if the report is clean the archive starts then, the same
+morning, and if it is not, nothing starts and your phone gets the message
+"Content archive of 2026 is waiting for you". A **Dry run** you press works
+the same way: once it finishes, the archive starts at once if the report
+allows it. (Two exceptions leave it to the next 03:00 UTC check: the nightly
+export is off, or the dry run's last part finished with under three minutes
+of its 28-minute job time left.) (Until #1811's fix of 2026-11-27 the archive waited for the next
+03:00 UTC check, so any change to the list of what is kept in between sent
+it back a day.)
 
 For the archive of 2026 that means: the dry run on Monday 8 February 2027
-(of the backup of Sunday 7 February), and the archive on Tuesday 9 February,
-provided the switch is on by then. If you press **Dry run** yourself on the
-Sunday, after the backup has finished, the archive starts on the Monday.
+(of the backup of Sunday 7 February), with the archive starting as soon as
+that dry run finishes, provided the switch is on by then. If you press
+**Dry run** yourself on the Sunday, after the backup has finished, the
+archive starts as soon as your dry run finishes.
 Switched on later in the year, it works the same way from the next morning,
 reading the newest Sunday backup.
 
@@ -517,8 +525,9 @@ It reads the backup, never the live database.
    archive should start. If the switch is off it stops there, having read
    nothing, and logs one line that says so. If everything is ready except
    that no finished dry-run report describes the newest backup, it starts a
-   dry run and stops; the archive starts at a later check, and only if that
-   report shows nothing to decide.
+   dry run and stops. The job that finishes that dry run's report runs this
+   check again at once, so the archive starts then, and only if that report
+   shows nothing to decide.
 2. **It picks one backup and writes that down.** It takes the newest complete
    Sunday backup and records its date in a small working note
    (`state/archive-run/<year>/run.json` in the private `cosmos-export-state`

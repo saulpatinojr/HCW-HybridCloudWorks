@@ -33,9 +33,7 @@ import {
   parseExportPayload,
 } from '../lib/backup/cosmos-export.js';
 import { createCosmosReader, createExportBlobStore } from '../lib/backup/cosmos-export-edges.js';
-import { ARCHIVE_CHECK_DEADLINE_MS, ARCHIVE_CONTAINER, createArchiveScheduler } from '../lib/backup/archive-job.js';
-import { createNotifier } from '../lib/notify.js';
-import { errorCode } from '../lib/http/error-response.js';
+import { contentArchiveCheck } from '../lib/backup/archive-check.js';
 import { jsonForLog } from '../lib/http/log-json.js';
 
 const queueOutput = output.storageQueue({
@@ -99,52 +97,9 @@ const defaultScheduleExport = (context) => (enqueue) =>
     log: context,
   }).run();
 
-/**
- * The yearly content archive's daily check (ADR 0046 section 4, #1811;
- * lib/backup/archive-job.js). It rides this timer, after the export has been
- * queued, because the archive is made from the export's weekly backup: with
- * the export off there is no backup to read, so there is nothing to check.
- * It does nothing unless the app setting CONTENT_ARCHIVE_ENABLED is "true",
- * and then only once a year, on or after 1 February.
- *
- * A failure here is logged by its code and never fails the export's own run.
- * Neither does a check that never answers: it is given a deadline
- * (ARCHIVE_CHECK_DEADLINE_MS, two minutes), after which the timer stops
- * waiting and says so. A job the check created after that is not lost: its
- * record is in the jobs container, and the job sweeper queues it.
- *
- * @param {import('@azure/functions').InvocationContext} context
- * @param {(message: { jobId: string, type: string }) => void} enqueue
- * @param {object} [deps] - for tests: the scheduler's parts, and `deadlineMs`
- */
-export async function contentArchiveCheck(context, enqueue, { deadlineMs = ARCHIVE_CHECK_DEADLINE_MS, ...deps } = {}) {
-  let timer;
-  const deadline = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ action: 'timed-out' }), deadlineMs);
-  });
-  const check = (async () =>
-    createArchiveScheduler({
-      store,
-      backupBlobs: createExportBlobStore(),
-      archiveBlobs: createExportBlobStore({ container: ARCHIVE_CONTAINER, stateContainer: ARCHIVE_CONTAINER }),
-      enqueue,
-      notifier: createNotifier({ store, log: context }),
-      log: context,
-      ...deps,
-    }).run())().catch((error) => {
-    context.error?.(`contentArchive: the daily check failed (${errorCode(error)})`);
-    return { action: 'failed' };
-  });
-  try {
-    const answer = await Promise.race([check, deadline]);
-    if (answer.action === 'timed-out') {
-      context.error?.(`contentArchive: the daily check did not answer in ${Math.round(deadlineMs / 1000)} seconds; the export was queued without it`);
-    }
-    return answer;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// The archive's daily check, in lib/backup/archive-check.js; exported here
+// as well for the callers and tests that already import it from this file.
+export { contentArchiveCheck };
 
 registerJobType(EXPORT_JOB_TYPE, {
   // No HTTP route performs this; the timer is its only intended caller. The

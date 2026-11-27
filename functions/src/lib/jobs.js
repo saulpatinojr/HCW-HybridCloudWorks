@@ -106,7 +106,15 @@ export function createJobHandlers({
      */
     enqueueJob: (request, context, io) => enqueueJob(deps, request, context, io),
     getJob: (request, context) => getJob(deps, request, context),
-    runJob: (message, context) => runJob(deps, message, context),
+    /**
+     * Queue worker.
+     * @param {object} message
+     * @param {object} context
+     * @param {{ enqueue?: (message: {jobId: string, type: string}) => void }} [io] -
+     *   where a worker queues follow-up jobs; jobs-worker.js sends them
+     *   through its queue output once the job has finished
+     */
+    runJob: (message, context, io) => runJob(deps, message, context, io),
   };
 }
 
@@ -119,7 +127,7 @@ export function createJobHandlers({
  * @param {object} context
  * @returns {Promise<{jobId: string|null, outcome: string}>}
  */
-async function runJob({ store, now, types }, message, context) {
+async function runJob({ store, now, types }, message, context, io = {}) {
   const found = await findQueuedJob(store, message, context);
   if (found.outcome) return found.outcome;
   const claim = await claimJob({ store, now, types }, found, context);
@@ -143,6 +151,10 @@ async function runJob({ store, now, types }, message, context) {
           now,
           signal: deadline.controller.signal,
           abortSignal: deadline.controller.signal,
+          // Follow-up jobs: a worker that creates a job document hands its
+          // message here, and the queue trigger sends it when this job ends.
+          // Without it the job sweeper finds the document later.
+          enqueue: typeof io.enqueue === 'function' ? io.enqueue : () => {},
         })
       ),
       deadline.timeout,
