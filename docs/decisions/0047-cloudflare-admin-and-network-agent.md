@@ -426,7 +426,16 @@ redirect limits, closed here as well.
   made"; this is the only way to meet that without a record of who made
   each rule. It means the agent key cannot change a redirect it made
   earlier either. The owner changes it, or removes it so the agent key
-  can add it again.
+  can add it again. A held rule (here and in the URL rewrite phase below)
+  is compared in full: every field counts except its description and
+  the fields Cloudflare sets itself and marks read-only (`version`,
+  `last_updated`, `categories`,
+  [rule object](https://developers.cloudflare.com/ruleset-engine/rulesets-api/json-object/)),
+  so a changed `ref` or `logging` is a change too. The check reads the
+  phase and then replaces it, and Cloudflare's replace takes no condition,
+  so a redirect the owner adds between the two can still be dropped. That
+  is caught only afterwards, by the warning the owner gets when the saved
+  version jumps (item 4).
 - **A new redirect from an agent key goes to an https:// address on the
   site's own zones.** A redirect to `http://` sends that visitor to a page
   without encryption, which is what Always Use HTTPS (`always_use_https`)

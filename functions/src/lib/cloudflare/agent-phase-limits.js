@@ -136,8 +136,14 @@ const HTTPS_HOST = /^https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)(\/|$)/i;
  */
 const PATH_FIELDS = Object.freeze(['http.request.uri.path', 'http.request.uri', 'raw.http.request.uri.path', 'raw.http.request.uri']);
 
-/** Whether what follows a string inside concat( starts with one of PATH_FIELDS as the next part. */
-const nextPartIsPath = (rest) => PATH_FIELDS.some((field) => new RegExp(`^\\s*,\\s*${field.replace(/\./g, '\\.')}\\s*[,)]`).test(rest));
+/** The next part of concat( after a string: a comma, a field name, then a comma or the closing bracket. */
+const NEXT_FIELD = /^\s*,\s*([a-z_.]+)\s*[,)]/;
+
+/** Whether what follows a string inside concat( is one of PATH_FIELDS as the next part, named exactly. */
+function nextPartIsPath(rest) {
+  const found = NEXT_FIELD.exec(rest);
+  return Boolean(found) && PATH_FIELDS.includes(found[1]);
+}
 
 /**
  * Whether a redirect address worked out per request goes to an https://

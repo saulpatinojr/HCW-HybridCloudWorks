@@ -1624,6 +1624,39 @@ describe('rules', () => {
         expect((await send(PERSON, REWRITE, [PATH_REWRITE, QUERY_REWRITE], rules)).res.status).toBe(200);
       });
     });
+
+    describe('a held rule is compared in full, not only what it matches and does (#1936 review)', () => {
+      // Every field counts except the id (compared on its own), the description and
+      // Cloudflare's read-only fields (version, last_updated, categories).
+      const HELD_REDIRECT = { ...UPGRADE, ref: 'redirect-http', logging: { enabled: true } };
+      const HELD_REWRITE = { ...PATH_REWRITE, ref: 'rewrite-old', logging: { enabled: true } };
+      const CASES = [
+        ['a redirect', REDIRECT, HELD_REDIRECT, KEEP_REDIRECTS_REASON],
+        ['a URL rewrite', REWRITE, HELD_REWRITE, KEEP_REWRITES_REASON],
+      ];
+
+      it.each(
+        CASES.flatMap(([kind, phase, held, reason]) => [
+          [kind, 'changes its ref', phase, held, { ...held, ref: 'something-else' }, reason],
+          [kind, 'takes its ref away', phase, held, { ...held, ref: undefined }, reason],
+          [kind, 'switches its logging off', phase, held, { ...held, logging: { enabled: false } }, reason],
+          [kind, 'adds a field the rule did not have', phase, held, { ...held, exposed_credential_check: { username_expression: 'true', password_expression: 'true' } }, reason],
+        ])
+      )('refuses an agent key that, on %s the phase holds now, %s', async (_kind, _label, phase, held, changed, reason) => {
+        const result = await send(NETWORK_GUY, phase, [held], [changed]);
+        expectRefused(result, [], reason);
+      });
+
+      it.each(CASES)('lets an agent key send %s back with only its description or Cloudflare’s own fields changed', async (_kind, phase, held) => {
+        const result = await send(NETWORK_GUY, phase, [{ ...held, version: '4', categories: ['a'] }], [{ ...held, description: 'Renamed', version: '9', last_updated: '2026-11-27T00:00:00Z', categories: ['b'] }]);
+        expect(result.res.status).toBe(200);
+      });
+
+      it.each(CASES)('lets the owner change the ref and logging of %s', async (_kind, phase, held) => {
+        const result = await send(PERSON, phase, [held], [{ ...held, ref: 'something-else', logging: { enabled: false } }]);
+        expect(result.res.status).toBe(200);
+      });
+    });
   });
 });
 

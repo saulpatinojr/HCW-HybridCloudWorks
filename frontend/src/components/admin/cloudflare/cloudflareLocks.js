@@ -96,13 +96,12 @@ export const OWNER_ONLY_SETTINGS = Object.freeze(
     '0rtt',
     'sha1_support',
     'tls_1_2_only',
-  ].map(
-    (setting) =>
-      Object.freeze({
-        setting,
-        reason:
-          'Only you change this one: an agent key is refused, because a wrong value breaks or weakens HTTPS for every visitor.',
-      })
+  ].map((setting) =>
+    Object.freeze({
+      setting,
+      reason:
+        'Only you change this one: an agent key is refused, because a wrong value breaks or weakens HTTPS for every visitor.',
+    })
   )
 );
 

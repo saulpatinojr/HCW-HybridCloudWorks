@@ -21,12 +21,26 @@ export function canonical(value) {
 }
 
 /**
- * What a rule does, as text: what it matches, whether it is on, its action
- * and its parameters. Its id, description and Cloudflare's stamps do not
- * count, so a rule sent back with only those changed does the same thing.
+ * The rule fields that do not change what a rule does: its id (compared on
+ * its own), its description, and the fields Cloudflare sets itself and
+ * marks read-only, `version`, `last_updated` and `categories`
+ * (https://developers.cloudflare.com/ruleset-engine/rulesets-api/json-object/,
+ * read 2026-11-27).
  */
-export const behaviourOf = (rule) =>
-  canonical({ expression: rule?.expression ?? null, on: isOn(rule), action: rule?.action ?? null, parameters: rule?.action_parameters ?? null });
+export const NOT_BEHAVIOUR = Object.freeze(['id', 'description', 'version', 'last_updated', 'categories']);
+
+/**
+ * What a rule does, as text: every field of the rule except NOT_BEHAVIOUR
+ * (#1936 review), with `enabled` read as Cloudflare reads it (no `enabled`
+ * is on). So a rule sent back with a changed `ref`, `logging`, `ratelimit`
+ * or any other field does something else, and one sent back with only its
+ * description or Cloudflare's own fields changed does the same thing.
+ */
+export function behaviourOf(rule) {
+  const fields = rule && typeof rule === 'object' && !Array.isArray(rule) ? Object.entries(rule) : [];
+  const kept = Object.fromEntries(fields.filter(([key]) => !NOT_BEHAVIOUR.includes(key)));
+  return canonical({ ...kept, enabled: isOn(rule) });
+}
 
 /** The rules of a phase's current rule set, by id (rules without an id are left out). */
 export function rulesById(current) {
