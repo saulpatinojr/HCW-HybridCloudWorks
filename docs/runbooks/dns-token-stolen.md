@@ -27,7 +27,7 @@ Determine whether any unauthorized alterations occurred prior to token revocatio
    - Filter by Action: `dns_record_create`, `dns_record_update`, `dns_record_delete`, `zone_setting_change`, `page_rule_create`, `custom_ssl_create`.
    - Filter by Token: identify calls authenticated by the compromised token.
 3. Check active DNS records:
-   Verify that all live DNS entries match the `cloudflare_dns_record` resources in `infra/frontend.tf`, `infra/functionapp.tf` and `infra-lab/dns.tf`:
+   Verify that every live DNS entry matches a `cloudflare_dns_record` resource in `infra/frontend.tf` or `infra-lab/dns.tf`. Those files are the full list; the main records are, for example:
    - `hybridcloudworks.com` -> SWA alias / apex
    - `www.hybridcloudworks.com` -> SWA alias
    - `api-azure.hybridcloudworks.com` -> `func-site-prod-cus-01.azurewebsites.net`
