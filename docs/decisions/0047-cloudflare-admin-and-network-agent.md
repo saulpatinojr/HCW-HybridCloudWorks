@@ -1,6 +1,6 @@
 # ADR 0047: Cloudflare administration from the admin portal, and Claude Network Guy
 
-**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused)
+**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused); amended 2026-11-27 (#1931: an agent key cannot set an owner-only setting through a rule)
 **Decision date:** 2026-11-26
 **Owners:** Site owner (workload and architecture)
 
@@ -122,7 +122,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
    - **Owner-only settings:** an agent key may not change the SSL mode, the
      minimum TLS version, Always Use HTTPS, HSTS (`security_header`) or the
      certificate Cloudflare shows the site (`tls_client_auth`); a
-     `super_admin` person may.
+     `super_admin` person may. *(Amended 2026-11-27 (#1931): nor set one
+     through a rule, such as a configuration rule's `ssl`; see the third
+     amendment below.)*
    - **The zone:** every change first reads the zone and is refused unless
      it is `hybridcloudworks.com`, so the list is never applied to another
      zone. *(Amended 2026-11-26 (#1911): unless it is the zone the request
@@ -331,14 +333,54 @@ so for the lab zone the record of a change is the site's audit log, the
 Telegram message and Cloudflare's own audit log, unlike the consequence
 below for the site's zone. Revisit if the lab zone ever serves visitors.
 
+### Amendment 2026-11-27 (#1931): an owner-only setting cannot be set through a rule
+
+Amended 2026-11-27, from
+[#1931](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1931).
+A read of the code found a way round the owner-only settings in item 4. An
+agent key with the rules switch could write a **configuration rule** (the
+`http_config_settings` phase), and a configuration rule can set the SSL
+mode for the requests it matches. A **response header rule** (the
+`http_response_headers_transform` phase) can set or remove the
+`Strict-Transport-Security` header, which is HSTS (`security_header`). Both
+phases are on the allow-list, so the settings route refused what the rules
+route allowed.
+
+- **One list says which rule fields stand in for an owner-only setting.**
+  `RULE_SETTING_PARAMETERS` in `functions/src/lib/cloudflare/protected.js`
+  maps each phase's fields to the setting they change. For configuration
+  rules it lists every field on
+  [Cloudflare's configuration rules settings page](https://developers.cloudflare.com/rules/configuration-rules/settings/)
+  (read 2026-11-27, 15 fields). Only `ssl` is an owner-only setting. The
+  page has no field for the minimum TLS version, Always Use HTTPS, HSTS or
+  the certificate Cloudflare shows the site, and the other fields change
+  settings an agent key may already change for the whole zone. The list is
+  closed: a configuration rule field not on it is refused to an agent key,
+  so a setting Cloudflare adds later starts closed. The other editable
+  phases (redirects, URL rewrites, custom security rules and rate limiting
+  rules) have no field that sets a zone setting.
+- **What an agent key may not do.** It may not add a rule that sets one of
+  those fields, change what such a rule matches or sets, switch it off,
+  take the setting out of it, or move it past another such rule (when two
+  match a request, the later one's value is used). Each is refused with
+  403 `CLOUDFLARE_OWNER_ONLY`, writing nothing. The message names the key
+  and the setting, and the settings route's refusal now names the key too.
+  A rule like that which the owner made may come back unchanged, so the
+  agent key can still change the phase's other rules (it may not leave a
+  rule out). It may also change the rest of such a rule (its description,
+  or a field that is not owner-only).
+- **The owner is unchanged.** A `super_admin` person may set any of these
+  in a rule, as on the settings route.
+
 ## Consequences and accepted risks
 
 - **A stolen Network Guy key with every switch on could change zone
   settings, add or edit DNS records and add or change rules in the five
   editable phases,** within the token's own Cloudflare permissions. It
   could not delete a record or a ruleset, remove a rule, touch the site's own address,
-  Terraform's records or phases, the owner-only settings or any other
-  phase, or reach anything outside the zone. The owner limits this by
+  Terraform's records or phases, the owner-only settings (on the settings
+  route or through a rule, since #1931) or any other phase, or reach
+  anything outside the zone. The owner limits this by
   turning on only the switches a task needs, by the token's own permission
   list, and by the Telegram message each change sends.
 - **The rules switch can still redirect or reconfigure requests to the
@@ -347,7 +389,7 @@ below for the site's zone. Revisit if the lab zone ever serves visitors.
   callers elsewhere, a URL rewrite can change which route a request
   reaches, a response header rule can change what the browser is told,
   and a configuration rule can turn off a setting (such as the security
-  level) for matching requests. None of them can read or change the origin
+  level) for matching requests, though not an owner-only one (#1931). None of them can read or change the origin
   secret header, which is set in the read-only late-transform phase. This
   is accepted because those are the rules the owner asked the agent to
   manage; it is why the rules switch starts off and each change reaches

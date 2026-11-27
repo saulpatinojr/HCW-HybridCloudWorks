@@ -13,6 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { terraformSource } from '../../../test/terraform-source.js';
 import {
   APEX_WILDCARD_REASON,
+  CONFIG_RULES_SETTINGS_PAGE,
+  RULE_SETTING_PARAMETERS,
+  UNLISTED_RULE_SETTING_REASON,
+  ownerOnlyRuleTouches,
   EDITABLE_PHASES,
   LAB_ACME_TARGET,
   LAB_SUBTREE,
@@ -185,6 +189,59 @@ describe('the owner-only settings', () => {
     }
     expect(ownerOnlySettingReason('SSL')).not.toBeNull();
     expect(ownerOnlySettingReason('brotli')).toBeNull();
+  });
+});
+
+describe('the rule fields that stand in for an owner-only setting (#1931)', () => {
+  const entryFor = (phase) => RULE_SETTING_PARAMETERS.find((entry) => entry.phase === phase);
+
+  it('lists every configuration rule field on Cloudflare’s settings page, read 2026-11-27, closed to anything else', () => {
+    expect(CONFIG_RULES_SETTINGS_PAGE).toBe('https://developers.cloudflare.com/rules/configuration-rules/settings/');
+    const config = entryFor('http_config_settings');
+    expect(config).toMatchObject({ place: 'parameter', closed: true });
+    expect(Object.keys(config.names).sort()).toEqual([
+      'automatic_https_rewrites',
+      'bic',
+      'content_converter',
+      'disable_rum',
+      'disable_zaraz',
+      'email_obfuscation',
+      'fonts',
+      'hotlink_protection',
+      'opportunistic_encryption',
+      'polish',
+      'request_body_buffering',
+      'response_body_buffering',
+      'rocket_loader',
+      'security_level',
+      'ssl',
+    ]);
+  });
+
+  it('maps only ssl (configuration rules) and the Strict-Transport-Security header (HSTS) to owner-only settings', () => {
+    const mapped = RULE_SETTING_PARAMETERS.flatMap((entry) => Object.entries(entry.names).filter(([, setting]) => setting).map(([name, setting]) => `${entry.phase} ${name} ${setting}`));
+    expect(mapped).toEqual(['http_config_settings ssl ssl', 'http_response_headers_transform strict-transport-security security_header']);
+    for (const entry of RULE_SETTING_PARAMETERS) {
+      expect(isEditablePhase(entry.phase), entry.phase).toBe(true);
+      for (const setting of Object.values(entry.names).filter(Boolean)) expect(ownerOnlySettingReason(setting), setting).not.toBeNull();
+    }
+  });
+
+  it('finds what a rule sets, in any letter case, and refuses an unlisted configuration field', () => {
+    const touched = (phase, parameters) => ownerOnlyRuleTouches(phase, { action_parameters: parameters }).map(({ name, setting }) => [name, setting]);
+    expect(touched('http_config_settings', { ssl: 'off', fonts: true })).toEqual([['ssl', 'ssl']]);
+    expect(touched('http_config_settings', { SSL: 'off' })).toEqual([['ssl', 'ssl']]);
+    expect(touched('http_config_settings', { fonts: true, polish: 'lossy' })).toEqual([]);
+    expect(touched('http_config_settings', { mirage: true })).toEqual([['mirage', null]]);
+    expect(ownerOnlyRuleTouches('http_config_settings', { action_parameters: { mirage: true } })[0].reason).toBe(UNLISTED_RULE_SETTING_REASON);
+    expect(touched('http_response_headers_transform', { headers: { 'Strict-Transport-Security': { operation: 'remove' }, 'X-Frame-Options': {} } })).toEqual([
+      ['strict-transport-security', 'security_header'],
+    ]);
+    expect(touched('http_response_headers_transform', { headers: { 'X-Frame-Options': {} } })).toEqual([]);
+    // The other editable phases set no zone setting, and a rule with no parameters touches nothing.
+    expect(touched('http_request_dynamic_redirect', { ssl: 'off' })).toEqual([]);
+    expect(ownerOnlyRuleTouches('http_config_settings', { expression: 'true' })).toEqual([]);
+    expect(ownerOnlyRuleTouches('http_config_settings', { action_parameters: ['ssl'] })).toEqual([]);
   });
 });
 

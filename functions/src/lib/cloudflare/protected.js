@@ -41,7 +41,10 @@
  *     (#1903, ADR 0047's amendment).
  *   - Zone settings only the owner changes (OWNER_ONLY_SETTINGS). A person
  *     with the super admin role may change them; an agent key may not,
- *     because a wrong value breaks or weakens HTTPS for every visitor.
+ *     because a wrong value breaks or weakens HTTPS for every visitor. A
+ *     rule can set some of them for the requests it matches, so the rule
+ *     fields that stand in for one are listed too (RULE_SETTING_PARAMETERS,
+ *     #1931), and an agent key may not set them in a rule either.
  *
  * It imports nothing, so the browser can mirror it, and protected.test.js
  * reads the .tf files and fails when a Terraform record or phase is missing
@@ -368,4 +371,100 @@ export function ownerOnlySettingReason(settingId) {
   const wanted = lower(settingId);
   const found = OWNER_ONLY_SETTINGS.find((entry) => entry.setting === wanted);
   return found ? found.reason : null;
+}
+
+/** Cloudflare's list of what a configuration rule can set (read 2026-11-27). */
+export const CONFIG_RULES_SETTINGS_PAGE = 'https://developers.cloudflare.com/rules/configuration-rules/settings/';
+
+/** Why an agent key may not set a configuration rule field that is not on the list below. */
+export const UNLISTED_RULE_SETTING_REASON = `This page does not know which zone setting that field changes, so a setting Cloudflare adds later starts closed to an agent key. ${OWNER_STEP}`;
+
+/**
+ * Rules that can change an owner-only zone setting for the requests they
+ * match (#1931). A rule in an editable phase can set some zone settings
+ * for one host or path, so without this list an agent key could get round
+ * OWNER_ONLY_SETTINGS with a rule. One entry per phase:
+ *
+ *   phase    the rule phase
+ *   place    'parameter': a field of the rule's action_parameters;
+ *            'header': a header name under action_parameters.headers (any letter case)
+ *   names    each field or header name, and the owner-only setting it stands in for (null for none)
+ *   closed   true when a name not listed is refused to an agent key too
+ *
+ * Configuration rules (`http_config_settings`): every field on Cloudflare's
+ * list, CONFIG_RULES_SETTINGS_PAGE. Of those, only `ssl` (the SSL mode for
+ * the requests that match) is an owner-only setting. The page has no field
+ * for the minimum TLS version, Always Use HTTPS, HSTS or the certificate
+ * Cloudflare shows the site. The others change settings an agent key may
+ * change for the whole zone anyway. The list is closed, so a field
+ * Cloudflare adds later is the owner's until it is added here.
+ *
+ * Response headers (`http_response_headers_transform`): the
+ * Strict-Transport-Security header is HSTS, the owner-only `security_header`.
+ *
+ * The other editable phases set no zone setting. A redirect, a URL rewrite,
+ * a custom security rule or a rate limit has no field for one, and the
+ * custom response of the last two is already refused to an agent key
+ * (rules-guards.js).
+ */
+export const RULE_SETTING_PARAMETERS = Object.freeze(
+  [
+    {
+      phase: 'http_config_settings',
+      place: 'parameter',
+      closed: true,
+      names: Object.freeze({
+        automatic_https_rewrites: null,
+        bic: null,
+        content_converter: null,
+        disable_rum: null,
+        disable_zaraz: null,
+        email_obfuscation: null,
+        fonts: null,
+        hotlink_protection: null,
+        opportunistic_encryption: null,
+        polish: null,
+        request_body_buffering: null,
+        response_body_buffering: null,
+        rocket_loader: null,
+        security_level: null,
+        ssl: 'ssl',
+      }),
+    },
+    {
+      phase: 'http_response_headers_transform',
+      place: 'header',
+      closed: false,
+      names: Object.freeze({ 'strict-transport-security': 'security_header' }),
+    },
+  ].map(Object.freeze)
+);
+
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+/** The object a phase's entry reads names from in one rule: its action_parameters, or their headers. */
+function namedValuesOf(entry, rule) {
+  const parameters = isPlainObject(rule?.action_parameters) ? rule.action_parameters : {};
+  if (entry.place === 'parameter') return parameters;
+  return isPlainObject(parameters.headers) ? parameters.headers : {};
+}
+
+/**
+ * What in one rule only the owner may set, as a list of
+ * `{ place, key, name, setting, reason }`: `key` as the rule spells it,
+ * `name` in lower case, `setting` the owner-only setting (null for a field
+ * a closed phase does not list) and the reason the page shows. Empty when
+ * the rule touches none, or its phase is not on RULE_SETTING_PARAMETERS.
+ */
+export function ownerOnlyRuleTouches(phase, rule) {
+  const entry = RULE_SETTING_PARAMETERS.find((item) => item.phase === lower(phase));
+  if (!entry) return [];
+  return Object.keys(namedValuesOf(entry, rule)).flatMap((key) => {
+    const name = lower(key);
+    const listed = Object.hasOwn(entry.names, name);
+    const setting = listed ? entry.names[name] : null;
+    if (setting) return [{ place: entry.place, key, name, setting, reason: ownerOnlySettingReason(setting) }];
+    if (!listed && entry.closed) return [{ place: entry.place, key, name, setting: null, reason: UNLISTED_RULE_SETTING_REASON }];
+    return [];
+  });
 }

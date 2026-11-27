@@ -85,8 +85,8 @@ export async function audit({ deps, context, user, request, zone }, details) {
   return { id, written: true };
 }
 
-/** The caller as the phone message names it: the agent key's name, or a person. */
-const actorOf = (user) => (isAgentUser(user) ? agentKeyById(user.agent)?.displayName || user.agent : 'Someone signed in to the admin portal');
+/** The caller as the phone message and an agent key's refusals name it: the agent key's name, or a person. */
+export const actorOf = (user) => (isAgentUser(user) ? agentKeyById(user.agent)?.displayName || user.agent : 'Someone signed in to the admin portal');
 
 /** The sentence a warning adds when the audit row could not be written. */
 export const UNAUDITED_NOTE =

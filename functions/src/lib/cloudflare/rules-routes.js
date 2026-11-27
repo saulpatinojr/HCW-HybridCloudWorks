@@ -42,6 +42,14 @@
  * custom response (`action_parameters.response`), the body Cloudflare sends
  * a blocked caller, which only a paid plan offers and is closed ahead of
  * time.
+ *
+ * OWNER-ONLY SETTINGS IN A RULE (#1931). A rule can set some zone settings
+ * for the requests it matches: a configuration rule's `ssl`, or a response
+ * header rule's Strict-Transport-Security (HSTS). An agent key may not
+ * change those settings on the settings route, so it may not add, change,
+ * switch off or move a rule that sets one either (403
+ * CLOUDFLARE_OWNER_ONLY, naming the key and the setting). The list of such
+ * fields is protected.js RULE_SETTING_PARAMETERS.
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
 import { RATE_LIMIT_PHASE, rateLimitVerdict } from './rate-limit.js';
@@ -53,6 +61,7 @@ import {
   GUARDED_PHASES,
   concurrentWriteNote,
   refuseAgentDisable,
+  refuseAgentOwnerOnlyRules,
   refuseAgentRemoval,
   refuseAgentResponse,
   versionOf,
@@ -210,6 +219,7 @@ export async function putPhase(call) {
   const current = await refuseStale(client, phase, body.expectedVersion);
   refuseAgentRemoval(user, current, sent.rules);
   refuseAgentDisable(user, phase, current, sent.rules);
+  refuseAgentOwnerOnlyRules(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
   const note = concurrentWriteNote(current, saved);
