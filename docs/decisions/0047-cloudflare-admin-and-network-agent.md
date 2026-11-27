@@ -1,6 +1,6 @@
 # ADR 0047: Cloudflare administration from the admin portal, and Claude Network Guy
 
-**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused); amended 2026-11-27 (#1931: an agent key cannot set an owner-only setting through a rule); amended 2026-11-27 (#1933: an agent key's redirects go to https:// only, it keeps URL rewrites as they are, and six more TLS settings are the owner's)
+**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too, with the lab's certificate names, its apex and every wildcard there refused); amended 2026-11-27 (#1931: an agent key cannot set an owner-only setting through a rule); amended 2026-11-27 (#1933: an agent key's redirects go to https:// only, it keeps URL rewrites as they are, and six more TLS settings are the owner's); amended 2026-11-27 (#1935: the security level, Browser Integrity Check and the WAF switch stay open to agent keys, an accepted risk)
 **Decision date:** 2026-11-26
 **Owners:** Site owner (workload and architecture)
 
@@ -526,11 +526,64 @@ redirect limits, closed here as well.
 
   Revisit if Cloudflare adds a setting in this family. Whether the
   security level, Browser Integrity Check or the WAF should be owner-only
-  is a separate decision for the owner, not made here.
+  was left as a separate decision for the owner; it was made the same day
+  (the next amendment, #1935: they stay open).
 - **Refusals name the key.** The new refusals, and the refusal of a rule
   switched off, begin with the key's name, for example "Claude Network
   Guy (an agent key) may not switch a redirect off".
 - **The owner is unchanged.** A `super_admin` person may do all of it.
+
+### Amendment 2026-11-27 (#1935): three protection settings stay open to agent keys
+
+Amended 2026-11-27, from
+[#1935](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1935).
+An independent security review of #1933 pointed out that three of the
+zone's protection settings are still open to an agent key with the
+settings switch on (Claude Network Guy):
+
+- `security_level`, how readily Cloudflare challenges a visitor with a poor
+  threat score; it can be set to "essentially off";
+- `browser_check`, Browser Integrity Check, which looks at each
+  request's headers for signs of abuse and challenges the suspicious ones;
+- `waf`, the older on/off switch for the web application firewall, where
+  the zone's plan still offers it.
+
+That was the design from the start, not something #1933 changed. The
+review offered two choices: make the three owner-only (recommended, since
+an agent key already may not switch off a custom security rule), or keep
+them open and record the risk here.
+
+**Decision (owner, 2026-11-27): keep all three open to agent keys.** In the
+owner's words, "the network guy is my proxy and should have that ability".
+Claude Network Guy acts for the owner on the zone, and the owner wants to
+be able to change these by asking it, as with any other setting that is
+not about how an https:// connection is encrypted. So
+`OWNER_ONLY_SETTINGS` in `functions/src/lib/cloudflare/protected.js` is
+unchanged, and an agent key may still set the three through a
+configuration rule for matching requests (the #1931 check refuses only the
+owner-only settings).
+
+**The accepted risk.** An agent key, by mistake or misled by text it reads
+(a page, a log line or a ticket that asks for it), can lower the zone's
+protection: the security level down to "essentially off", Browser
+Integrity Check off, or the WAF switch off. That stays in effect, for
+every name the zone proxies, until someone notices and sets it back.
+
+**How it is noticed and undone.** Every change an agent key makes sends
+the owner a Telegram message under a source of its own, so none is held
+back by the cooldown (decision item 6), and each is an audit row with the
+value before and after. That message is the detection: the owner reads it
+and, if the change was not wanted, sets the value back on the
+[Cloudflare admin page](https://hybridcloudworks.com/admin/cloudflare) or
+asks the agent to. The owner also limits the exposure by keeping the
+settings switch off on the Agents page while no task needs it.
+
+**Revisit** if a change to one of the three is ever made that the owner
+did not ask for, or once the site's own names are proxied
+([#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929))
+and these settings protect the whole site rather than the API and the
+`notes` pages alone. Making them owner-only then is one change: the three
+ids added to `OWNER_ONLY_SETTINGS` and its browser copy, with tests.
 
 ## Consequences and accepted risks
 
@@ -543,6 +596,11 @@ redirect limits, closed here as well.
   anything outside the zone. The owner limits this by
   turning on only the switches a task needs, by the token's own permission
   list, and by the Telegram message each change sends.
+- **An agent key can lower the zone's protection** (the security level,
+  Browser Integrity Check, the WAF switch), by mistake or misled by text it
+  reads, until the owner sees the Telegram message for the change and sets
+  it back. Accepted by the owner on 2026-11-27 (#1935, the amendment
+  above).
 - **The rules switch can still redirect or reconfigure requests to the
   API host.** The six editable phases apply to every host in the zone,
   `api-azure.hybridcloudworks.com` included: a redirect can send the API's
