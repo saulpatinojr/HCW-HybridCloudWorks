@@ -118,7 +118,10 @@ function ownerOnlyRules(phase, rules) {
 }
 
 /** Whether two owner-only rules are the same rule deciding the same thing. */
-const sameRule = (a, b) => Boolean(a && b && a.id && a.id === b.id && a.fingerprint === b.fingerprint);
+const sameRule = (a, b) => {
+  if (!a?.id || !b) return false;
+  return a.id === b.id && a.fingerprint === b.fingerprint;
+};
 
 /** The longest name a refusal repeats back; a field a caller made up can be any length. */
 const MAX_NAME_IN_MESSAGE = 64;
