@@ -121,7 +121,7 @@ export const CAPABILITIES = Object.freeze([
     id: 'admin.cloudflare.settings',
     label: 'Cloudflare: change zone settings and purge the cache',
     description:
-      'Change a zone setting (security level, caching, speed and the like) and purge the cache. Never the SSL mode, the minimum TLS version, Always Use HTTPS, HSTS or the certificate Cloudflare shows the site: only you change those, on the Cloudflare page. Each change is recorded in the audit log with its old and new value, and sent to your phone.',
+      'Change a zone setting (security level, caching, speed and the like) and purge the cache. Never the SSL mode, the minimum TLS version, Always Use HTTPS, HSTS, the certificate Cloudflare shows the site, TLS 1.3, the cipher list, automatic SSL mode or 0-RTT: only you change those, on the Cloudflare page. Each change is recorded in the audit log with its old and new value, and sent to your phone.',
   },
   {
     id: 'admin.cloudflare.dns',
@@ -133,7 +133,7 @@ export const CAPABILITIES = Object.freeze([
     id: 'admin.cloudflare.rules',
     label: 'Cloudflare: edit rules',
     description:
-      "Add rules and change existing ones in six kinds of phase: redirects, URL rewrites, response headers, configuration rules, custom security rules (never one that skips the other checks) and rate limiting (the API's rate limit lives there). It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. In the custom security and rate limiting rules it may not switch a rule off, add one switched off, or set a custom response. Every other phase is read-only. These rules can still redirect or change requests to the API, or loosen or tighten its rate limit, so turn this on only for a task that needs it.",
+      "Add rules and change existing ones in five kinds of phase: redirects (to https:// addresses only), response headers, configuration rules, custom security rules (never one that skips the other checks) and rate limiting (the API's rate limit lives there). URL rewrites stay as you made them, because a rewrite changes the path your other rules see. It may not remove a rule: a list that leaves out a rule the phase has now is refused, and removing one is done by you on the Cloudflare page. In the redirects, custom security and rate limiting rules it may not switch a rule off or add one switched off, and in the last two it may not set a custom response. It may not set an owner-only setting through a rule. Every other phase is read-only. These rules can still redirect or change requests to the API, or loosen or tighten its rate limit, so turn this on only for a task that needs it.",
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));

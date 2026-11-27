@@ -41,11 +41,18 @@
  * a rule switched off is a rule removed in effect; and it may not set a
  * custom response (`action_parameters.response`), the body Cloudflare sends
  * a blocked caller, which only a paid plan offers and is closed ahead of
- * time.
+ * time. Redirects may not be switched off by an agent key either (#1933).
+ *
+ * REDIRECTS AND URL REWRITES (#1933, agent-phase-limits.js). An agent key's
+ * new or changed redirect must send visitors to an https:// address, and
+ * an agent key must send the URL rewrite phase back exactly as it is,
+ * because a rewrite changes the path every later rule sees. Each is 403
+ * CLOUDFLARE_OWNER_ONLY, naming the key.
  *
  * OWNER-ONLY SETTINGS IN A RULE (#1931). A rule can set some zone settings
- * for the requests it matches: a configuration rule's `ssl`, or a response
- * header rule's Strict-Transport-Security (HSTS). An agent key may not
+ * for the requests it matches: a configuration rule's `ssl`, a response
+ * header rule's Strict-Transport-Security (HSTS), or a redirect that
+ * matches on the request's scheme (always_use_https, #1933). An agent key may not
  * change those settings on the settings route, so it may not add, change,
  * switch off or move a rule that sets one either (403
  * CLOUDFLARE_OWNER_ONLY, naming the key and the setting). The list of such
@@ -55,10 +62,10 @@ import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFie
 import { RATE_LIMIT_PHASE, rateLimitVerdict } from './rate-limit.js';
 import { recordChange, requireOurZone } from './record.js';
 import {
-  AGENT_DISABLE_MESSAGE,
   AGENT_REMOVAL_MESSAGE,
   AGENT_RESPONSE_MESSAGE,
   GUARDED_PHASES,
+  agentDisableMessage,
   concurrentWriteNote,
   refuseAgentDisable,
   refuseAgentOwnerOnlyRules,
@@ -66,8 +73,9 @@ import {
   refuseAgentResponse,
   versionOf,
 } from './rules-guards.js';
+import { refuseAgentPhaseLimits } from './agent-phase-limits.js';
 
-export { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, concurrentWriteNote, versionOf };
+export { AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, agentDisableMessage, concurrentWriteNote, versionOf };
 import { REDACTED_VALUE, REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
 
 export const PHASE_PATTERN = /^[a-z0-9_]{1,64}$/;
@@ -240,6 +248,7 @@ export async function putPhase(call) {
   refuseAgentRemoval(user, current, sent.rules);
   refuseAgentDisable(user, phase, current, sent.rules);
   refuseAgentOwnerOnlyRules(user, phase, current, sent.rules);
+  refuseAgentPhaseLimits(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
   const note = concurrentWriteNote(current, saved);

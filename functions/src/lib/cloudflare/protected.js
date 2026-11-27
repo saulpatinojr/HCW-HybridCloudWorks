@@ -223,7 +223,17 @@ export const REFUSED_FIREWALL_ACTION = 'skip';
 
 const OWNER_STEP = 'Change it on the Cloudflare page yourself, signed in as the owner.';
 
-/** Zone settings an agent key may not change, with the reason the page shows. */
+/**
+ * Zone settings an agent key may not change, with the reason the page shows:
+ * the settings that decide how visitors' connections are encrypted, where a
+ * wrong value breaks or weakens HTTPS for every visitor. The last four came
+ * with #1933, each checked on Cloudflare's own page on 2026-11-27:
+ * tls_1_3 (https://developers.cloudflare.com/ssl/edge-certificates/additional-options/tls-13/),
+ * ciphers (https://developers.cloudflare.com/ssl/edge-certificates/additional-options/cipher-suites/customize-cipher-suites/api/),
+ * ssl_automatic_mode (https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/)
+ * and 0rtt (https://developers.cloudflare.com/speed/optimization/protocol/0-rtt-connection-resumption/).
+ * Every other setting stays open to an agent key whose switch allows it.
+ */
 export const OWNER_ONLY_SETTINGS = Object.freeze(
   [
     { setting: 'ssl', reason: `How Cloudflare connects to the site; the wrong mode breaks HTTPS for every visitor. ${OWNER_STEP}` },
@@ -231,6 +241,10 @@ export const OWNER_ONLY_SETTINGS = Object.freeze(
     { setting: 'always_use_https', reason: `Sends every visitor to HTTPS; turning it off lets pages load unencrypted. ${OWNER_STEP}` },
     { setting: 'security_header', reason: `The HSTS header, which browsers remember for months, so a wrong value is slow to undo. ${OWNER_STEP}` },
     { setting: 'tls_client_auth', reason: `Whether Cloudflare shows the site a certificate of its own; turning it off weakens how the site checks who is calling. ${OWNER_STEP}` },
+    { setting: 'tls_1_3', reason: `Whether browsers may use TLS 1.3, the newest encryption; turning it off weakens HTTPS, and its zrt value lets early requests be replayed. ${OWNER_STEP}` },
+    { setting: 'ciphers', reason: `Which encryption methods browsers may use; a wrong list locks visitors out or lets weak ones in. ${OWNER_STEP}` },
+    { setting: 'ssl_automatic_mode', reason: `Whether Cloudflare picks the SSL mode itself; switching it decides who sets the SSL mode, which is the owner's. ${OWNER_STEP}` },
+    { setting: '0rtt', reason: `0-RTT lets a returning browser send a request before the encryption handshake ends, and such requests can be replayed. ${OWNER_STEP}` },
   ].map(Object.freeze)
 );
 
@@ -387,7 +401,8 @@ export const UNLISTED_RULE_SETTING_REASON = `This page does not know which zone 
  *
  *   phase    the rule phase
  *   place    'parameter': a field of the rule's action_parameters;
- *            'header': a header name under action_parameters.headers (any letter case)
+ *            'header': a header name under action_parameters.headers (any letter case);
+ *            'expression': a field the rule's expression reads (#1933)
  *   names    each field or header name, and the owner-only setting it stands in for (null for none)
  *   closed   true when a name not listed is refused to an agent key too
  *
@@ -402,16 +417,24 @@ export const UNLISTED_RULE_SETTING_REASON = `This page does not know which zone 
  * Response headers (`http_response_headers_transform`): the
  * Strict-Transport-Security header is HSTS, the owner-only `security_header`.
  *
- * The other editable phases set no zone setting. A redirect, a URL rewrite,
- * a custom security rule or a rate limit has no field for one, and the
- * custom response of the last two is already refused to an agent key
+ * The other editable phases have no field for a zone setting. A URL
+ * rewrite, a custom security rule or a rate limit has none, and the custom
+ * response of the last two is already refused to an agent key
  * (rules-guards.js).
  *
- * What this list does not catch, because it is a value rather than a
- * setting field: a redirect to an http:// address, which sends that visitor
- * to a page without encryption, and a URL rewrite that changes the path an
- * owner's rule matches on (rules that match on the host name are not
- * affected). Both are open to an agent key with the rules switch.
+ * Redirects (`http_request_dynamic_redirect`, #1933): a redirect that
+ * matches on the request's scheme (`ssl`, `http.request.scheme` or the full
+ * address with its scheme) is how a site sends visitors from http:// to
+ * https:// without the always_use_https setting
+ * (https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/,
+ * read 2026-11-27), so such a rule stands in for that setting. Names inside
+ * quoted text in the expression do not count.
+ *
+ * Two related limits are values rather than fields, and live in
+ * agent-phase-limits.js (#1933): a redirect from an agent key must send
+ * visitors to an https:// address, and an agent key keeps the URL rewrite
+ * phase as it is, because a rewrite changes the path the owner's later
+ * rules see.
  */
 export const RULE_SETTING_PARAMETERS = Object.freeze(
   [
@@ -443,6 +466,17 @@ export const RULE_SETTING_PARAMETERS = Object.freeze(
       closed: false,
       names: Object.freeze({ 'strict-transport-security': 'security_header' }),
     },
+    {
+      phase: 'http_request_dynamic_redirect',
+      place: 'expression',
+      closed: false,
+      names: Object.freeze({
+        ssl: 'always_use_https',
+        'http.request.scheme': 'always_use_https',
+        'http.request.full_uri': 'always_use_https',
+        'raw.http.request.full_uri': 'always_use_https',
+      }),
+    },
   ].map(Object.freeze)
 );
 
@@ -455,6 +489,22 @@ function namedValuesOf(entry, rule) {
   return isPlainObject(parameters.headers) ? parameters.headers : {};
 }
 
+/** Quoted text in a rule expression: plain ("...", with \" inside) or raw (r"..." or r#"..."#). */
+const QUOTED = /r(#*)"[\s\S]*?"\1|"(?:[^"\\]|\\.)*"/g;
+
+/** Whether an expression reads a field: the field's name standing on its own, outside quoted text. */
+function readsField(expression, field) {
+  const bare = String(expression ?? '').replace(QUOTED, ' ');
+  const escaped = field.replace(/\./g, '\\.');
+  return new RegExp(`(^|[^A-Za-z0-9_.])${escaped}($|[^A-Za-z0-9_.])`).test(bare);
+}
+
+/** The names a rule carries for an entry, as the rule spells them: its fields or headers, or the fields its expression reads. */
+function namesIn(entry, rule) {
+  if (entry.place !== 'expression') return Object.keys(namedValuesOf(entry, rule));
+  return Object.keys(entry.names).filter((field) => readsField(rule?.expression, field));
+}
+
 /**
  * What in one rule only the owner may set, as a list of
  * `{ place, key, name, setting, reason }`: `key` as the rule spells it,
@@ -465,7 +515,7 @@ function namedValuesOf(entry, rule) {
 export function ownerOnlyRuleTouches(phase, rule) {
   const entry = RULE_SETTING_PARAMETERS.find((item) => item.phase === lower(phase));
   if (!entry) return [];
-  return Object.keys(namedValuesOf(entry, rule)).flatMap((key) => {
+  return namesIn(entry, rule).flatMap((key) => {
     const name = lower(key);
     const listed = Object.hasOwn(entry.names, name);
     const setting = listed ? entry.names[name] : null;
