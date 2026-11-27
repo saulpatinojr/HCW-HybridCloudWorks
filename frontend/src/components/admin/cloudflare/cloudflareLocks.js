@@ -245,13 +245,10 @@ function wildcardLock(full, status, zone) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
   if (base === zone) return APEX_WILDCARD_REASON;
-  return (
-    status?.protected?.wildcardReason ||
-    listedLock(base, status, zone) ||
-    prefixLock(base, status) ||
-    listedUnderLock(base, status, zone) ||
-    prefixChildLock(base, status)
-  );
+  if (status?.protected?.wildcardReason) return status.protected.wildcardReason;
+  // The first check that finds a reason, in the server's order.
+  const checks = [listedLock, prefixLock, listedUnderLock, prefixChildLock];
+  return checks.map((check) => check(base, status, zone)).find(Boolean) ?? null;
 }
 
 /**

@@ -319,7 +319,10 @@ function wildcardReason(zone, full) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
   if (base === zone.name) return APEX_WILDCARD_REASON;
-  return zone.wildcardReason || listedReason(zone, base) || prefixReason(zone, base) || listedUnderReason(zone, base) || prefixChildReason(zone, base);
+  if (zone.wildcardReason) return zone.wildcardReason;
+  // The first check that finds a reason; checks run in this order.
+  const checks = [listedReason, prefixReason, listedUnderReason, prefixChildReason];
+  return checks.map((check) => check(zone, base)).find(Boolean) ?? null;
 }
 
 /** Why a full DNS name may not be added or edited in a zone entry (MANAGED_ZONES' shape), or null. */
