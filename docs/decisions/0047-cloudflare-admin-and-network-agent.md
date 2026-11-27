@@ -1,6 +1,6 @@
 # ADR 0047: Cloudflare administration from the admin portal, and Claude Network Guy
 
-**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page)
+**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page); amended 2026-11-26 (#1911: the lab zone is managed too)
 **Decision date:** 2026-11-26
 **Owners:** Site owner (workload and architecture)
 
@@ -79,6 +79,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
    Caddy token, the analytics token and the DNS audit token, so each can be
    revoked without touching the others. The zone is named by the plain app
    setting `CF_ZONE_ID`, from the Terraform variable that already holds it.
+   *(Amended 2026-11-26 (#1911): the token's Zone Resources name the lab
+   zone too, and the lab zone's id is looked up by name; see the second
+   amendment below.)*
 3. **New admin routes under `/api/cms/cloudflare/`** read the zone (status,
    every setting, DNS records, rule sets) for an `editor`, and change it
    for a `super_admin`: one zone setting at a time, a cache purge, a DNS
@@ -122,7 +125,8 @@ decision widens that for one system, Cloudflare, in a narrow way.
      `super_admin` person may.
    - **The zone:** every change first reads the zone and is refused unless
      it is `hybridcloudworks.com`, so the list is never applied to another
-     zone.
+     zone. *(Amended 2026-11-26 (#1911): unless it is the zone the request
+     names, one of the two managed zones; see the second amendment below.)*
 
    The refusal names where the thing is changed instead.
 5. **Claude Network Guy is a third agent key** (`claude-network`), with its
@@ -224,6 +228,74 @@ say "five editable phases", read six. Revisit these limits when the zone
 moves to a paid plan, which adds more rate limiting rules and more ways to
 change them.
 
+### Amendment 2026-11-26 (#1911): the lab zone is managed too
+
+Amended 2026-11-26 (#1911): the owner asked that the lab zone
+`hybridcloudinsights.com` be managed from the admin portal the same way as
+the site's zone, "as the lab is an integral part of the site"
+([#1911](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1911)).
+The lab zone exists so the lab host's Caddy (the web server that gets the
+lab's certificates) writes its short-lived `_acme-challenge` proof records in
+a zone of its own, never in the site's
+([#948](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/948),
+[ADR 0032](0032-learner-labs-platform.md)). Read on 2026-11-26: Free plan,
+active, no DNS records and no zone rule sets between renewals; no Terraform
+resource manages a record in it.
+
+- **The zones are a fixed list in code,** `MANAGED_ZONES` in
+  `functions/src/lib/cloudflare/protected.js` (which still imports nothing,
+  so the browser mirrors its names): `hybridcloudworks.com`, first, and
+  `hybridcloudinsights.com`, each with its role in a sentence and its own
+  protected names, prefixes and Terraform phases. A zone not on the list is
+  refused, whatever the token can reach.
+- **Every route takes an optional `zone` query parameter,** a zone's name in
+  any letter case. Left out, it is `hybridcloudworks.com`, so every call
+  written before this keeps working. An unknown, empty or repeated value is
+  refused with 400 `CLOUDFLARE_UNMANAGED_ZONE` before Cloudflare is called.
+  The site's zone is still reached by `CF_ZONE_ID`; the lab zone's id is
+  looked up by name with the same token (`GET /zones?name=`), the zone of
+  exactly that name, and kept for the function instance's life. A lookup
+  that finds none is refused with 502 `CLOUDFLARE_ZONE_UNREACHABLE` and a
+  sentence telling the owner to add the zone to the token; a failed lookup is
+  never kept.
+- **The zone check names the requested zone.** Before every write the zone
+  is read and must be the one the request names (409
+  `CLOUDFLARE_WRONG_ZONE` otherwise); a looked-up id that answered with
+  another name is forgotten, so the next request looks it up again.
+- **What is protected in the lab zone:** every `_acme-challenge` name, with
+  a reason naming Caddy and the lab host README, because Caddy owns them.
+  Its apex and `www` are not protected: nothing uses them. The zone-wide
+  wildcard `*` is refused there as everywhere. No phase is Terraform's there,
+  so `http_request_late_transform` is read-only for the plain reason rather
+  than the origin rule's. The allow-list of phases, the owner-only settings
+  and every agent-key guard (no remove, no switching a guarded rule off, no
+  custom response, no empty list, the freshness check) apply unchanged.
+- **One token covers both zones.** The owner adds the lab zone to the
+  token's Zone Resources (the runbook's Part 2); there is no new secret, so
+  the Keys tab, the register row and the reminder stay one each.
+- **The same four switches cover both zones.** No new `POLICY` row or
+  section: the agent guard matches the route's path, and the query string is
+  not part of it, so `?zone=` is neither blocked nor a way around a switch.
+- **The record names the zone:** the audit row's `details.zone`, and the
+  Telegram message's title and last sentence ("Zone: …").
+- **The page has a zone picker** above the tabs, kept in the address as
+  `?zone=` (`LINK_PARAMS.zone`, left out for the site's zone). Every tab acts
+  on the picked zone only and is drawn afresh when it changes. If the server
+  answers for another zone (an API from before this change, during a
+  deployment), the tabs are replaced by a note rather than let a change land
+  in the wrong zone.
+
+**What this adds to the accepted risks.** A stolen Network Guy key with the
+DNS switch on can now also add or edit records in the lab zone, apart from
+Caddy's names, and its rules switch reaches the lab zone's editable phases.
+The lab zone serves no visitor today, so the reach is small; each change
+still reaches the owner's phone, naming the zone. **The daily DNS audit does
+not watch the lab zone** (`scripts/lib/dns-audit-entries.mjs` keeps only the
+site's zone, and Caddy writes and removes records there at every renewal),
+so for the lab zone the record of a change is the site's audit log, the
+Telegram message and Cloudflare's own audit log, unlike the consequence
+below for the site's zone. Revisit if the lab zone ever serves visitors.
+
 ## Consequences and accepted risks
 
 - **A stolen Network Guy key with every switch on could change zone
@@ -254,7 +326,9 @@ change them.
   rule the phase has now must keep its id in the new list. An agent key
   can still change a kept rule into one that matches nothing, which is
   why each of its changes reaches the owner's phone.
-- **The DNS audit will call a Network Guy DNS change unexpected.**
+- **The DNS audit will call a Network Guy DNS change unexpected** (in the
+  site's zone; the audit does not read the lab zone, see the second
+  amendment).
   `cloudflare-dns-audit.yml` opens an issue for any DNS change made by
   something it does not know, and this token is not on its list. That is
   left as it is on purpose for now: a DNS change by an agent is rare, and an
