@@ -233,8 +233,9 @@ describe('the API rate limit on the status route (#1909)', () => {
   };
 
   it.each([
-    ['one rule with no enabled field (Cloudflare counts it on)', phaseWith([LIMIT]), { state: 'on', enabled: 1, total: 1 }, /is on: 1 rule switched on/],
-    ['two rules, one switched on', phaseWith([LIMIT, { ...LIMIT, id: 'r2', enabled: false }]), { state: 'on', enabled: 1, total: 2 }, /is on: 1 rule switched on/],
+    ['one rule switched on', phaseWith([{ ...LIMIT, enabled: true }]), { state: 'on', enabled: 1, total: 1 }, /is on: 1 rule switched on/],
+    ['two rules, one switched on', phaseWith([{ ...LIMIT, enabled: true }, { ...LIMIT, id: 'r2', enabled: false }]), { state: 'on', enabled: 1, total: 2 }, /is on: 1 rule switched on/],
+    ['one rule with no enabled field (not counted as on: no documented default, so never a false green)', phaseWith([LIMIT]), { state: 'off', enabled: 0, total: 1 }, /switched off: .*part 4/],
     ['a phase with no entry point yet (404)', {}, { state: 'empty', enabled: 0, total: 0 }, /missing: .*holds no rule.*part 4 of the Cloudflare admin runbook/],
     ['an entry point with no rules', phaseWith([]), { state: 'empty', enabled: 0, total: 0 }, /missing: .*part 4/],
     ['every rule switched off', phaseWith([{ ...LIMIT, enabled: false }]), { state: 'off', enabled: 0, total: 1 }, /switched off: .*holds 1 rule and none is switched on.*part 4/],
@@ -261,6 +262,14 @@ describe('the API rate limit on the status route (#1909)', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/far-end words/);
     expect(JSON.stringify(res.body)).not.toContain(TOKEN);
     expect(logs(context)).not.toContain(TOKEN);
+  });
+
+  it('says unreachable, not empty, when the zone itself could not be read and the phase answers 404', async () => {
+    const gone = reply(404, { success: false, errors: [{ code: 1001, message: 'far-end words' }] });
+    const { res, api } = await statusWith({ [`GET ${ZONE_PATH}`]: gone, [`GET ${RATE_PATH}`]: gone });
+    expect(res.body.zoneError).toEqual(expect.any(String));
+    expect(res.body.rateLimit).toMatchObject({ state: 'unreachable', enabled: null, total: null });
+    expect(methods(api)).not.toContain(`GET /rulesets/phases/${RATE_LIMIT_PHASE}/entrypoint`);
   });
 
   it('says unreachable when Cloudflare cannot be reached at all', async () => {

@@ -70,9 +70,13 @@ async function zoneSummary(client) {
  * Whether the API rate limit rule is in place (#1909), for the site's zone
  * only (the lab zone has no API to protect, so it answers null). A refusal
  * or a Cloudflare outage is its own state, with this module's sentence.
+ * When the zone itself could not be read, the phase is not read either and
+ * the answer is unreachable: a 404 for the phase would otherwise read as
+ * "no rule", when it can mean the zone or the token is gone.
  */
-async function rateLimitSummary(client, managed) {
+async function rateLimitSummary(client, managed, zoneError) {
   if (managed.name !== SITE_ZONE) return null;
+  if (zoneError) return rateLimitUnread(null);
   try {
     return rateLimitFromRuleset(await client.getPhase(RATE_LIMIT_PHASE));
   } catch (error) {
@@ -98,7 +102,7 @@ export async function getStatus({ client, missing = [], zone: managed }) {
   }
   const { zone, zoneError } = await zoneSummary(client);
   const [rateLimit, ...readable] = await Promise.all([
-    rateLimitSummary(client, managed),
+    rateLimitSummary(client, managed, zoneError),
     ...FAMILIES.map((family) => client.canRead(family.id)),
   ]);
   return json(200, {

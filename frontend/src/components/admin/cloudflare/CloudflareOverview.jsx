@@ -6,8 +6,9 @@
  */
 import React from 'react';
 import { Link } from 'react-router';
-import { AlertTriangle, CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
+import { CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { agentKeyTab } from '@/components/admin/ai-engine/agentKeys';
 import { agentKeyTabHref } from '@/components/admin/agents/tabs';
 import { navItemById } from '@/config/adminNav';
@@ -102,20 +103,11 @@ function NoZone({ zoneError }) {
   );
 }
 
-const RATE_LIMIT_ICONS = {
-  healthy: <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />,
-  degraded: <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />,
-  critical: <XCircle className="h-4 w-4 shrink-0 text-rose-600" aria-hidden="true" />,
-};
-const RateLimitIcon = ({ tone }) =>
-  RATE_LIMIT_ICONS[tone] ?? (
-    <HelpCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
-  );
-
 /**
- * Whether the site zone's API rate limit rule is on (#1909): the server's
- * sentence, and, when the rule is missing or off, where to make it. Shown
- * only when the status carries the line (the site's zone).
+ * Whether the site zone's API rate limit rule is on (#1909): the shared
+ * status badge (the same word and colour as the Health page's card), the
+ * server's sentence, and, when the rule is missing or off, where to make it.
+ * Shown only when the status carries the line (the site's zone).
  */
 function RateLimitCard({ status }) {
   const line = rateLimitLine(status);
@@ -132,7 +124,7 @@ function RateLimitCard({ status }) {
       </CardHeader>
       <CardContent>
         <p className="flex items-start gap-2 text-sm" data-testid="rate-limit">
-          <RateLimitIcon tone={line.tone} />
+          <StatusBadge system={line.tone} />
           <span>{line.message}</span>
         </p>
         {rateLimitNeedsRule(line) && (

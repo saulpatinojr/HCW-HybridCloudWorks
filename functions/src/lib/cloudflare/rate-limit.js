@@ -57,11 +57,15 @@ function answer(state, enabled = null, total = null) {
 
 /**
  * The answer for the phase's entry point ruleset (null when the phase has
- * none yet). Cloudflare treats a rule with no `enabled` field as switched on.
+ * none yet). A rule counts as on only when Cloudflare says `enabled: true`.
+ * Cloudflare's documentation states no default for a rule without the
+ * field, so such a rule counts as not on: a missing field can turn the
+ * line amber, which a person then checks, but never green while the rule
+ * might be off.
  */
 export function rateLimitFromRuleset(ruleset) {
   const list = Array.isArray(ruleset?.rules) ? ruleset.rules.filter(Boolean) : [];
-  const enabled = list.filter((rule) => rule.enabled !== false).length;
+  const enabled = list.filter((rule) => rule.enabled === true).length;
   if (list.length === 0) return answer('empty', 0, 0);
   return answer(enabled > 0 ? 'on' : 'off', enabled, list.length);
 }

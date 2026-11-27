@@ -582,13 +582,26 @@ describe('the API rate limit probe (#1909)', () => {
   });
 
   it('reads the site zone’s status, naming no zone', async () => {
-    getJSON.mockResolvedValueOnce(status(rateLimitFromRuleset({ rules: [{ id: 'r1' }] })));
+    getJSON.mockResolvedValueOnce(
+      status(rateLimitFromRuleset({ rules: [{ id: 'r1', enabled: true }] }))
+    );
     await runCloudflareRateLimit();
     expect(getJSON).toHaveBeenCalledWith('cms/cloudflare/status');
   });
 
   it.each([
-    ['healthy with a rule switched on', rateLimitFromRuleset({ rules: [{}] }), 'healthy', /is on/],
+    [
+      'healthy with a rule switched on',
+      rateLimitFromRuleset({ rules: [{ enabled: true }] }),
+      'healthy',
+      /is on/,
+    ],
+    [
+      'degraded, never a false green, when a rule has no enabled field',
+      rateLimitFromRuleset({ rules: [{}] }),
+      'degraded',
+      /switched off/,
+    ],
     ['degraded when the phase is empty', rateLimitFromRuleset(null), 'degraded', /missing.*part 4/],
     [
       'degraded when every rule is off',

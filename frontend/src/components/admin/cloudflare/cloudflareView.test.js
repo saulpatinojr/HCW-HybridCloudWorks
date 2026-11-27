@@ -304,11 +304,11 @@ describe('the API rate limit line (#1909)', () => {
   it('is green with a rule on, amber when the phase is empty or every rule is off', () => {
     const on = rateLimitLine({
       configured: true,
-      rateLimit: rateLimit.rateLimitFromRuleset({ rules: [{}] }),
+      rateLimit: rateLimit.rateLimitFromRuleset({ rules: [{ enabled: true }] }),
     });
     expect(on).toMatchObject({ state: 'on', tone: 'healthy' });
     expect(rateLimitNeedsRule(on)).toBe(false);
-    for (const ruleset of [null, { rules: [] }, { rules: [{ enabled: false }] }]) {
+    for (const ruleset of [null, { rules: [] }, { rules: [{ enabled: false }] }, { rules: [{}] }]) {
       const line = rateLimitLine({
         configured: true,
         rateLimit: rateLimit.rateLimitFromRuleset(ruleset),

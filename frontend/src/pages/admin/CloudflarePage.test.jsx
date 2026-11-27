@@ -37,6 +37,7 @@ vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 const { default: CloudflarePage } = await import('./CloudflarePage');
 const { REDACTED_VALUE } = await import('@/components/admin/cloudflare/cloudflareLocks');
 const { HIDDEN_VALUE_NOTE } = await import('@/components/admin/cloudflare/CloudflareRules');
+const { rateLimitUnread } = await import('../../../../functions/src/lib/cloudflare/rate-limit.js');
 
 /** The zone every call names when the address names none: the site's (#1911). */
 const SITE = 'hybridcloudworks.com';
@@ -323,6 +324,29 @@ describe('the Cloudflare page', () => {
       expect(await screen.findByTestId('rate-limit')).toHaveTextContent(
         'Not checked. Cloudflare is not set up yet: the token is missing.'
       );
+    });
+
+    it('shows the same badge word as the Health page: Offline when Cloudflare did not answer', async () => {
+      api.readCloudflareStatus.mockResolvedValue({ ...STATUS, rateLimit: rateLimitUnread(502) });
+      renderAt();
+      const line = await screen.findByTestId('rate-limit');
+      expect(within(line).getByText('Offline')).toHaveAttribute('data-status', 'offline');
+      expect(line).toHaveTextContent(/did not answer/);
+    });
+
+    it('shows the Unknown badge beside "not checked" while Cloudflare is not set up', async () => {
+      api.readCloudflareStatus.mockResolvedValue({
+        configured: false,
+        missing: ['token'],
+        message: 'Cloudflare is not set up yet: the token is missing.',
+        zone: null,
+        families: [],
+        rateLimit: null,
+        protected: { dnsNames: [], phases: [] },
+      });
+      renderAt();
+      const line = await screen.findByTestId('rate-limit');
+      expect(within(line).getByText('Unknown')).toHaveAttribute('data-status', 'unknown');
     });
 
     it('shows no line when the answer carries none', async () => {
