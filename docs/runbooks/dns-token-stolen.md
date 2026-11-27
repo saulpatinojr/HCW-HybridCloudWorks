@@ -1,6 +1,6 @@
 # Incident playbook — DNS token stolen
 
-**What this is for:** the Cloudflare API token (`CLOUDFLARE_API_TOKEN` used for edge DNS verification and Terraform Cloud infrastructure runs) is compromised, leaked, or exposed in an un-sanitized log.
+**What this is for:** the Cloudflare API token Terraform uses (`hcp-terraform-cloudflare-dns` in the Cloudflare dashboard, held as the variable `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`) is compromised, leaked, or exposed in an un-sanitized log. The lab host's Caddy token and the site's Cloudflare admin token (`CLOUDFLARE-ADMIN-TOKEN`, used by Claude Network Guy) are separate tokens, not covered here.
 
 **Impact:** an attacker possessing the token could redirect traffic for `hybridcloudworks.com`, point records to malicious servers, bypass Cloudflare WAF, or issue unauthorized origin certificates.
 
@@ -12,7 +12,7 @@ Revoke the token immediately in the Cloudflare dashboard:
 
 1. Sign in to [Cloudflare Dashboard](https://dash.cloudflare.com).
 2. Go to **My Profile** -> **API Tokens**.
-3. Locate the token used for HCW (e.g. `HCW DNS Verification & Terraform`).
+3. Locate `hcp-terraform-cloudflare-dns`. Leave the lab host's Caddy token and the site's Cloudflare admin token alone; they are different tokens.
 4. Click the three dots menu -> **Revoke**.
 5. Confirm revocation. The token becomes inactive globally within 30 seconds.
 
@@ -27,10 +27,10 @@ Determine whether any unauthorized alterations occurred prior to token revocatio
    - Filter by Action: `dns_record_create`, `dns_record_update`, `dns_record_delete`, `zone_setting_change`, `page_rule_create`, `custom_ssl_create`.
    - Filter by Token: identify calls authenticated by the compromised token.
 3. Check active DNS records:
-   Verify that all live DNS entries match `infra/cloudflare.tf`:
+   Verify that all live DNS entries match the `cloudflare_dns_record` resources in `infra/frontend.tf`, `infra/functionapp.tf` and `infra-lab/dns.tf`:
    - `hybridcloudworks.com` -> SWA alias / apex
    - `www.hybridcloudworks.com` -> SWA alias
-   - `api-azure.hybridcloudworks.com` -> `func-hcw-prod-cus.azurewebsites.net`
+   - `api-azure.hybridcloudworks.com` -> `func-site-prod-cus-01.azurewebsites.net`
    - `lab.hybridcloudworks.com` -> Lab host IPv4
 4. If unauthorized records were created or modified:
    - Delete rogue records immediately via the Cloudflare dashboard.
@@ -82,10 +82,9 @@ in Key Vault and not a GitHub Actions secret (the credential register,
    chat included.
 3. Revoke the old token on the same Cloudflare **API Tokens** page.
 
-Instead of steps 1 and 2, `scripts/roll-cloudflare-tokens.mjs --target azure`
-rolls the token and writes the new value into the workspace variable in one
-step, without the value ever being printed; its header lists the
-environment variables it reads.
+The roll script (`scripts/roll-cloudflare-tokens.mjs`), used for routine
+renewal, does not fit here: it rolls an existing token, and step 1 has
+already revoked this one. Use the new token from section 3.
 
 ---
 
