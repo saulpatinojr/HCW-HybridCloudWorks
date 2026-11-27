@@ -146,9 +146,11 @@ export const PULSE_LATE_AFTER_MS = MISSED_BEATS * PULSE_INTERVAL_MS;
  *   live      a request someone made: a Test button, or Test all. A day old,
  *             it says how things were yesterday.
  *   session   a check run in a signed-in browser (smoke tests, the Labs round
- *             trip). The same day. A probe may set a shorter `freshForMs` of
- *             its own when what it checks lives less long; the session token
- *             checks do, because an access token lasts about ninety minutes.
+ *             trip). The same day. A probe may set a `freshForMs` of its
+ *             own: shorter when what it checks lives less long (the session
+ *             token checks, because an access token lasts about ninety
+ *             minutes), or a little longer when a daily timer records it (the
+ *             Cloudflare rate limit, 26 hours, #1918).
  */
 export const FRESHNESS_MS = Object.freeze({
   pulse: PULSE_LATE_AFTER_MS,

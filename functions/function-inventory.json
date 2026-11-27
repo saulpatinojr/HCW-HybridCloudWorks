@@ -317,6 +317,7 @@
     "brainIndexReconcile",
     "buildWeeklyNewsletter",
     "checkAgentHealth",
+    "checkCloudflareRateLimit",
     "checkLiveLinks",
     "cleanupRejectedContent",
     "cleanupSoftDeletedContent",

@@ -102,6 +102,15 @@ function clientOf(deps, zone) {
 }
 
 /**
+ * The site zone's client outside a request, built exactly as the routes build
+ * it: for the daily rate limit check (lib/timers/cloudflare-rate-limit.js,
+ * #1918). `{ client: null, missing }` while the token or zone id is not set.
+ */
+export function siteZoneClient({ env = process.env, doubles = {} } = {}) {
+  return clientOf({ env, doubles }, { name: SITE_ZONE });
+}
+
+/**
  * The answer for an error a route threw: a Refusal (ours, including bad
  * input) with its own status and sentence; a CloudflareError with its
  * sentence, logged by code; anything else a 500 with a safe sentence.

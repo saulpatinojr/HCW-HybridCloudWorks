@@ -88,6 +88,7 @@ export const ADMIN_CONFIG_LEAVE_OUT = Object.freeze({
     // Leases and watches: who is running what right now.
     search_console_lease: REASONS.workingState,
     delivery_monitor_watch: REASONS.workingState,
+    cloudflare_rate_limit_watch: REASONS.workingState,
     // The writing tool's queue of web addresses, in its earlier single-document form.
     forge_queue: REASONS.workingState,
   }),

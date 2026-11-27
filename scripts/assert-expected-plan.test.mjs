@@ -959,16 +959,16 @@ describe('DECLARED', () => {
     expect(rows.length).toBeGreaterThan(20);
     expect(declaration.after).toBe(overdueQuery(rows));
     // Each declaration of this rule states its own shape. #964's changed the
-    // due-time line alone; #1302's, like #1009's, was one row more. #1612's
-    // is one row more too: `before` is the query the rule holds in state
-    // (TIMER_SCHEDULES_APPLIED), and the only line the update adds is
-    // syncSearchConsole's row. Neither value carries the bin_at() line Kusto
-    // refuses (#964), applied away on 2026-10-15.
+    // due-time line alone; #1302's, like #1009's and #1612's, was one row
+    // more. #1918's is one row more too: `before` is the query the rule holds
+    // in state (TIMER_SCHEDULES_APPLIED), and the only line the update adds
+    // is checkCloudflareRateLimit's row. Neither value carries the bin_at()
+    // line Kusto refuses (#964), applied away on 2026-10-15.
     expect(declaration.before).toBe(overdueQuery(TIMER_SCHEDULES_APPLIED));
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'syncSearchConsole')));
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'checkCloudflareRateLimit')));
     const before = declaration.before.split('\n');
     const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual(['  "syncSearchConsole", 12h, datetime(2026-01-01 00:10),']);
+    expect(added).toEqual(['  "checkCloudflareRateLimit", 1d, datetime(2026-01-01 12:40),']);
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
@@ -1019,14 +1019,22 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
   });
 
-  it('passes the plan after #1612’s merge: the disarmed flag, the four GSC settings and the overdue row', () => {
+  it('passes the plan after #1612’s merge: the disarmed flag and the four GSC settings', () => {
+    // Its overdue row applied by 2026-11-10 and is in TIMER_SCHEDULES_APPLIED (#1918).
     const { plan, app } = fixture();
     app.after.app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE = 'false';
     app.after.app_settings.GSC_WIF_AUDIENCE = '';
     app.after.app_settings.GSC_ENTRA_APP_ID_URI = '';
     app.after.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';
     app.after.app_settings.GSC_SITE_URL = 'sc-domain:hybridcloudworks.com';
-    plan.resource_changes.push(
+    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(TIMER_SCHEDULES_APPLIED.map(([name]) => name)).toContain('syncSearchConsole');
+  });
+
+  it('passes the plan after #1918’s merge (the disarmed flag and the overdue row), and the plan that arms it', () => {
+    const merged = fixture();
+    merged.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'false';
+    merged.plan.resource_changes.push(
       timerRuleUpdate(
         DECLARED.find(
           (entry) =>
@@ -1035,7 +1043,18 @@ describe('DECLARED', () => {
         )
       )
     );
-    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+
+    const armed = fixture();
+    armed.app.before.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'false';
+    armed.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'true';
+    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+
+    // Absent straight to "true" would arm it before the disarmed flag ever applied: not declared.
+    const skipped = fixture();
+    skipped.app.after.app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT = 'true';
+    expect(checkPlan(skipped.plan).ok).toBe(false);
+    expect(infraSource).toMatch(/^\s*CHECK_CLOUDFLARE_RATE_LIMIT\s*=\s*"checkCloudflareRateLimit — /m);
   });
 
   it('reads any change to the proposal clean-up’s switch as unexpected, now that the owner’s arming run has applied (#1777)', () => {
@@ -1168,7 +1187,9 @@ describe('DECLARED', () => {
     // timer_overdue left this list while #1302, the Second Brain and #1403
     // declared the rule again (three rows more); those applied and were
     // deleted on 2026-11-01. It left it again for #1612's one row
-    // (syncSearchConsole); put it back once that declaration is deleted.
+    // (syncSearchConsole, applied and folded in by #1918), and stays out for
+    // #1918's (checkCloudflareRateLimit); put it back once that declaration
+    // is deleted.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',

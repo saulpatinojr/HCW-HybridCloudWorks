@@ -145,6 +145,9 @@ const CLOCK_DEPENDENT = {
   // #1612: the owner's 06:00 and 18:00 Central, written in UTC; ten past to
   // clear the 00:00 cleanup. 18:10 / 06:10 CST, 19:10 / 07:10 CDT.
   syncSearchConsole: { schedule: '0 10 0,12 * * *', utc: 'daily 00:10 and 12:10' },
+  // #1918: the rate limit rule, read once a day: 06:40 CST / 07:40 CDT, so a
+  // rule lost overnight is heard of in the morning; clear of the 12:10 run.
+  checkCloudflareRateLimit: { schedule: '0 40 12 * * *', utc: 'daily 12:40' },
   scrapeSkillsHubRss: { schedule: '0 0 9 * * 5', utc: 'Friday 09:00' },
   // Hour intervals. The cadence survives any whole-hour offset; the PHASE does
   // not, so which instants they land on is still a property of the clock.
@@ -191,7 +194,7 @@ describe('timer schedules are UTC', () => {
     // Guards the guard. An empty read on either side would make every
     // assertion below pass by inspecting nothing.
     expect(terraformSource(INFRA).length).toBeGreaterThan(1000);
-    expect(timerRegistrations.size).toBe(29);
+    expect(timerRegistrations.size).toBe(30);
   });
 
   it('the app clock is UTC — no WEBSITE_TIME_ZONE or TZ app setting exists', () => {

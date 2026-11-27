@@ -308,6 +308,11 @@ export const SCHEDULED_TASKS = Object.freeze([
     'Renews the sign-in tokens of Plaud and of every tool server connected through OAuth.'
   ),
   timer(
+    ['checkCloudflareRateLimit', 'Check the API rate limit rule', '0 40 12 * * *', 'schedulers.js'],
+    'Reads whether the Cloudflare rule that limits how fast one address can call the API is still on. It changes nothing in Cloudflare.',
+    'The answer on the Health page’s “Cloudflare API rate limit” card, and a Telegram message only when the rule goes off or cannot be read, and once when it is on again.'
+  ),
+  timer(
     ['syncSearchConsole', 'Sync Search Console', '0 10 0,12 * * *', 'schedulers.js'],
     'Refreshes what Google knows about each public page, the search traffic and the sitemaps.',
     'Fresh figures on the Search Console page.'

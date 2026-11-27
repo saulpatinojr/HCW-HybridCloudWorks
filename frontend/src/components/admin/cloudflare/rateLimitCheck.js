@@ -7,6 +7,12 @@
  * `cloudflare-rate-limit` probe and the Cloudflare page's Overview both ask
  * this module, so the two always give the same answer.
  *
+ * The rule itself (what counts as on, and the sentences) is the server's
+ * functions/src/lib/cloudflare/rate-limit.js, which the daily
+ * checkCloudflareRateLimit timer (#1918) uses; this file keeps a copy because
+ * the browser bundle does not import server code, and rateLimitMirror.test.js
+ * fails when the two give different answers.
+ *
  * It reads the phase through the Cloudflare page's own route (editor role,
  * changes nothing) and turns the answer into one of four states, each with a
  * status from lib/status.js and a sentence:

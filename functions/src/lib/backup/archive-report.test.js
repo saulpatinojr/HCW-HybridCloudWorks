@@ -351,7 +351,14 @@ describe('a dry run, end to end', () => {
   it('never stores a value, an id, or a field name that is shaped like one', async () => {
     const blobs = memoryBlobs(backupSeed(containers));
     await runAll(blobs);
-    const everything = JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')));
+    // The `rules` field is a SHA-256 of the classification lists, not data, and
+    // its hex can hold a short made-up id such as 'b1' by chance (it did once
+    // #1918 added an admin_config entry), so the hash is checked for its shape
+    // and then left out of the search.
+    const files = JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')));
+    const RULES_HASH = /"rules":"[0-9a-f]{64}"/g;
+    expect(files.match(RULES_HASH)?.length).toBeGreaterThan(0);
+    const everything = files.replace(RULES_HASH, '"rules":"<hash>"');
     for (const value of [
       'made-up-visitor',
       'typed by someone',

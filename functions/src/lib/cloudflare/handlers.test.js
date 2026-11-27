@@ -19,6 +19,7 @@ import {
   REDACTED_VALUE,
   WRITE_ROLE,
   notConfiguredMessage,
+  siteZoneClient,
 } from './handlers.js';
 import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES, forgetZoneIds, zoneUnreachableMessage } from './client.js';
 import { EDITABLE_PHASES, LAB_ZONE, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
@@ -1598,5 +1599,39 @@ describe('the lab zone (#1911)', () => {
       expect(switched).toMatchObject({ status: 403, body: { error: AGENT_DISABLE_MESSAGE } });
       expect([...WRITES(removal.api), ...WRITES(off.api)]).toEqual([]);
     });
+  });
+});
+
+describe('the site zone client outside a request (the daily rate limit check, #1918)', () => {
+  const doubles = (fetch) => ({
+    fetch,
+    resolve: async () => ({ address: '93.184.216.34' }),
+    dispatcherFor: () => ({ close: async () => {} }),
+  });
+
+  it('names what is missing, as the routes do', () => {
+    expect(siteZoneClient({ env: {} })).toEqual({ client: null, missing: ['token', 'zoneId'] });
+    expect(siteZoneClient({ env: { CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: 'not-a-zone' } })).toEqual({
+      client: null,
+      missing: ['zoneId'],
+    });
+  });
+
+  it('reads the site zone’s rate limit phase with the token in the header only', async () => {
+    const api = cloudflare({
+      [`GET ${PHASES}/http_ratelimit/entrypoint`]: ok({ id: 'rs', rules: [{ id: 'r1', action: 'block', expression: 'true' }] }),
+    });
+    const { client, missing } = siteZoneClient({ env: ENV, doubles: doubles(api.fetch) });
+    expect(missing).toEqual([]);
+    expect(await client.getPhase('http_ratelimit')).toMatchObject({ rules: [{ id: 'r1' }] });
+    expect(methods(api)).toEqual(['GET /rulesets/phases/http_ratelimit/entrypoint']);
+    expect(api.calls[0].url).not.toContain(TOKEN);
+    expect(api.calls[0].headers.Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('answers null for a phase Cloudflare has no entry point for (no rule set)', async () => {
+    const api = cloudflare();
+    const { client } = siteZoneClient({ env: ENV, doubles: doubles(api.fetch) });
+    expect(await client.getPhase('http_ratelimit')).toBeNull();
   });
 });

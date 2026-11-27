@@ -366,11 +366,79 @@ the `http_ratelimit` phase (it changes nothing) and say the same thing:
   [When something is wrong](#when-something-is-wrong) below.
 
 The check runs when the Health page or the Cloudflare page is opened (and
-with **Test all**); it is not a background job, so it sends no Telegram
-alert by itself. Open the Health page now and then, or after any change in
-the Cloudflare dashboard. A rule whose action is only `log` (a paid-plan
-option) does not count as on, since it limits nothing. Someone with only the
-viewer role sees **Unknown** ("needs the editor role"), not red.
+with **Test all**). A rule whose action is only `log` (a paid-plan option)
+does not count as on, since it limits nothing. Someone with only the viewer
+role sees **Unknown** ("needs the editor role"), not red.
+
+### The daily check
+
+Once it is switched on, a timer in the site's back end does the same check
+by itself every day at 12:40 UTC (06:40 Central in winter, 07:40 in summer)
+([#1918](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1918)).
+A timer here is a job the Function App (the site's back end) runs on a
+clock; its code is `functions/src/lib/timers/cloudflare-rate-limit.js` and
+its name is `checkCloudflareRateLimit`. Each day it:
+
+1. Reads the `http_ratelimit` phase of the site's zone with the admin token
+   from Part 2. It only reads; it changes nothing in Cloudflare. It judges
+   the answer with the same rule as the card (the server's
+   `functions/src/lib/cloudflare/rate-limit.js`, which a test holds equal to
+   the browser's copy).
+2. Writes the answer onto the **Cloudflare API rate limit** card on the
+   [Health page](https://hybridcloudworks.com/admin/health?tab=checks). The
+   card then says "by the scheduled check" and, as for every card, since when
+   the colour has held. The daily answer counts as current for 26 hours, so
+   the card turns grey (stale) only if a day's run is missed.
+3. Sends one Telegram message when the answer turns amber (no rule on) or red
+   (Cloudflare refused the token or did not answer) from anything else, and
+   one more when it is green again. While nothing changes it says nothing,
+   so a rule left off sends one message, not one a day. "Not checked"
+   (the token or zone id is not set) never sends a message.
+
+What it remembers about the last message is kept in one small document,
+`cloudflare_rate_limit_watch`, in the `admin_config` container; pressing
+**Test** on the Health page does not change it, so a Test never makes the
+timer repeat itself. If a message could not be sent, nothing is recorded and
+the next day's run tries again.
+
+**Switching it on.** Like every timer in the Function App, it is off until
+its name is added to `enabled_timers` (the list of switched-on timers in the
+HCP Terraform workspace `hcw-azure`). Do this once the pull request that
+added it has been merged and the Terraform run that merge started has been
+confirmed:
+
+1. Open the [workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   The run for the merge should show as **Applied**. Its plan adds
+   `FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT` as `"false"` and one row
+   (`checkCloudflareRateLimit`) to the `alert-timer-overdue` query; both are
+   `DECLARED` in the plan check. If it is still waiting, read its plan and
+   confirm it first. Confirming applies the change to Azure.
+2. Open the [workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+   and check that `schedulers_master_enabled` is `true`. If it is `false`,
+   stop: turning it on lets every timer in `enabled_timers` run, which is a
+   separate decision.
+3. In the same place, edit `enabled_timers` (HCL) to add
+   `"CHECK_CLOUDFLARE_RATE_LIMIT"` to the list, and save. A misspelt name is
+   refused by the plan with "enabled_timers accepts only flag suffixes".
+4. Back on the [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
+   start a run (**+ New run**) and read the plan. You should see one change
+   for this timer: `FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT` from `"false"`
+   to `"true"`, marked `DECLARED` by the plan check. Anything the plan check
+   calls UNEXPECTED needs reading before you confirm. If the flag appears
+   from nothing straight to `"true"`, the run from step 1 had not applied:
+   discard this one and do step 1 first.
+5. Confirm the run. The next day after 12:40 UTC, the card on the
+   [Health page](https://hybridcloudworks.com/admin/health?tab=checks)
+   should say "by the scheduled check". If it still says "an admin" or "Not
+   tested yet", the timer has not run: check that step 4's run applied.
+
+**Switching it off.** Remove `"CHECK_CLOUDFLARE_RATE_LIMIT"` from
+`enabled_timers` in the
+[workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+and start a run. The plan check lists the one flag line (`"true"` to
+`"false"`) as UNEXPECTED, because only switching on is declared; when that
+is the only change, confirm it. The card goes back to showing only what a
+Test finds.
 
 ## Part 5. Working on the lab zone
 
@@ -486,7 +554,7 @@ change sends (and Cloudflare's own audit log).
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
 | "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
-| "No API rate limit rule is on" on the Health page or the Cloudflare page's Overview | The `http_ratelimit` phase has no rule, or its rule is switched off, so one address can send the API as many requests as it likes | Make the rule, or set `"enabled": true` on it again, on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules) (Part 4) |
+| "No API rate limit rule is on" on the Health page or the Cloudflare page's Overview, or the Telegram message "Cloudflare API rate limit is off" from the daily check | The `http_ratelimit` phase has no rule, or its rule is switched off, so one address can send the API as many requests as it likes | Make the rule, or set `"enabled": true` on it again, on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules) (Part 4) |
 | "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
 | "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
 | "The admin token cannot reach the zone hybridcloudinsights.com" | The token's Zone Resources do not include the lab zone, or Cloudflare lists the zone as not active | Add it to the token (the paragraph after Part 2, step 7), and check the zone is **Active** in the dashboard; nothing was changed |
@@ -495,4 +563,5 @@ change sends (and Cloudflare's own audit log).
 | On the page: "The server does not manage hybridcloudinsights.com yet" | The site's API is a version from before the lab zone; it answered for the site's zone | Wait a few minutes for the newer API to be deployed, then pick the lab zone again |
 | The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
 | 403 "This key may not call that route" for Network Guy | The switch for that kind of change is off | Turn it on (Part 3, step 4) |
+| The Telegram message "Cloudflare API rate limit could not be checked" | The daily check (Part 4) could not read the phase: Cloudflare refused the admin token, or did not answer. The message and the Health card carry the sentence | Check the token on Integrations → Keys (Part 2) and press **Test** on the card on the [Health page](https://hybridcloudworks.com/admin/health?tab=checks). A message "is on again" follows on the first day the rule reads as on |
 | 429 "Too many requests" | Either the agent key's limit of 120 calls a minute, or Cloudflare's own rate limit on the API (Part 4): more than 200 requests in 10 seconds from one address to `/api/`, lifted after 10 seconds. The Cloudflare page calls the API too, so the limit can catch your own page | Wait a minute (the Cloudflare limit lifts after 10 seconds). If your own page keeps being limited, change the rule in the Cloudflare dashboard, because the page that would change it is the one being limited |
