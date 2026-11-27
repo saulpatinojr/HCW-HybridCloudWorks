@@ -361,20 +361,25 @@ You see the answer in two places:
   [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare), for the
   site's zone (the lab zone has no API, so its Overview has no such box).
 
-| What it says | What it means | What to do |
+Both show the same badge word and colour for each state, beside the
+sentence.
+
+| Badge and sentence | What it means | What to do |
 | --- | --- | --- |
-| Green: "The API rate limit is on: 1 rule switched on in the http_ratelimit phase." | The rule is there and working | Nothing |
-| Amber: "The API rate limit is missing: the http_ratelimit phase holds no rule..." | Someone deleted the rule, or it was never made | Make it with the steps above |
-| Amber: "The API rate limit is switched off: ... none is switched on..." | The rule is there but switched off (`"enabled": false`) | Open the phase on the Rules tab, set `"enabled": true` on the rule (keep its `id`) and replace the rules as in steps 3 and 4 above |
-| Red: "Cloudflare refused the admin token when the site read the http_ratelimit phase..." | The token is wrong or expired, or lacks the Zone WAF permission | Check the token (Part 2, step 2) and paste a new one if needed |
-| Grey, offline: "Cloudflare did not answer when the site read the http_ratelimit phase..." | Cloudflare was slow or down for a moment; nothing is known about the rule | Press **Test** again in a minute |
-| Grey: "Not checked. Cloudflare is not set up yet: ..." | The admin token or the zone id is not set, so nothing was read | Set what the sentence names (Part 2) |
+| **Healthy** (green): "The API rate limit is on: 1 rule switched on in the http_ratelimit phase." | The rule is there and working | Nothing |
+| **Degraded** (amber): "The API rate limit is missing: the http_ratelimit phase holds no rule..." | Someone deleted the rule, or it was never made | Make it with the steps above |
+| **Degraded** (amber): "The API rate limit is switched off: ... none is switched on..." | The rule is there but switched off (`"enabled": false`), or Cloudflare sent it without an `enabled` field. Cloudflare's documentation gives no default for a missing field, so the site counts such a rule as not on rather than risk a false green | Open the phase on the Rules tab, set `"enabled": true` on the rule (keep its `id`) and replace the rules as in steps 3 and 4 above |
+| **Critical** (red): "Cloudflare refused the admin token when the site read the http_ratelimit phase..." | The token is wrong or expired, or lacks the Zone WAF permission | Check the token (Part 2, step 2) and paste a new one if needed |
+| **Offline** (dark grey): "Cloudflare did not answer when the site read the http_ratelimit phase..." | Cloudflare was slow or down for a moment, or the zone itself could not be read (then the Overview's zone box says why); nothing is known about the rule | Press **Test** again in a minute |
+| **Unknown** (light grey): "Not checked. Cloudflare is not set up yet: ..." | The admin token or the zone id is not set, so nothing was read | Set what the sentence names (Part 2) |
 
 The Cloudflare page's Overview reads it every time the page opens. The
 Health card reads it only when someone presses its **Test** or **Test all**,
 and then shows that result, with its age, until it is too old to trust. The
 Health page's five-minute background check (the pulse) calls no outside
 service, so it does not read Cloudflare and will not tell you on its own.
+Telling you without anyone pressing Test is tracked in a follow-up issue,
+[#1918](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1918).
 
 ## Part 5. Working on the lab zone
 
@@ -488,7 +493,7 @@ change sends (and Cloudflare's own audit log).
 | "Check this Cloudflare change" on Telegram | A change landed but its audit row failed, or a DNS edit came back with a protected name | See the two warnings under Part 3 |
 | A part of the page says the token cannot read it | The token lacks that permission | Edit the token in Cloudflare and add it (Part 2, step 2) |
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
-| "The API rate limit is missing" or "is switched off" (amber, on the Health page or the Cloudflare Overview) | The `http_ratelimit` rule was deleted or switched off | Part 4, "How you find out the rule is missing or off" |
+| "The API rate limit is missing" or "is switched off" (amber, on the Health page or the Cloudflare Overview) | The `http_ratelimit` rule was deleted or switched off | [Part 4, "How you find out the rule is missing or off"](#part-4-making-the-api-rate-limit-rule) |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
 | "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
 | "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
