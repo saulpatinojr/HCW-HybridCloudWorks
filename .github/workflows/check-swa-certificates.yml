@@ -1,0 +1,175 @@
+# Check SWA certificates: are the Static Web App's own certificates for
+# hybridcloudworks.com and www.hybridcloudworks.com good for more than 30
+# days? (#1929)
+#
+# Azure renews these certificates by itself, but Microsoft only promises that
+# while the names "resolve to the static web app over public internet"
+# (https://learn.microsoft.com/azure/static-web-apps/custom-domain). Once
+# Cloudflare proxies the two names (docs/runbooks/proxy-site-hosts.md) they
+# resolve to Cloudflare, so the renewal is no longer promised, and under SSL
+# Full (strict) an expired certificate shows every visitor Cloudflare's error
+# 526. The certificates read on 2026-11-27 end on 2027-02-23.
+#
+# Daily, this runs scripts/check-swa-certificates.mjs, which opens a TLS
+# connection (the handshake only, no request) to the Static Web App's default
+# host and asks for each name, so it reads Azure's certificate and not
+# Cloudflare's. The script's exit code is the contract:
+#
+#   0  both are good for more than 30 days: a green run, and on `main` the
+#      open issue, if any, is closed with a comment naming the run;
+#   1  one needs action (30 days or less, not covering its name, not
+#      trusted, or not valid yet): one issue, opened when none is open and
+#      commented on when its state changed, and THE RUN FAILS;
+#   2  one could not be read after three tries: the same issue, and THE RUN
+#      FAILS. A check that could not look has not passed.
+#
+# The issue names the runbook step to take ("Going back": set
+# `site_proxied_hosts` to `none`, wait for Azure to renew, set it back).
+#
+# The host comes from the STATIC_WEB_APP_DEFAULT_HOSTNAME repository variable
+# when it is set (the same one deploy-azure-frontend.yml's probe reads), and
+# from the script's built-in default otherwise. No credentials: the job holds
+# only the workflow's own token, with `issues: write`. No npm ci: the script
+# imports node: built-ins only.
+name: Check SWA certificates
+
+on:
+  schedule:
+    # Daily 05:35 UTC, off the hour and clear of the other scheduled jobs
+    # (publish-lab-image 05:20 Tuesdays, cloudflare-dns-audit 05:50), and
+    # before the daily Claude session (09:13), which picks up a red run.
+    - cron: '35 5 * * *'
+  workflow_dispatch:
+
+# No workflow-level permissions: the one job declares its own.
+permissions: {}
+
+concurrency:
+  group: check-swa-certificates
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Static Web App certificates good for more than 30 days
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout only
+      issues: write # open, comment on or close the one certificate issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # No npm ci: the checker imports node: built-ins only.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # `|| code=$?` is load-bearing: the step runs as `bash -e`, and a bare
+      # `code=$?` on the next line is never reached when the script fails
+      # (scripts/workflow-exit-code-steps.test.mjs). The script writes the
+      # summary on every exit it handles; if it crashed first, one is written
+      # here so the issue step has a body.
+      - name: Read the two certificates
+        id: certs
+        env:
+          ORIGIN_HOST: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME }}
+        run: |
+          set -uo pipefail
+          args=()
+          if [ -n "${ORIGIN_HOST}" ]; then args+=(--host "${ORIGIN_HOST}"); fi
+          code=0
+          node scripts/check-swa-certificates.mjs "${args[@]}" --summary "${RUNNER_TEMP}/swa-certs.md" || code=$?
+          echo "exit=${code}" >> "$GITHUB_OUTPUT"
+          if [ ! -s "${RUNNER_TEMP}/swa-certs.md" ]; then
+            printf '## Static Web App certificates\n\nThe check ended with exit %s and wrote no summary; see the step log.\n' "${code}" > "${RUNNER_TEMP}/swa-certs.md"
+          fi
+          cat "${RUNNER_TEMP}/swa-certs.md" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      # One issue, kept current, in the shape of check-drill-age.yml: labelled
+      # `Platform` and found again by that label plus its exact title, read
+      # from the issue list rather than from search (fuzzy, and its index
+      # lags behind a just-created issue). An issue with a similar title is
+      # never commented on or closed. (If someone removes the label, the next
+      # failing day opens a second issue; that is the safe way to be wrong.)
+      #
+      # Exit 0 closes the open issue, on `main` only. Any other exit, a
+      # missing output included, reports and never closes.
+      #
+      # Unlike the weekly drill check this runs daily, so it does not comment
+      # every day. The report ends with a hidden state line (each name, its
+      # stage and end date: `stateLine` in the script). A comment is posted
+      # only when that line differs from the last one the workflow itself
+      # posted on the issue, so a new stage (30 days to 14), a renewal, or a
+      # new problem is posted, and the same news is not repeated. Only text
+      # the workflow posted counts (`github-actions[bot]`, read through REST):
+      # the repository is public, and a copied line from someone else must not
+      # silence a report. If the earlier reports cannot be read, the step
+      # comments anyway. The red run itself is the daily signal.
+      - name: Open, update or close the certificate issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CERTS_EXIT: ${{ steps.certs.outputs.exit }}
+        run: |
+          set -euo pipefail
+          title="Static Web App certificate needs attention: hybridcloudworks.com or www"
+          label="Platform"
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ "${CERTS_EXIT}" = "0" ]; then
+            if [ -n "$existing" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+              echo "Both certificates are good, but this run is of ${GITHUB_REF:-an unknown ref}, not main, so #${existing} is left open."
+            elif [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Both certificates are good for more than 30 days again: run ${RUN_URL}."
+              echo "Closed #${existing}."
+            else
+              echo "Both certificates are good and no certificate issue is open."
+            fi
+            exit 0
+          fi
+          {
+            echo "Daily check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
+            echo
+            cat "${RUNNER_TEMP}/swa-certs.md"
+            echo
+            echo "This issue is closed by the check itself once both certificates are good for more than 30 days again."
+          } > "${RUNNER_TEMP}/issue.md"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$REPO" --title "$title" --label "$label" --label owner-gated --body-file "${RUNNER_TEMP}/issue.md"
+            exit 0
+          fi
+          # The state line this report ends with. sed prints nothing when
+          # there is none (a crash summary), which always counts as new.
+          state=$(sed -n '/^<!-- swa-cert-check state: .* -->$/{p;q;}' "${RUNNER_TEMP}/swa-certs.md")
+          if ! reported=$( { gh api "repos/${REPO}/issues/${existing}" --jq 'select(.user.login == "github-actions[bot]") | .body // empty' && gh api "repos/${REPO}/issues/${existing}/comments?per_page=100" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | .body // empty'; } ); then
+            echo "::warning::The earlier reports on #${existing} could not be read, so this one is posted."
+            reported=""
+          fi
+          # Only whole state lines are compared, the last one posted winning;
+          # `|| true` because sed and tail succeed on empty input anyway, and
+          # an empty `last` simply reads as a change.
+          last=$(printf '%s\n' "$reported" | sed -n '/^<!-- swa-cert-check state: .* -->$/p' | tail -n 1 || true)
+          if [ -n "$state" ] && [ "$state" = "$last" ]; then
+            echo "Same state as the last report on #${existing}; no new comment."
+          else
+            gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
+            echo "Commented on #${existing}."
+          fi
+
+      - name: Fail the run while a certificate needs action or could not be read
+        if: steps.certs.outputs.exit != '0'
+        env:
+          CERTS_EXIT: ${{ steps.certs.outputs.exit }}
+        run: |
+          if [ "${CERTS_EXIT}" = "1" ]; then
+            echo "::error::A Static Web App certificate needs action (30 days or less, or wrong name, or not trusted); see the summary and the issue."
+          else
+            echo "::error::A Static Web App certificate could not be read (exit ${CERTS_EXIT}); nothing was judged for it. See the summary and the issue."
+          fi
+          exit 1

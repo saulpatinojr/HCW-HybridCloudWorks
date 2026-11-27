@@ -217,9 +217,23 @@ reports that as unexpected for someone to read.
    that while the names "resolve to the static web app over public internet"
    ([Custom domains with Azure Static Web Apps](https://learn.microsoft.com/azure/static-web-apps/custom-domain)),
    which proxied names do not. Under Strict, an expired one would show
-   visitors Cloudflare error 526. The current ones run to **2027-02-23**. The
-   scheduled check that warns 30 days ahead is a follow-up of #1929; until it
-   exists, this is the same read by hand:
+   visitors Cloudflare error 526. The current ones run to **2027-02-23**.
+
+    The scheduled check
+    [Check SWA certificates](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/check-swa-certificates.yml)
+    ([`check-swa-certificates.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/check-swa-certificates.yml))
+    does this read every day at 05:35 UTC. It asks Azure directly (the Static
+    Web App's default name, so Cloudflare is not in the way) for the
+    certificate of each name, and writes the name, issuer and days left in
+    the run's summary. When a certificate has 30 days or less, does not cover
+    its name, or cannot be read, the run fails and it opens one issue titled
+    "Static Web App certificate needs attention: hybridcloudworks.com or www"
+    (labelled `Platform` and `owner-gated`), naming the step under "Going
+    back" below. It comments again only when something changes, and closes
+    the issue by itself once both are good again. **Before the switch,** open
+    the workflow's page and check its latest run is green.
+
+    The same read by hand:
 
     ```powershell
     'hybridcloudworks.com','www.hybridcloudworks.com' | ForEach-Object { $t = New-Object Net.Sockets.TcpClient('calm-ground-0d0e6a010.7.azurestaticapps.net', 443); $s = New-Object Net.Security.SslStream($t.GetStream(), $false, { $true }); $s.AuthenticateAsClient($_); $c = New-Object Security.Cryptography.X509Certificates.X509Certificate2($s.RemoteCertificate); $t.Close(); [pscustomobject]@{ Name = $_; Issuer = $c.Issuer; NotAfter = $c.NotAfter } }
@@ -337,8 +351,11 @@ to DNS-only names, and the zone settings are improvements for the names
 already proxied.
 
 **If the Static Web App's certificate is near its end** (the Part 2 step 4
-check, under 14 days left): set `site_proxied_hosts` to `none`, wait until
-the check shows a new `NotAfter`, then set it back. If the first renewal in
+check, or the issue the daily
+[Check SWA certificates](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/check-swa-certificates.yml)
+run opens, at 14 days left or less): set `site_proxied_hosts` to `none`, wait
+until the check shows a new end date, then set it back. The daily run closes
+its issue once both certificates are good again. If the first renewal in
 early 2027 happens while proxied, write that here and this paragraph can go.
 
 ## Related

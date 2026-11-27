@@ -131,6 +131,13 @@ export const SCHEDULED_TASKS = Object.freeze([
     'Opens an issue, or comments on the open one, while the drill is overdue.'
   ),
   workflow(
+    'check-swa-certificates.yml',
+    'Check SWA certificates',
+    ['35 5 * * *'],
+    'Reads, straight from Azure, the certificates the Static Web App holds for hybridcloudworks.com and www, and fails when one has 30 days or less left, does not cover its name, or cannot be read. Once Cloudflare proxies the two names, Azure may stop renewing them by itself.',
+    'Opens an issue, comments on it when something changes, and closes it once both are good again.'
+  ),
+  workflow(
     'cloudflare-dns-audit.yml',
     'Cloudflare DNS audit',
     ['50 5 * * *'],
