@@ -542,11 +542,29 @@ resource "cloudflare_ruleset" "origin_secret" {
 # set pair does not pass quietly.
 #
 # PREVENT_DESTROY, BECAUSE THE SITE IS NOT OURS TO LOSE. Once imported, the
-# site is in state, and taking either variable away again would plan its
-# destroy: Cloudflare's own site deleted, with the page views it has
-# collected. prevent_destroy turns that plan into an error instead. To stop
-# managing the site, remove it from state with a `removed` block (lifecycle
-# destroy = false), never by unsetting the variables.
+# site is in state. Taking either variable away again would plan its
+# destroy (Cloudflare's own site deleted, with the page views it has
+# collected), and so would changing cloudflare_account_id, because
+# account_id forces a replacement. prevent_destroy turns either plan into an
+# error instead.
+#
+# So letting go of the site is a code change, not a variable change.
+# Terraform refuses a `removed` block while the resource block it names still
+# exists, so it is one pull request that does all of this together:
+#   1. Delete the import block and the site's resource block below.
+#   2. For the two rules, which read hcw[0].ruleset.id: replace each block
+#      with `removed { from = cloudflare_web_analytics_rule.<name>
+#      lifecycle { destroy = false } }`, which leaves the rule in Cloudflare
+#      (the default choice), or delete the block, which deletes the rule.
+#   3. Remove the two web_analytics_site_* outputs in outputs.tf, or set
+#      them to null.
+#   4. Set CF_WEB_ANALYTICS_SITE_TAG to "" in functionapp.tf.
+#   5. Add `removed { from = cloudflare_web_analytics_site.hcw
+#      lifecycle { destroy = false } }`, without [0]: it names the whole
+#      resource.
+# Only after that has applied are the two variables unset. Moving to another
+# account takes the same steps first; the new account's site is then
+# imported the way this one is.
 #
 # WHAT THE FIRST RUN DOES. It imports the site, then updates it in place:
 # the provider does not read `lite` or `enabled` back from Cloudflare (they

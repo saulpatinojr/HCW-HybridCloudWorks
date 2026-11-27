@@ -172,7 +172,7 @@ Set category `Terraform`:
 - `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and, for the Web Analytics site and its two rules, Account → Account Settings → Write)
 - `cloudflare_zone_id` = `<CLOUDFLARE_ZONE_ID>`
 - `cloudflare_account_id` = `<CLOUDFLARE_ACCOUNT_ID>` (optional, #1302, the same value as the repository variable of that name; set it with the next one, and while either is unset nothing of Web Analytics is planned and the site's outputs read null)
-- `cloudflare_web_analytics_site_tag` = `<CF_WEB_ANALYTICS_SITE_TAG>` (optional, [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923), the tag of the Web Analytics site Cloudflare keeps for the zone, read in the dashboard's Web Analytics section; if the zone has none, add one there first with automatic setup)
+- `cloudflare_web_analytics_site_tag` = `<WA_SITE_TAG_FROM_DASHBOARD>` (optional, [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923), the tag of the Web Analytics site Cloudflare keeps for the zone; set it with `cloudflare_account_id` at `https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables`, not sensitive, HCL off). To find it: (1) open `https://dash.cloudflare.com/?to=/:account/web-analytics`; (2) open the `hybridcloudworks.com` site; (3) read the site's 32-character identifier from the browser's address bar (the exact spot on the current dashboard is not confirmed). The value inside the JavaScript snippet is the site *token*, a different value, and is not this. If the tag is not on the page, a session reads it with the Cloudflare connection: `GET /accounts/{account_id}/rum/site_info/list`, field `site_tag`. If the zone has no site at all, add one there first with automatic setup.
 - `cloudflare_origin_secret` = `<CF_ORIGIN_SECRET>` (sensitive; from Bitwarden)
 - `budget_alert_email` = `admin@hybridcloudworks.com`
 
@@ -210,7 +210,7 @@ The script does not seed `CF_WEB_ANALYTICS_TOKEN` (#1302). Set it by hand from t
 $t = Read-Host 'web_analytics_site_token from the hcw-azure outputs'; gh variable set CF_WEB_ANALYTICS_TOKEN --body $t
 ```
 
-Nothing clears or refreshes this variable later: if the site is destroyed (`cloudflare_account_id` unset again) or replaced (the account id changed, which forces a new site with a new token), every page keeps shipping a beacon with a dead or wrong token until the value is re-copied from the new output, or cleared, and the frontend deployed again; after a clear the next deploy ships no tag:
+Nothing clears or refreshes this variable later. Terraform does not destroy or replace the site by itself: with the site in state, unsetting the Web Analytics variables or changing the account id stops the plan at the site's `prevent_destroy` ([#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)). But if the site is ever let go of (the steps in the comment above the site in `infra/frontend.tf`) or another site is imported, every page keeps shipping a beacon with a dead or wrong token until the value is re-copied from the new output, or cleared, and the frontend deployed again; after a clear the next deploy ships no tag:
 
 ```powershell
 gh variable delete CF_WEB_ANALYTICS_TOKEN -R saulpatinojr/HCW-HybridCloudWorks
