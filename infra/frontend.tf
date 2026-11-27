@@ -150,10 +150,16 @@ resource "azurerm_static_web_app" "hcw" {
 #
 # Both names are CNAMEs to the Static Web App's default host. They were made
 # by hand in the Cloudflare dashboard on 2026-08-23 (www) and 2026-08-25 (the
-# apex), DNS-only, and are brought under Terraform here exactly as they are,
-# so the first apply changes nothing anyone can see: it imports the two
-# records and adds a comment to each (a comment is a note on the record and
-# has no effect on DNS answers, per the provider's own description of it).
+# apex), DNS-only, and were brought under Terraform exactly as they were:
+# the owner's apply of 2026-11-27 (about 19:21 UTC) imported both and added
+# the comment below to each (a comment is a note on the record and has no
+# effect on DNS answers). The lookup and the two import blocks that apply
+# needed were then deleted (#1937), so the records are now ordinary
+# resources in state and the configuration below is exactly what Cloudflare
+# holds: DNS-only, the apex at ttl 1 and www at ttl 60. A record changed by
+# hand in the dashboard now shows up as a change in the next plan, and a
+# record deleted by hand plans a create.
+#
 # Cloudflare answers for an apex CNAME with the target's addresses
 # ("CNAME flattening"), which is why a CNAME is allowed at the apex at all.
 #
@@ -182,52 +188,8 @@ resource "azurerm_static_web_app" "hcw" {
 # the apex ever has to be validated again.
 # =============================================================================
 locals {
-  site_hosts = {
-    apex = var.domain
-    www  = "www.${var.domain}"
-  }
   site_www_proxied  = contains(["www", "both"], var.site_proxied_hosts)
   site_apex_proxied = var.site_proxied_hosts == "both"
-}
-
-# Finds the two hand-made records, so the import blocks below can name them
-# without a record id being written in this public repository or typed into
-# the workspace. With a filter, the provider asks Cloudflare for the records
-# that match and fails the plan unless it finds exactly one ("failed to find
-# exactly one result"), so a missing or doubled record stops the plan before
-# anything is imported. The postcondition then holds the record to the type
-# asked for (the name is the filter's exact match).
-data "cloudflare_dns_record" "site" {
-  for_each = local.site_hosts
-
-  zone_id = var.cloudflare_zone_id
-  filter = {
-    type = "CNAME"
-    name = {
-      exact = each.value
-    }
-  }
-
-  lifecycle {
-    postcondition {
-      condition     = self.type == "CNAME"
-      error_message = "The record found for the site's own address is not the CNAME at that name. Nothing has been imported or changed. Check the apex and www in the zone's DNS records in the Cloudflare dashboard (docs/runbooks/proxy-site-hosts.md)."
-    }
-  }
-}
-
-# The provider's import id is `<zone_id>/<dns_record_id>` (ImportState in
-# 5.29.0). Once both records are in state Terraform skips these blocks; they
-# and the data source above can be deleted together any time after the
-# first apply.
-import {
-  to = cloudflare_dns_record.site_apex
-  id = "${var.cloudflare_zone_id}/${data.cloudflare_dns_record.site["apex"].id}"
-}
-
-import {
-  to = cloudflare_dns_record.site_www
-  id = "${var.cloudflare_zone_id}/${data.cloudflare_dns_record.site["www"].id}"
 }
 
 resource "cloudflare_dns_record" "site_apex" {

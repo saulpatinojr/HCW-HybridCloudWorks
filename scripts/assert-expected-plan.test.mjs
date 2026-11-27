@@ -43,7 +43,6 @@ import {
   redact,
   sshLoginAlertQuery,
   secretsOf,
-  SITE_RECORD_COMMENTS,
   TIMER_SCHEDULES_APPLIED,
 } from './assert-expected-plan.mjs';
 // The module-reading helper moved to its own file when a second check needed
@@ -1540,23 +1539,25 @@ describe('DECLARED', () => {
     }
   });
 
-  it('declares the site records’ imports and comments only, and the records as Cloudflare holds them, DNS-only by default (#1929)', () => {
-    // Delete this test with the eight declarations, once both records are in state with their comments.
+  it('keeps the site records in state with no declaration, lookup or import left, DNS-only by default (#1929, applied 2026-11-27; #1937)', () => {
+    // The owner's apply of 2026-11-27 imported both records and wrote their comments (Cloudflare shows them
+    // since about 19:21 UTC, DNS-only, the apex at ttl 1 and www at ttl 60), so the eight declarations, the
+    // lookup and the two import blocks were deleted. Nothing about either record is declared now, so any
+    // change to one, the same import run again included, is UNEXPECTED and read by hand.
     const RECORDS = ['cloudflare_dns_record.site_apex', 'cloudflare_dns_record.site_www'];
-    expect(Object.keys(SITE_RECORD_COMMENTS).sort()).toEqual(RECORDS);
+    const COMMENTS = {
+      [RECORDS[0]]: "The site's own address (Static Web App), apex; proxy switch: site_proxied_hosts",
+      [RECORDS[1]]: "The site's own address (Static Web App), www; proxy switch: site_proxied_hosts",
+    };
     for (const address of RECORDS) {
-      const mine = DECLARED.filter((entry) => entry.address === address);
-      expect(mine.filter((entry) => entry.action).map((entry) => entry.action), address).toEqual(['import']);
-      // The comment is the one change with a value; two computed timestamps follow it. Nothing else:
-      // proxied and ttl are not declared, so a plan that proxies a name before the switch is UNEXPECTED.
-      expect(
-        mine.filter((entry) => entry.path && entry.after !== KNOWN_AFTER_APPLY).map(({ path, before, after }) => [path, before, after]),
-        address
-      ).toEqual([['comment', null, SITE_RECORD_COMMENTS[address]]]);
-      expect(mine.filter((entry) => entry.after === KNOWN_AFTER_APPLY).map((entry) => entry.path).sort(), address).toEqual([
-        'comment_modified_on',
-        'modified_on',
-      ]);
+      expect(DECLARED.filter((entry) => entry.address === address), address).toEqual([]);
+    }
+    // The lookup is gone, so a record missing or renamed by hand no longer fails every plan in the workspace,
+    // and no import block names either record.
+    expect(infraSource).not.toMatch(/data\s+"cloudflare_dns_record"\s+"site"/);
+    const imports = [...infraSource.matchAll(/^import \{\n([\s\S]*?)\n\}/gm)].map((match) => match[1]);
+    for (const address of RECORDS) {
+      expect(imports.filter((body) => body.includes(address)), address).toEqual([]);
     }
 
     const block = (header) => {
@@ -1575,8 +1576,8 @@ describe('DECLARED', () => {
       expect(body, address).toMatch(/^\s*content\s*=\s*azurerm_static_web_app\.hcw\.default_host_name$/m);
       expect(body, address).toMatch(/^\s*type\s*=\s*"CNAME"$/m);
       expect(body, address).toMatch(/^\s*zone_id\s*=\s*var\.cloudflare_zone_id$/m);
-      // The comment declared above is the one the configuration writes.
-      expect(body, address).toContain(`comment = ${JSON.stringify(SITE_RECORD_COMMENTS[address])}`);
+      // The comment the apply wrote: a different text here would plan an update on every run.
+      expect(body, address).toContain(`comment = ${JSON.stringify(COMMENTS[address])}`);
       // These two records are the site: a plan that would delete or replace one stops.
       expect(body, address).toMatch(/^\s*prevent_destroy\s*=\s*true$/m);
       expect(body, address).toMatch(/^\s*ignore_changes\s*=\s*\[include_shadow_metadata\]$/m);
@@ -1591,56 +1592,47 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*site_www_proxied\s*=\s*contains\(\["www", "both"\], var\.site_proxied_hosts\)$/m);
     expect(infraSource).toMatch(/^\s*site_apex_proxied\s*=\s*var\.site_proxied_hosts == "both"$/m);
 
-    // The switch defaults to "none", so merging changes nothing live, and takes only the three values.
+    // The switch defaults to "none", so the records stay as they are, and takes only the three values.
     const variable = block('variable "site_proxied_hosts"');
     expect(variable).toMatch(/^\s*default\s*=\s*"none"$/m);
     expect(variable).toContain('contains(["none", "www", "both"], var.site_proxied_hosts)');
 
-    // Each import names its record by the zone variable and the id the data source finds: no id is written here.
-    const imports = [...infraSource.matchAll(/^import \{\n([\s\S]*?)\n\}/gm)].map((match) => match[1]);
-    for (const [address, key] of [
-      [RECORDS[0], 'apex'],
-      [RECORDS[1], 'www'],
-    ]) {
-      const found = imports.filter((body) => body.includes(`to = ${address}\n`) || body.endsWith(`to = ${address}`));
-      expect(found, address).toHaveLength(1);
-      expect(found[0], address).toContain(`id = "\${var.cloudflare_zone_id}/\${data.cloudflare_dns_record.site["${key}"].id}"`);
-    }
-    expect(infraSource).toMatch(/^data "cloudflare_dns_record" "site" \{$/m);
-
-    // The owner's run, as the plan JSON will carry it: each record imported with only its comment added.
-    // The live TTLs: 1 (automatic) on the apex, 60 on www.
+    // Proxying a name is not declared, so it is named.
     const LIVE_TTL = { [RECORDS[0]]: 1, [RECORDS[1]]: 60 };
-    const recordChange = (address) => ({
+    const update = (address, after) => ({
       address,
       change: {
         actions: ['update'],
-        importing: { id: 'zone-placeholder/record-placeholder' },
-        before: { comment: null, modified_on: '2026-08-23T00:00:00Z', comment_modified_on: null, proxied: false, ttl: LIVE_TTL[address] },
-        after: { comment: SITE_RECORD_COMMENTS[address], proxied: false, ttl: LIVE_TTL[address] },
-        after_unknown: { modified_on: true, comment_modified_on: true },
+        before: { comment: COMMENTS[address], proxied: false, ttl: LIVE_TTL[address] },
+        after: { comment: COMMENTS[address], proxied: false, ttl: LIVE_TTL[address], ...after },
+        after_unknown: {},
         before_sensitive: {},
         after_sensitive: {},
       },
     });
-    const plan = expectedPlan();
-    plan.resource_changes.push(...RECORDS.map(recordChange));
-    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
-
-    // Proxying a name in that same run is not declared, so it is named.
-    const proxied = structuredClone(plan);
-    const wwwChange = proxied.resource_changes.find((change) => change.address === RECORDS[1]).change;
-    wwwChange.after.proxied = true;
-    wwwChange.after.ttl = 1;
+    const proxied = expectedPlan();
+    proxied.resource_changes.push(update(RECORDS[1], { proxied: true, ttl: 1 }));
     expect(checkPlan(proxied).unexpected).toEqual([
       `${RECORDS[1]}: update proxied: false -> true`,
       `${RECORDS[1]}: update ttl: 60 -> 1`,
     ]);
 
-    // An apex TTL that moves off automatic in that run is not declared either, so it is named.
-    const apexTtl = structuredClone(plan);
-    apexTtl.resource_changes.find((change) => change.address === RECORDS[0]).change.after.ttl = 60;
+    // An apex TTL that moves off automatic is not declared either, so it is named.
+    const apexTtl = expectedPlan();
+    apexTtl.resource_changes.push(update(RECORDS[0], { ttl: 60 }));
     expect(checkPlan(apexTtl).unexpected).toEqual([`${RECORDS[0]}: update ttl: 1 -> 60`]);
+
+    // The first apply's own shape, an import adding the comment, is no longer declared either.
+    const again = expectedPlan();
+    const reimport = update(RECORDS[0], {});
+    reimport.change.importing = { id: 'zone-placeholder/record-placeholder' };
+    reimport.change.before.comment = null;
+    again.resource_changes.push(reimport);
+    const result = checkPlan(again);
+    expect(result.ok).toBe(false);
+    expect(result.declared).toEqual([]);
+    expect(result.unexpected.join('\n')).toContain(RECORDS[0]);
+    expect(result.unexpected.join('\n')).not.toContain('record-placeholder');
   });
 
   it('prunes the Developer API container’s create once applied, with the container still in the spec (#1754, pruned 2026-11-27)', () => {
@@ -1663,9 +1655,7 @@ describe('DECLARED', () => {
     // live that day. What stays waits on the owner: four arming plans (each flag live "false") and two role
     // assignments counted on a workspace variable that docs/standards/required-inputs.md §4.1 records as
     // MISSING (not set) for storage_firewall_remover_enabled and lab_arc_run_command_enabled.
-    // #1929's site records were declared after this prune; their own test above pins all eight entries.
-    const pruned = DECLARED.filter((entry) => !Object.hasOwn(SITE_RECORD_COMMENTS, entry.address));
-    expect(pruned.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${entry.before} -> ${entry.after}`}`)).toEqual([
+    expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${entry.before} -> ${entry.after}`}`)).toEqual([
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS: false -> true`,

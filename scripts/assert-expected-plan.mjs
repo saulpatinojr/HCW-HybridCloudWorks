@@ -144,7 +144,6 @@ import {
 import {
   declarationLines,
   findDeclaredAction,
-  KNOWN_AFTER_APPLY,
   matchesDeclaration,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
@@ -381,18 +380,6 @@ export const TIMER_SCHEDULES_APPLIED = [
  * reason }` and matches only those exact values. Delete it once its change
  * has applied. "Declaring an intended change" in the header has the rest.
  */
-/**
- * The comment infra/frontend.tf gives each of the site's own two records
- * (#1929), by address. The test holds these to the .tf text, so the declared
- * update and the configuration cannot drift apart.
- */
-export const SITE_RECORD_COMMENTS = Object.freeze({
-  "cloudflare_dns_record.site_apex":
-    "The site's own address (Static Web App), apex; proxy switch: site_proxied_hosts",
-  "cloudflare_dns_record.site_www":
-    "The site's own address (Static Web App), www; proxy switch: site_proxied_hosts",
-});
-
 export const DECLARED = [
   // Applied and deleted here on 2026-10-16, as the header asks. Each change,
   // with the reading that showed it live:
@@ -546,42 +533,15 @@ export const DECLARED = [
   // configuration read Succeeded on port 22, created at 02:25Z, and
   // `ssh hcw-lab hostname` answered through Arc from the owner's desktop.
   //
-  // #1929: the site's own apex and www, made by hand in the dashboard, are
-  // imported unchanged (DNS-only, the same content, ttl and type), so the run
-  // after the merge holds, for each of the two records:
-  //   - the import, declared by address (its id is found by the data source
-  //     in infra/frontend.tf and never written here);
-  //   - the same record's in-place update adding the comment, null -> the
-  //     text in infra/frontend.tf. A comment has no effect on DNS answers.
-  //     Read from the provider's source (5.29.0, dns_record ModifyPlan), not
-  //     from a plan: a changed comment leaves modified_on and
-  //     comment_modified_on unknown until the apply, declared with
-  //     KNOWN_AFTER_APPLY. Everything else (settings, tags, meta, proxiable,
-  //     created_on) keeps its state value.
-  // Nothing else may change on either record in that run; proxied and ttl in
-  // particular are not declared, so a plan that would proxy a name before the
-  // owner sets site_proxied_hosts is UNEXPECTED. Delete these eight entries
-  // once both records are in state with their comments.
-  ...Object.entries(SITE_RECORD_COMMENTS).flatMap(([address, comment]) => [
-    {
-      address,
-      action: "import",
-      reason: "#1929: the site's hand-made record brought under Terraform, unchanged",
-    },
-    {
-      address,
-      path: "comment",
-      before: null,
-      after: comment,
-      reason: "#1929: a comment on the imported record (no effect on DNS answers)",
-    },
-    ...["modified_on", "comment_modified_on"].map((path) => ({
-      address,
-      path,
-      after: KNOWN_AFTER_APPLY,
-      reason: `#1929: the record's ${path}, set by Cloudflare when the comment is written`,
-    })),
-  ]),
+  // #1929's eight entries (for each of the site's apex and www: the import,
+  // the comment null -> its text, and modified_on and comment_modified_on
+  // known after apply) applied in the owner's run of 2026-11-27: Cloudflare
+  // shows both CNAMEs carrying their Terraform comments since about 19:21
+  // UTC that day, still DNS-only, the apex at ttl 1 and www at ttl 60. They
+  // were deleted here with the lookup and the import blocks in
+  // infra/frontend.tf (#1937). A plan that changes either record now, a
+  // proxied or ttl change before the owner sets site_proxied_hosts above
+  // all, is UNEXPECTED and is read.
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied. Live "false" on
