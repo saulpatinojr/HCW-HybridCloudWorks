@@ -8,10 +8,17 @@ import React from 'react';
 import { Link } from 'react-router';
 import { CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { agentKeyTab } from '@/components/admin/ai-engine/agentKeys';
 import { agentKeyTabHref } from '@/components/admin/agents/tabs';
 import { navItemById } from '@/config/adminNav';
-import { CLOUDFLARE_DOCS, ExternalLink, NotConfigured, ReadGate } from './CloudflareParts';
+import {
+  CLOUDFLARE_DOCS,
+  ExternalLink,
+  NotConfigured,
+  ReadGate,
+  useCloudflareRead,
+} from './CloudflareParts';
 import {
   APEX_WILDCARD_REASON,
   editablePhaseList,
@@ -21,7 +28,13 @@ import {
   protectedPrefixList,
   READ_ONLY_PHASE_REASON,
 } from './cloudflareView';
-import { OWNER_ONLY_SETTINGS } from './cloudflareLocks';
+import { DEFAULT_ZONE, OWNER_ONLY_SETTINGS } from './cloudflareLocks';
+
+/** Whether the server named a zone other than the site's (an older server names none: the site's). */
+const isOtherZone = (status) =>
+  Boolean(status?.managed?.name) && status.managed.name.toLowerCase() !== DEFAULT_ZONE;
+import { RATE_LIMIT_RUNBOOK_URL, checkRateLimit } from './rateLimitCheck';
+import { tabHref } from './tabs';
 
 const NETWORK_AGENT = agentKeyTab('claude-network');
 
@@ -131,8 +144,46 @@ function FamiliesCard({ status }) {
             ))}
           </ul>
         )}
+        {/* The API rate limit rule is the site's (#1909): hidden only when the server says it answered for another zone (#1911). */}
+        {isOtherZone(status) ? null : <RateLimitLine />}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Whether the API rate limit rule is on (#1909): the same check, and the
+ * same words, as the Health page's Cloudflare API rate limit probe.
+ */
+function RateLimitLine() {
+  const read = useCloudflareRead(checkRateLimit, null);
+  const check = read.data;
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3 text-sm" data-testid="rate-limit-check">
+      <p className="font-medium">The API rate limit rule</p>
+      {check ? (
+        <p className="mt-1 flex flex-wrap items-center gap-2">
+          <StatusBadge system={check.status} size="xs" />
+          <span>{check.sentence}</span>
+        </p>
+      ) : (
+        <p className="mt-1 text-muted-foreground">Checking…</p>
+      )}
+      <p className="mt-1 text-xs text-muted-foreground">
+        {check?.state === 'off' ? (
+          <>
+            How to make it:{' '}
+            <ExternalLink href={RATE_LIMIT_RUNBOOK_URL}>
+              Part 4 of the Cloudflare admin runbook
+            </ExternalLink>
+            .{' '}
+          </>
+        ) : null}
+        <Link to={tabHref('rules')} className="underline underline-offset-2 hover:text-foreground">
+          Open the Rules tab
+        </Link>
+      </p>
+    </div>
   );
 }
 

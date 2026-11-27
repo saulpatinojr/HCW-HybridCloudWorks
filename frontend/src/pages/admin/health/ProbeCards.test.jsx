@@ -151,6 +151,31 @@ describe('a probe card', () => {
     expect(within(card).getByTestId('probe-checked').textContent).toMatch(/^40 min ago/);
   });
 
+  it('shows the amber rate limit warning with links to the Rules tab and the runbook (#1909)', () => {
+    render(
+      <ProbeCard
+        probe={byId('cloudflare-rate-limit')}
+        result={{
+          status: 'degraded',
+          summary: 'No API rate limit rule is on.',
+          checkedAt: new Date(NOW).toISOString(),
+        }}
+        running={false}
+        onRun={() => {}}
+        now={NOW}
+      />
+    );
+    const card = screen.getByRole('article', { name: 'Cloudflare API rate limit' });
+    expect(within(expectStatusTopRight(card)).getByText('Degraded')).toBeTruthy();
+    expect(within(card).getByRole('link', { name: /Cloudflare Rules/ })).toHaveAttribute(
+      'href',
+      '/admin/cloudflare?tab=rules'
+    );
+    const runbook = within(card).getByRole('link', { name: /Runbook, Part 4/ });
+    expect(runbook.getAttribute('href')).toMatch(/#part-4-making-the-api-rate-limit-rule$/);
+    expect(runbook).toHaveAttribute('target', '_blank');
+  });
+
   it('puts every card in the grid in the same structure, and counts the five words', () => {
     const resolve = (probe) =>
       probe.id === 'cosmos'
