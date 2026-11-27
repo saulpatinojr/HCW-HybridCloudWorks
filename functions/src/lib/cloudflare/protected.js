@@ -406,6 +406,12 @@ export const UNLISTED_RULE_SETTING_REASON = `This page does not know which zone 
  * a custom security rule or a rate limit has no field for one, and the
  * custom response of the last two is already refused to an agent key
  * (rules-guards.js).
+ *
+ * What this list does not catch, because it is a value rather than a
+ * setting field: a redirect to an http:// address, which sends that visitor
+ * to a page without encryption, and a URL rewrite that changes the path an
+ * owner's rule matches on (rules that match on the host name are not
+ * affected). Both are open to an agent key with the rules switch.
  */
 export const RULE_SETTING_PARAMETERS = Object.freeze(
   [

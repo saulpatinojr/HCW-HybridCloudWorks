@@ -1268,10 +1268,26 @@ describe('rules', () => {
       ['changes the requests it matches', { ...SSL_RULE, expression: 'true' }],
       ['switches it off', { ...SSL_RULE, enabled: false }],
       ['takes ssl out of it', { ...SSL_RULE, action_parameters: { fonts: true } }],
-      ['spells the field in capitals', { ...SSL_RULE, action_parameters: { SSL: 'flexible' } }],
     ])('refuses an agent key updating the owner’s ssl rule when it %s', async (_label, changed) => {
       const result = await send(NETWORK_GUY, CONFIG, [SSL_RULE], [changed]);
       expectRefused(result, 'ssl', SSL_REASON);
+    });
+
+    it.each([
+      ['the field in capitals', CONFIG, { expression: 'true', action: 'set_config', action_parameters: { SSL: 'flexible' } }],
+      ['action_parameters in other letters', CONFIG, { expression: 'true', action: 'set_config', Action_Parameters: { ssl: 'flexible' } }],
+      ['a second action_parameters in capitals', CONFIG, { expression: 'true', action: 'set_config', action_parameters: {}, ACTION_PARAMETERS: { ssl: 'off' } }],
+      ['a field with a letter that only looks like s', CONFIG, { expression: 'true', action: 'set_config', action_parameters: { 'ſsl': 'off' } }],
+      ['headers in other letters', HEADERS, { expression: 'true', action: 'rewrite', action_parameters: { Headers: { 'Strict-Transport-Security': { operation: 'remove' } } } }],
+      ['a response in other letters', 'http_request_firewall_custom', { expression: 'true', action: 'block', action_parameters: { Response: { status_code: 403 } } }],
+    ])('refuses a rule with %s before calling Cloudflare, for an agent key and the owner alike', async (_label, phase, rule) => {
+      for (const user of [NETWORK_GUY, PERSON]) {
+        const { res, api, store } = await send(user, phase, null, [rule], null);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/lower-case letters, digits and underscores, as Cloudflare writes them/);
+        expect(api.fetch).not.toHaveBeenCalled();
+        expect(store.upsertDoc).not.toHaveBeenCalled();
+      }
     });
 
     it('refuses an agent key moving one ssl rule past another, since the later one wins', async () => {

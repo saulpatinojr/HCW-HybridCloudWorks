@@ -371,6 +371,19 @@ route allowed.
   or a field that is not owner-only).
 - **The owner is unchanged.** A `super_admin` person may set any of these
   in a rule, as on the settings route.
+- **Field names are checked as Cloudflare writes them.** The checks read
+  `action_parameters`, `headers` and `response` by their exact names, so a
+  rule whose own field names, or those directly under `action_parameters`,
+  are not lower-case letters, digits and underscores (`Action_Parameters`,
+  `Headers`, `SSL`) is refused with 400 for everyone before anything is
+  sent. Header names may still be in any case.
+- **What the list does not catch.** It covers setting fields, not values.
+  A redirect to an `http://` address still sends that visitor to a page
+  without encryption. A URL rewrite can still change the path that an
+  owner's path-matching rule sees, though a rule that matches on the host
+  name is not affected. Both remain open to an agent key with the rules
+  switch. The independent review for #1931 raised them as follow-ups;
+  closing them is a separate decision.
 
 ## Consequences and accepted risks
 

@@ -165,8 +165,28 @@ export async function getPhase({ request, client, zone }) {
 const isRule = (rule) => Boolean(rule) && typeof rule === 'object' && !Array.isArray(rule);
 const withoutStamps = (rule) => Object.fromEntries(Object.entries(rule).filter(([key]) => !STAMPS.includes(key)));
 
+/** A field name as Cloudflare writes it: lower-case letters, digits and underscores. */
+const FIELD_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * Whether a rule's own field names, and those directly under its
+ * action_parameters, are all written as Cloudflare writes them (#1931
+ * review). The guards read `action_parameters`, `headers` and `response`
+ * by exact name; a name in other letters (`Action_Parameters`, `Headers`)
+ * would pass them unread if Cloudflare took it anyway, so it is refused
+ * here. Header names one level further down may be in any case.
+ */
+function fieldNamesAsCloudflareWrites(rule) {
+  const parameters = rule.action_parameters;
+  const parameterNames = parameters && typeof parameters === 'object' && !Array.isArray(parameters) ? Object.keys(parameters) : [];
+  return [...Object.keys(rule), ...parameterNames].every((name) => FIELD_NAME.test(name));
+}
+
 /** Refuses what a phase's new rules may not hold. */
 function refuseRuleContents(phase, rules) {
+  if (!rules.every(fieldNamesAsCloudflareWrites)) {
+    throw bad("A rule's field names, and those under action_parameters, must be lower-case letters, digits and underscores, as Cloudflare writes them.");
+  }
   if (JSON.stringify(rules).includes(REDACTED_VALUE)) {
     throw bad('A rule still holds a hidden value. That value is a secret this page never reads, so a rule holding one is changed in the Cloudflare dashboard.');
   }
