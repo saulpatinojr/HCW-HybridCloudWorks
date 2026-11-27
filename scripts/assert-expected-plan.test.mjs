@@ -1378,15 +1378,18 @@ describe('DECLARED', () => {
     ).toEqual(['import']);
   });
 
-  it('declares the Web Analytics site’s import and update and its two rules’ creates, and nothing that would recreate the site (#1923)', () => {
-    // Delete this test with the five declarations, once the site and the rules exist.
+  it('declares the Web Analytics site’s import and update, no Web Analytics rule, and nothing that would recreate the site (#1923)', () => {
+    // Delete this test with the nine declarations, once the site is in state and both settings hold the owner's values.
     const SITE = 'cloudflare_web_analytics_site.hcw[0]';
-    const RULES = ['cloudflare_web_analytics_rule.notes_excluded[0]', 'cloudflare_web_analytics_rule.api_excluded[0]'];
     const actionsAt = (address) =>
       DECLARED.filter((entry) => entry.address === address && entry.action).map((entry) => entry.action);
     // Cloudflare made the site for the zone itself; a create is what the API refused.
     expect(actionsAt(SITE)).toEqual(['import']);
-    for (const rule of RULES) expect(actionsAt(rule), rule).toEqual(['create']);
+    // The zone's Free plan allows no Web Analytics rules: Cloudflare refused both creates on 2026-11-27
+    // (409, code 10012, maxRulesError). None is declared and none is in the configuration, so a rule added
+    // back fails here before it fails every apply; the audience read filters by host instead.
+    expect(DECLARED.filter((entry) => entry.address.startsWith('cloudflare_web_analytics_rule.'))).toEqual([]);
+    expect(infraSource).not.toMatch(/resource\s+"cloudflare_web_analytics_rule"/);
     // The import leaves enabled and lite null (the provider never reads them back), and the update sets them.
     const siteUpdates = DECLARED.filter((entry) => entry.address === SITE && entry.path)
       .filter((entry) => entry.after !== KNOWN_AFTER_APPLY)
@@ -1419,21 +1422,17 @@ describe('DECLARED', () => {
       return body.slice(0, body.indexOf('\n}'));
     };
     const site = block('resource "cloudflare_web_analytics_site" "hcw"', 'the site');
-    const notes = block('resource "cloudflare_web_analytics_rule" "notes_excluded"', 'the notes rule');
-    const api = block('resource "cloudflare_web_analytics_rule" "api_excluded"', 'the api-azure rule');
     const imports = [...infraSource.matchAll(/^import \{\n([\s\S]*?)\n\}/gm)]
       .map((match) => match[1])
       .filter((body) => body.includes('cloudflare_web_analytics_site.hcw'));
     expect(imports).toHaveLength(1);
     const [importBlock] = imports;
 
-    // One gate for all four: both inputs set. With either missing, nothing is imported or created.
+    // One gate for both: both inputs set. With either missing, nothing is imported or created.
     expect(infraSource).toMatch(
       /^\s*web_analytics_managed\s*=\s*var\.cloudflare_account_id != null && var\.cloudflare_web_analytics_site_tag != null$/m
     );
-    for (const body of [site, notes, api]) {
-      expect(body).toMatch(/^\s*count\s*=\s*local\.web_analytics_managed \? 1 : 0$/m);
-    }
+    expect(site).toMatch(/^\s*count\s*=\s*local\.web_analytics_managed \? 1 : 0$/m);
     // The provider's import id is `<account_id>/<site_id>`; for_each makes the import conditional.
     expect(importBlock).toMatch(/^\s*to\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]$/m);
     expect(importBlock).toMatch(/^\s*id\s*=\s*each\.value$/m);
@@ -1454,19 +1453,9 @@ describe('DECLARED', () => {
     // Once the import block is skipped, a changed tag must stop the plan, not be ignored
     // (infra/tests/guards.tftest.hcl runs the mismatch).
     expect(site).toMatch(/^\s*condition\s*=\s*self\.site_tag == var\.cloudflare_web_analytics_site_tag$/m);
-    // Each rule excludes one proxied name that serves HTML, on the site's own ruleset.
-    for (const [body, host] of [
-      [notes, 'notes'],
-      [api, 'api-azure'],
-    ]) {
-      expect(body).toMatch(/^\s*ruleset_id\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]\.ruleset\.id$/m);
-      expect(body).toContain(`host       = "${host}.\${var.domain}"`);
-      expect(body).toMatch(/^\s*inclusive\s*=\s*false$/m);
-      expect(body).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
-    }
 
-    // The owner's run, as the plan JSON will carry it: the import with its update, the two creates,
-    // and the Function App's two settings. Every value is a placeholder; none is printed.
+    // The owner's run, as the plan JSON will carry it: the import with its update and the Function
+    // App's two settings. Every value is a placeholder; none is printed.
     const importId = 'account-placeholder/site-placeholder';
     const accountId = 'account-placeholder-0123456789abcdef';
     const siteTag = 'site-tag-placeholder-0123456789ab';
@@ -1495,8 +1484,7 @@ describe('DECLARED', () => {
           before_sensitive: {},
           after_sensitive: {},
         },
-      },
-      ...RULES.map((address) => ({ address, change: { actions: ['create'] } }))
+      }
     );
     const result = checkPlan(plan);
     expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
@@ -1508,7 +1496,6 @@ describe('DECLARED', () => {
         ...['rules', 'ruleset', 'site_token', 'snippet'].map((path) => `${SITE} ${path}`),
         'azurerm_function_app_flex_consumption.hcw app_settings.CF_ACCOUNT_ID',
         'azurerm_function_app_flex_consumption.hcw app_settings.CF_WEB_ANALYTICS_SITE_TAG',
-        ...RULES.map((rule) => `${rule} create`),
       ].sort()
     );
     // The report names the stand-ins and never the values behind them.

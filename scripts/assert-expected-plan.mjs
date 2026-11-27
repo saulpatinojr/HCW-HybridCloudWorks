@@ -535,12 +535,16 @@ export const DECLARED = [
   //     ruleset) as (known after apply), declared with KNOWN_AFTER_APPLY.
   //     site_tag, id and created keep their state value
   //     (UseNonNullStateForUnknown), so they plan no change;
-  //   - the two rules' creates;
   //   - CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
   //     values, declared with OWNER_VALUE so neither is written here. The
   //     site tag is known at plan time, for the same plan modifier.
-  // Delete these eleven entries once the site is in state and both rules
-  // exist.
+  // The same run first also created two Web Analytics rules, to leave the
+  // notes site and the API's landing page out of measurement. Cloudflare
+  // refused both on 2026-11-27 (409, code 10012, maxRulesError: the zone's
+  // Free plan allows no rules), so they were never created and are no longer
+  // in the configuration; the audience read filters by host instead.
+  // Delete these nine entries once the site is in state with enabled and
+  // lite set, and both app settings hold the owner's values.
   {
     address: "cloudflare_web_analytics_site.hcw[0]",
     action: "import",
@@ -576,18 +580,6 @@ export const DECLARED = [
     after: OWNER_VALUE,
     reason: `#1923: ${name} set from the owner's workspace values`,
   })),
-  {
-    address: "cloudflare_web_analytics_rule.notes_excluded[0]",
-    action: "create",
-    reason:
-      "#1923: the rule that leaves notes.hybridcloudworks.com out of Web Analytics",
-  },
-  {
-    address: "cloudflare_web_analytics_rule.api_excluded[0]",
-    action: "create",
-    reason:
-      "#1923: the rule that leaves api-azure.hybridcloudworks.com's landing page out of Web Analytics",
-  },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied.

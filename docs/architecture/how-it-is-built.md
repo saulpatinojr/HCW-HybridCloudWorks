@@ -54,10 +54,14 @@ The same picture in words:
   [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)
   Terraform manages the Web Analytics site Cloudflare keeps for the zone
   (imported, with automatic setup on), which only reaches proxied names. The
-  site's own pages are DNS-only and keep the hand-placed beacon. Two rules
-  keep the proxied names that serve HTML out of the count: the `notes` pages
-  and the Functions host's landing page at `/` on `api-azure` (its API
-  answers JSON, but that page is HTML). Nothing is shown to
+  site's own pages are DNS-only and keep the hand-placed beacon. The
+  proxied names that serve HTML, the `notes` pages and the Functions host's
+  landing page at `/` on `api-azure` (its API answers JSON, but that page is
+  HTML), are measured too and show on the Web Analytics dashboard: a Web
+  Analytics rule could leave them out, but the zone's Free plan allows none
+  ([Cloudflare's limits](https://developers.cloudflare.com/web-analytics/limits/)).
+  The monthly read leaves them out instead, by asking only for page views on
+  the apex and `www`. Nothing is shown to
   visitors: once a day the `ambassadorAudienceMonthly` timer reads the
   previous month's total back from Cloudflare's GraphQL Analytics API with a
   read-only token, adds the show's downloads from Podbean, and records one

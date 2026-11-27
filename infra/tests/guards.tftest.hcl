@@ -262,11 +262,7 @@ run "web_analytics_site_is_not_managed_by_default" {
   command = plan
 
   assert {
-    condition = (
-      length(cloudflare_web_analytics_site.hcw) == 0 &&
-      length(cloudflare_web_analytics_rule.notes_excluded) == 0 &&
-      length(cloudflare_web_analytics_rule.api_excluded) == 0
-    )
+    condition     = length(cloudflare_web_analytics_site.hcw) == 0
     error_message = "Nothing of Web Analytics may be planned until cloudflare_account_id and cloudflare_web_analytics_site_tag are both set (#1923)."
   }
 }

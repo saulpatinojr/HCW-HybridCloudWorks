@@ -26,6 +26,7 @@ const {
   AUDIENCE_PROGRAMS,
   CF_GRAPHQL_URL,
   PAGE_VIEWS_QUERY,
+  SITE_HOSTS,
   SITE_TAG_SETTING,
   TOKEN_SETTING,
   audienceEvidenceId,
@@ -205,13 +206,28 @@ describe('the Cloudflare read', () => {
       siteTag: SITE,
       since: '2026-09-01T00:00:00Z',
       until: '2026-10-01T00:00:00Z',
+      hosts: ['hybridcloudworks.com', 'www.hybridcloudworks.com'],
     });
   });
 
-  it('asks for exactly the dataset, under the account, filtered by site and the half-open window', () => {
+  it('counts only the site’s own hosts, the apex and www, and never the zone’s other proxied names (#1923)', () => {
+    // The zone's Free plan allows no Web Analytics rules, so Cloudflare's automatic beacon measures the
+    // notes site and the API host's landing page too; this filter is what keeps them out of the figure.
+    expect(SITE_HOSTS).toEqual(['hybridcloudworks.com', 'www.hybridcloudworks.com']);
+    expect(Object.isFrozen(SITE_HOSTS)).toBe(true);
+    for (const other of ['notes.hybridcloudworks.com', 'api-azure.hybridcloudworks.com']) {
+      expect(SITE_HOSTS).not.toContain(other);
+    }
+    expect(PAGE_VIEWS_QUERY).toContain('$hosts: [String!]!');
+    expect(PAGE_VIEWS_QUERY).toContain('requestHost_in: $hosts');
+  });
+
+  it('asks for exactly the dataset, under the account, filtered by site, the half-open window and the site’s hosts', () => {
     expect(PAGE_VIEWS_QUERY).toContain('accounts(filter: { accountTag: $accountTag })');
     expect(PAGE_VIEWS_QUERY).toContain('rumPageloadEventsAdaptiveGroups(');
-    expect(PAGE_VIEWS_QUERY).toContain('filter: { siteTag: $siteTag, datetime_geq: $since, datetime_lt: $until }');
+    expect(PAGE_VIEWS_QUERY).toContain(
+      'filter: { siteTag: $siteTag, datetime_geq: $since, datetime_lt: $until, requestHost_in: $hosts }'
+    );
     expect(PAGE_VIEWS_QUERY).toContain('count');
     expect(PAGE_VIEWS_QUERY).toContain('$since: Time!');
     expect(PAGE_VIEWS_QUERY).not.toContain('datetime_leq');
@@ -274,6 +290,7 @@ describe('the rows', () => {
         createdAt: '2026-10-01T06:00:00.000Z',
       });
       expect(row.description).toContain('Page views: 5,100');
+      expect(row.description).toContain('(hybridcloudworks.com and www.hybridcloudworks.com only)');
       expect(row.description).toContain('Podcast downloads: 210');
       // The lite option is a request to Cloudflare, not a measured fact, so
       // the row says "floor" and never states EU exclusion as done.
