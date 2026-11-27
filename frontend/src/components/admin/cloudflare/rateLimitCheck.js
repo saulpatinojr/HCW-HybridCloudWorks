@@ -30,8 +30,16 @@ export const NO_RULE_ON = 'No API rate limit rule is on.';
 const rulesWord = (n) => `${n} API rate limit rule${n === 1 ? '' : 's'}`;
 const isVerb = (n) => (n === 1 ? 'is' : 'are');
 
-/** Cloudflare treats a rule with no `enabled` flag as on; only `false` is off. */
-const isOn = (rule) => Boolean(rule) && typeof rule === 'object' && rule.enabled !== false;
+/**
+ * A rule that limits: Cloudflare treats a rule with no `enabled` flag as on
+ * (only `false` is off), and a rule whose action is `log` (paid plans only)
+ * records requests without limiting any, so it does not count.
+ */
+const isOn = (rule) =>
+  Boolean(rule) &&
+  typeof rule === 'object' &&
+  rule.enabled !== false &&
+  String(rule.action ?? '').toLowerCase() !== 'log';
 
 function onSentence(on, total) {
   if (on === total) return `${rulesWord(on)} ${isVerb(on)} on.`;
@@ -42,7 +50,7 @@ function offSentence(total) {
   const why =
     total === 0
       ? `The rate limiting phase (${RATE_LIMIT_PHASE}) has no rules`
-      : `The rate limiting phase (${RATE_LIMIT_PHASE}) holds ${total === 1 ? 'one rule' : `${total} rules`}, switched off`;
+      : `The rate limiting phase (${RATE_LIMIT_PHASE}) holds ${total === 1 ? 'one rule' : `${total} rules`}, switched off or only logging`;
   return `${NO_RULE_ON} ${why}, so one address can send the API as many requests as it likes.`;
 }
 
@@ -59,6 +67,16 @@ export function rateLimitVerdict(answer) {
 /** The verdict on a phase read that failed: not set up yet, or a real failure. */
 export function rateLimitFailure(error) {
   const message = String(error?.message || error || 'Cloudflare did not answer.');
+  // A viewer may open the Health page, but reading the rules needs the editor
+  // role: a refusal of the caller is not a Cloudflare failure, so it is not red.
+  if (error?.status === 401 || error?.status === 403) {
+    return {
+      state: 'not-allowed',
+      status: 'unknown',
+      count: 0,
+      sentence: 'Not checked: reading the rate limiting rules needs the editor role.',
+    };
+  }
   if (error?.code === NOT_CONFIGURED) {
     return {
       state: 'not-configured',

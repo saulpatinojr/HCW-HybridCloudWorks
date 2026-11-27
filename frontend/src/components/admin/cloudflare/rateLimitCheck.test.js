@@ -53,7 +53,7 @@ describe('the rate limit verdict', () => {
   it('is amber when every rule is switched off, or the rule list is empty', () => {
     const off = rateLimitVerdict({ ruleset: { rules: [rule({ enabled: false })] } });
     expect(off).toMatchObject({ state: 'off', status: 'degraded' });
-    expect(off.sentence).toContain('holds one rule, switched off');
+    expect(off.sentence).toContain('holds one rule, switched off or only logging');
     expect(rateLimitVerdict({ ruleset: { rules: [] } }).sentence).toContain('has no rules');
     expect(rateLimitVerdict(undefined).state).toBe('off');
   });
@@ -81,9 +81,34 @@ describe('the rate limit verdict', () => {
       state: 'failed',
       status: 'offline',
     });
-    expect(rateLimitFailure(refusal('Cloudflare refused the token.', 403))).toMatchObject({
+    // The server answers a token Cloudflare refused with 502, so it is offline, not a role problem.
+    expect(rateLimitFailure(refusal('Cloudflare refused the token.', 502))).toMatchObject({
+      state: 'failed',
+      status: 'offline',
+    });
+    expect(rateLimitFailure(refusal('Something broke.', 500))).toMatchObject({
       state: 'failed',
       status: 'critical',
     });
+  });
+
+  it('is not checked, never red, when the caller lacks the editor role (a viewer pressing Test all)', () => {
+    for (const status of [401, 403]) {
+      expect(rateLimitFailure(refusal('Requires editor or higher', status))).toEqual({
+        state: 'not-allowed',
+        status: 'unknown',
+        count: 0,
+        sentence: 'Not checked: reading the rate limiting rules needs the editor role.',
+      });
+    }
+  });
+
+  it('does not count a rule that only logs, since it limits nothing', () => {
+    const logging = rateLimitVerdict({ ruleset: { rules: [rule({ action: 'log' })] } });
+    expect(logging).toMatchObject({ state: 'off', status: 'degraded' });
+    expect(logging.sentence).toContain('switched off or only logging');
+    expect(
+      rateLimitVerdict({ ruleset: { rules: [rule({ action: 'log' }), rule({ id: 'r2' })] } })
+    ).toMatchObject({ state: 'on', count: 1 });
   });
 });

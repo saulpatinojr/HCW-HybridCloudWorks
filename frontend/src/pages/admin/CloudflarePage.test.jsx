@@ -191,6 +191,9 @@ describe('the Cloudflare page', () => {
       'href',
       '/admin/integrations?tab=keys'
     );
+    // The rate limit line (#1909) is not shown, and its read not made, until Cloudflare is set up.
+    expect(screen.queryByTestId('rate-limit-check')).not.toBeInTheDocument();
+    expect(api.readCloudflarePhase).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: 'DNS' }));
     expect(await screen.findByText('Cloudflare is not set up here yet')).toBeInTheDocument();
   });

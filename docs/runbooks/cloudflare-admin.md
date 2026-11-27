@@ -313,7 +313,15 @@ the `http_ratelimit` phase (it changes nothing) and say the same thing:
 - **Unknown** (not checked): the Cloudflare page is not set up yet (the token
   or the zone id is missing, Part 2), so nothing was asked.
 - **Critical or Offline** (red): the read itself failed. The card shows
-  Cloudflare's or the site's sentence; see "When something is wrong" below.
+  Cloudflare's or the site's sentence; see
+  [When something is wrong](#when-something-is-wrong) below.
+
+The check runs when the Health page or the Cloudflare page is opened (and
+with **Test all**); it is not a background job, so it sends no Telegram
+alert by itself. Open the Health page now and then, or after any change in
+the Cloudflare dashboard. A rule whose action is only `log` (a paid-plan
+option) does not count as on, since it limits nothing. Someone with only the
+viewer role sees **Unknown** ("needs the editor role"), not red.
 
 ## What is refused, and why
 
