@@ -589,12 +589,14 @@ step 6 is one last run over SSH, from the workstation with the key.
 2. **Confirm the merge run in `hcw-azure`.** After the pull request for
    #1590 merges, HCP Terraform plans a run on
    [the workspace's runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
-   Success is three creates for this change, each declared in
-   `scripts/assert-expected-plan.mjs`:
+   Success is three creates for this change:
    `azurerm_user_assigned_identity.github_arc_run` and the two
    `azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc…`
-   credentials. Confirm it as usual. Anything else in the plan that is
-   not declared is a reason to stop and read it, not to confirm.
+   credentials. They were declared in `scripts/assert-expected-plan.mjs`
+   until they applied, and were removed from that list on 2026-11-27. On a
+   rebuild the plan check therefore reports them as UNEXPECTED: read the plan,
+   and if those three creates are all it holds, confirm it. Anything else is
+   a reason to stop and read it, not to confirm.
 3. **Create the role.** PowerShell, from the repository root, signed in
    with `az login` as an account that is Owner on the Application
    subscription. The first part brings your copy up to date, so the role
