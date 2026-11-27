@@ -30,6 +30,7 @@ import { createExportBlobStore } from '../lib/backup/cosmos-export-edges.js';
 import { createArchiveHandlers } from '../lib/backup/archive-handlers.js';
 import { ARCHIVE_JOB_TYPE, createArchiveWorker, parseArchivePayload } from '../lib/backup/archive-job.js';
 import { createNotifier } from '../lib/notify.js';
+import { contentArchiveCheck } from '../lib/backup/archive-check.js';
 import {
   ARCHIVE_CONTAINER,
   REPORT_JOB_TYPE,
@@ -79,13 +80,22 @@ registerJobType(REPORT_JOB_TYPE, {
   // worker reads one container's backup file and writes counts.
   role: 'super_admin',
   description:
-    'Archive dry run (ADR 0046): read one container’s file from a weekly full backup in the private cosmos-export blob container, a line at a time, put every record through the archive classification, and write a small part file of counts, the common top-level field names, and a count of records carrying a field whose name looks like a secret (names only, never a value) under state/archive-report/ in cosmos-export-state; the job that finds every part present writes the report. Writes nothing to content-archive and changes no record. Queued by POST cms/content-archive/dry-run.',
+    'Archive dry run (ADR 0046): read one container’s file from a weekly full backup in the private cosmos-export blob container, a line at a time, put every record through the archive classification, and write a small part file of counts, the common top-level field names, and a count of records carrying a field whose name looks like a secret (names only, never a value) under state/archive-report/ in cosmos-export-state; the job that finds every part present writes the report. Writes nothing to content-archive and changes no record. The job that writes the report then runs the archive’s daily check, which starts the archive when the report allows it. Queued by POST cms/content-archive/dry-run and by the daily check.',
   maxPayloadBytes: 1024,
   // Under the 30-minute non-HTTP host limit, with room for the terminal write.
   timeoutMs: 28 * 60 * 1000,
-  worker: async (payload, { context, signal }) => {
+  worker: async (payload, { context, signal, enqueue }) => {
     const job = parseReportPayload(payload);
-    return createReportWorker({ blobs: createExportBlobStore(), log: context }).readContainer({ ...job, signal });
+    const result = await createReportWorker({ blobs: createExportBlobStore(), log: context }).readContainer({ ...job, signal });
+    // The job that writes the finished report runs the archive's daily check
+    // at once, so a dry run that clears the way starts the archive today
+    // instead of at the next 03:00 UTC timer. Before this, any change to the
+    // list of what is kept between a dry run and the next morning sent the
+    // archive back a day (#1811). The check is the timer's own: it does
+    // nothing while the switch is off or the year is archived, and its
+    // create-only claim means two checks at once start one run.
+    if (result?.reportWritten) await contentArchiveCheck(context, enqueue);
+    return result;
   },
   onComplete: createJobFailureOnComplete({ store }),
 });

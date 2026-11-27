@@ -413,6 +413,32 @@ describe('runJob', () => {
     });
   });
 
+  it('hands the worker the caller’s enqueue for follow-up jobs, and a harmless one when there is none', async () => {
+    const seen = [];
+    registerJobType('queues-follow-up', {
+      role: 'editor',
+      worker: async (_payload, { enqueue }) => {
+        enqueue({ jobId: 'next-1', type: 'noop' });
+        seen.push(typeof enqueue);
+        return { ok: true };
+      },
+    });
+    const followUps = [];
+    const store = makeStore({
+      'job-1': { ...queued(), type: 'queues-follow-up' },
+      'job-2': { ...queued(), id: 'job-2', type: 'queues-follow-up' },
+    });
+    const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });
+    expect(await h.runJob({ jobId: 'job-1' }, context, { enqueue: (m) => followUps.push(m) })).toEqual({
+      jobId: 'job-1',
+      outcome: 'succeeded',
+    });
+    expect(followUps).toEqual([{ jobId: 'next-1', type: 'noop' }]);
+    // Without one (the old two-argument call) the worker still gets a function.
+    expect(await h.runJob({ jobId: 'job-2' }, context)).toEqual({ jobId: 'job-2', outcome: 'succeeded' });
+    expect(seen).toEqual(['function', 'function']);
+  });
+
   it('records a worker failure as failed, in its own words only when authored, and does not throw (#945)', async () => {
     registerJobType('explode', {
       role: 'editor',
