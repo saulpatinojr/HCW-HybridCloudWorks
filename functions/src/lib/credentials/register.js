@@ -539,7 +539,7 @@ const OTHER_ENTRIES = [
     id: "tfc-azure-cloudflare-api-token",
     name: "cloudflare_api_token",
     store: "tfc-azure",
-    consumer: "Cloudflare provider: DNS, the origin transform rule and the Web Analytics site",
+    consumer: "Cloudflare provider: DNS, the origin transform rule, and the Web Analytics site with its two exclusion rules (#1923)",
     issuer: "Cloudflare",
     renewal: "automation",
     lifetimeDays: null,
