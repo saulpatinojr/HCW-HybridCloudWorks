@@ -300,15 +300,26 @@ function listedUnderReason(zone, base) {
 }
 
 /**
+ * The reason of a protected prefix a wildcard over `base` would answer for, or
+ * null. `*.foo` answers `_acme-challenge.foo` whenever no exact record exists,
+ * so a zone that protects a prefix refuses every wildcard (#1913 review).
+ */
+function prefixChildReason(zone, base) {
+  const entry = zone.dnsPrefixes.find((item) => prefixReason(zone, `${item.prefix}.${base}`));
+  return entry ? entry.reason : null;
+}
+
+/**
  * Why a wildcard `*.x` may not be changed, or null: the zone's own wildcard,
  * any wildcard in a zone that refuses them all, or a wildcard that would
- * answer for a protected name (x itself, or a listed name under x).
+ * answer for a protected name (x itself, a listed name under x, or a
+ * protected prefix's name under x).
  */
 function wildcardReason(zone, full) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
   if (base === zone.name) return APEX_WILDCARD_REASON;
-  return zone.wildcardReason || listedReason(zone, base) || prefixReason(zone, base) || listedUnderReason(zone, base);
+  return zone.wildcardReason || listedReason(zone, base) || prefixReason(zone, base) || listedUnderReason(zone, base) || prefixChildReason(zone, base);
 }
 
 /** Why a full DNS name may not be added or edited in a zone entry (MANAGED_ZONES' shape), or null. */

@@ -115,6 +115,11 @@ export default function CloudflarePage() {
   const { status, otherZone } = zoneStatus(statusRead, zone);
   // The Overview's read: this zone's answer only, a spinner until it is in hand.
   const overviewRead = { ...statusRead, data: status, loaded: status !== null };
+  // Until the server has said which zone it answered for, a zone other than the
+  // site's shows only the Overview (it reads nothing but that answer). A server
+  // that predates ?zone= would answer for the site's zone, and a tab mounted in
+  // that moment could read or change the wrong zone (#1913 review).
+  const unconfirmed = zone !== DEFAULT_ZONE && status === null && !otherZone;
 
   const go = (changes) => setSearchParams(cloudflareParams(searchParams, changes));
   const setTab = (id) => {
@@ -142,7 +147,11 @@ export default function CloudflarePage() {
             {otherZone ? (
               <OtherZoneNote zone={zone} onBack={() => go({ zone: DEFAULT_ZONE })} />
             ) : (
-              <ActiveTab tab={activeTab} status={status} statusRead={overviewRead} />
+              <ActiveTab
+                tab={unconfirmed ? 'overview' : activeTab}
+                status={status}
+                statusRead={overviewRead}
+              />
             )}
           </div>
         </CloudflareZone.Provider>

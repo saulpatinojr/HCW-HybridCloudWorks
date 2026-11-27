@@ -233,6 +233,14 @@ function listedUnderLock(base, status, zone) {
  * zone that refuses them all (the status answer's `wildcardReason`, the lab
  * zone's), or one that would answer for a locked name (x, or one under x).
  */
+/** A protected prefix's name a wildcard over `base` would answer for (`*.foo` answers `_acme-challenge.foo`). */
+function prefixChildLock(base, status) {
+  const found = protectedPrefixList(status).find((item) =>
+    prefixLock(`${item.prefix}.${base}`, status)
+  );
+  return found ? found.reason || DEFAULT_LOCK : null;
+}
+
 function wildcardLock(full, status, zone) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
@@ -241,7 +249,8 @@ function wildcardLock(full, status, zone) {
     status?.protected?.wildcardReason ||
     listedLock(base, status, zone) ||
     prefixLock(base, status) ||
-    listedUnderLock(base, status, zone)
+    listedUnderLock(base, status, zone) ||
+    prefixChildLock(base, status)
   );
 }
 

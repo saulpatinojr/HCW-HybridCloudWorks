@@ -222,8 +222,9 @@ describe('wildcards', () => {
     for (const name of ['*.api-azure', '*.www', '*.docs', '*._acme-challenge', '*.lab', '*.x.lab', `*.asuid.api-azure.${ZONE_APEX}`]) {
       expect(dnsNameProtection(name), name).not.toBeNull();
     }
+    // Every other wildcard too: *.blog would answer _acme-challenge.blog (#1913 review).
     for (const name of ['*.blog', '*.shop.blog', `*.api-azure2.${ZONE_APEX}`]) {
-      expect(dnsNameProtection(name), name).toBeNull();
+      expect(dnsNameProtection(name), name).not.toBeNull();
     }
   });
 });
@@ -303,6 +304,16 @@ describe('the managed zones (#1911)', () => {
     expect(protectionIn(zone, '*.example.test')).toBe(APEX_WILDCARD_REASON);
     const starred = { ...zone, dnsNames: [{ name: '*.a.b.example.test', reason: 'S' }] };
     expect(protectionIn(starred, '*.b.example.test')).toBe('S');
+  });
+
+  it('refuses a wildcard that would answer for a protected prefix below it (#1913 review)', () => {
+    // *.foo answers _acme-challenge.foo when no exact record exists.
+    const zone = { name: 'example.test', dnsNames: [], dnsPrefixes: [{ prefix: '_acme-challenge', reason: 'P' }], phases: [], wildcardReason: null };
+    expect(protectionIn(zone, '*.foo.example.test')).toBe('P');
+    expect(protectionIn(zone, '*.a.b.example.test')).toBe('P');
+    expect(protectionIn(zone, 'foo.example.test')).toBeNull();
+    // The real site zone: every wildcard there would answer a certificate-check name.
+    for (const name of ['*.foo', '*.blog', '*.x.y']) expect(dnsNameProtection(name), name).toMatch(/_acme-challenge|certificate/i);
   });
 
   it('names the other managed zone a name belongs to (F6)', () => {

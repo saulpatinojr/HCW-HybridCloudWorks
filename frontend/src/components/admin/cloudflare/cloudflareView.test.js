@@ -98,7 +98,8 @@ describe('locks', () => {
     expect(dnsNameLock('*', { status: STATUS })).toBe(APEX_WILDCARD_REASON);
     expect(dnsNameLock('*.api-azure', { status: STATUS })).toMatch(/frontend\.tf/);
     expect(dnsNameLock('lab', { status: STATUS })).toBeNull();
-    expect(dnsNameLock('*.lab', { status: STATUS })).toBeNull();
+    // A wildcard answers _acme-challenge.<base>, a protected prefix, so it is locked (#1913 review).
+    expect(dnsNameLock('*.lab', { status: STATUS })).toMatch(/certificate/);
     expect(dnsNameLock('', { status: STATUS })).toBeNull();
     // A `*.x` entry covers every name under x.
     const wild = {

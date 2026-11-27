@@ -906,4 +906,17 @@ describe('the zone picker (#1911)', () => {
     expect(screen.getByLabelText('Zone')).toHaveValue(SITE);
     expect(await screen.findByTestId('dns-row-rec2')).toBeInTheDocument();
   });
+
+  it('mounts no tab for the lab zone until the server has said which zone it answered for (#1913 review)', async () => {
+    const held = deferred();
+    api.readCloudflareStatus.mockReturnValue(held.promise);
+    renderWithAddress(`/admin/cloudflare?tab=dns&zone=${LAB}`);
+    // While the status is in flight, nothing reads DNS and no write control exists.
+    expect(screen.queryByRole('button', { name: /Add a record/ })).toBeNull();
+    expect(api.readCloudflareDns).not.toHaveBeenCalled();
+    // An older server answers for the site's zone: the note replaces the tabs, still no DNS read.
+    held.resolve(STATUS);
+    expect(await screen.findByText(`The server does not manage ${LAB} yet`)).toBeInTheDocument();
+    expect(api.readCloudflareDns).not.toHaveBeenCalled();
+  });
 });

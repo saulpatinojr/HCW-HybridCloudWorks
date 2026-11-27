@@ -279,7 +279,7 @@ resource manages a record in it.
   | Any other name with a part starting `_` (`_dmarc`, `s1._domainkey`, `_atproto`, a provider's verification record) | No: the site's zone may need them | Yes: nothing but Caddy's certificate checks lives there, and outside services prove the domain is ours or set its mail policy with such names, so they are changed in the Cloudflare dashboard (the reason names Caddy and the lab host README) |
   | The records Terraform manages | Yes (`infra/`, `infra-lab/`) | None exist there |
   | `lab` and every name under it | Yes: `lab` and `*.lab` are listed (the lab host's records, `infra-lab/dns.tf`) | Yes: the subtree of the DNS-01 target `_acme-challenge.lab.hybridcloudinsights.com`, derived from `lab_acme_challenge_target` in `infra-lab/variables.tf` (`LAB_SUBTREE`) |
-  | Wildcards | `*`, and `*.x` when x is protected or a protected name lies under x | Every wildcard |
+  | Wildcards | Every wildcard (a `*.x` answers `_acme-challenge.x`, a protected name) | Every wildcard |
 
   The lab zone refuses every wildcard because Cloudflare answers a query
   with a wildcard when no exact record exists: between Caddy's renewals a
@@ -288,7 +288,9 @@ resource manages a record in it.
   `_acme-challenge.lab` and `_acme-challenge.coder.lab` CNAMEs point at, and
   so could pass the DNS-01 check for the lab's own hostnames. The same
   reasoning tightens the site zone: a wildcard is refused whenever a
-  protected name lies under it, not only when its base is protected. No
+  protected name lies under it, not only when its base is protected, and
+  since `*.x` answers `_acme-challenge.x`, a protected name in every part of
+  the zone, every wildcard in the site zone is refused too (#1913 review). No
   phase is Terraform's in the lab zone, so `http_request_late_transform` is
   read-only for the plain reason rather than the origin rule's. The
   allow-list of phases, the owner-only settings and every agent-key guard

@@ -534,7 +534,7 @@ describe('DNS records', () => {
     expect(notifier.notifyTelegram.mock.calls[0][0].message).toBe(`Claude Network Guy added the A record blog.${ZONE_APEX} in Cloudflare. Zone: ${ZONE_APEX}.`);
   });
 
-  it.each([['@', ZONE_APEX], ['*.blog', `*.blog.${ZONE_APEX}`], [`shop.${ZONE_APEX}`, `shop.${ZONE_APEX}`], ['_dmarc.shop', `_dmarc.shop.${ZONE_APEX}`]])(
+  it.each([['@', ZONE_APEX], ['shop.blog', `shop.blog.${ZONE_APEX}`], [`shop.${ZONE_APEX}`, `shop.${ZONE_APEX}`], ['_dmarc.shop', `_dmarc.shop.${ZONE_APEX}`]])(
     'reads %j as %j',
     async (name, full) => {
       if (name === '@') return; // the apex is protected; checked above
