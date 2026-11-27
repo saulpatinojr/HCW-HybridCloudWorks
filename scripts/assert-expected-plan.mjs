@@ -538,11 +538,12 @@ export const DECLARED = [
   //   - CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
   //     values, declared with OWNER_VALUE so neither is written here. The
   //     site tag is known at plan time, for the same plan modifier.
-  // The same run first also created two Web Analytics rules, to leave the
-  // notes site and the API's landing page out of measurement. Cloudflare
-  // refused both on 2026-11-27 (409, code 10012, maxRulesError: the zone's
-  // Free plan allows no rules), so they were never created and are no longer
-  // in the configuration; the audience read filters by host instead.
+  // The same run also attempted to create two Web Analytics rules, to leave
+  // the notes site and the API's landing page out of measurement. Cloudflare
+  // refused both attempts on 2026-11-27 (409, code 10012, maxRulesError: the
+  // zone's Free plan allows no rules), so neither exists in Cloudflare or in
+  // state, no removed block is needed, and both are gone from the
+  // configuration; the audience read filters by host instead.
   // Delete these nine entries once the site is in state with enabled and
   // lite set, and both app settings hold the owner's values.
   {
