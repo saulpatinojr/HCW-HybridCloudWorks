@@ -17,7 +17,7 @@
  *   Overview  whether the page is set up, the zone, what the admin token can
  *             read, what is locked and why, and where to go next
  *   Settings  every zone setting, saved one at a time
- *   DNS       every DNS record; add one or change one, never delete
+ *   DNS       the DNS records, 100 at a time; add one or change one, never delete
  *   Rules     the zone's rulesets by phase; replace the rules of one of the
  *             six phases on the allow-list
  *   Cache     empty the whole cache, or up to 30 addresses

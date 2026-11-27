@@ -3,6 +3,9 @@
  * contract names, an id in a path is checked before the request, and a purge
  * sends only one of its two shapes.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getJSON = vi.fn();
@@ -119,6 +122,33 @@ describe('the zone (#1911)', () => {
       `cms/cloudflare/dns?zone=${LAB}`,
       `cms/cloudflare/purge?zone=${LAB}`,
     ]);
+  });
+
+  it('asks for a DNS page past the first with ?page=, beside the zone (#1907)', async () => {
+    await api.readCloudflareDns(undefined, 1);
+    await api.readCloudflareDns(undefined, 2);
+    await api.readCloudflareDns(LAB, 3);
+    await api.readCloudflareDns(LAB, api.MAX_DNS_PAGE);
+    expect(getJSON.mock.calls.map(([route]) => route)).toEqual([
+      'cms/cloudflare/dns',
+      'cms/cloudflare/dns?page=2',
+      `cms/cloudflare/dns?zone=${LAB}&page=3`,
+      `cms/cloudflare/dns?zone=${LAB}&page=1000`,
+    ]);
+  });
+
+  it('refuses a DNS page the server would refuse, before any request', () => {
+    // The server's module reaches Node-only code, so its constant is read from its text.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(
+      resolve(here, '../../../functions/src/lib/cloudflare/dns-routes.js'),
+      'utf8'
+    );
+    expect(source).toContain(`export const MAX_DNS_PAGE = ${api.MAX_DNS_PAGE};`);
+    for (const page of [0, -1, 1.5, '2', api.MAX_DNS_PAGE + 1, Number.NaN]) {
+      expect(() => api.readCloudflareDns(LAB, page), String(page)).toThrow(/not a valid page/);
+    }
+    expect(getJSON).not.toHaveBeenCalled();
   });
 
   it('refuses a zone that is not a plain name before any request', () => {

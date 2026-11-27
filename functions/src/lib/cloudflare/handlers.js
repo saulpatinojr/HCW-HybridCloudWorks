@@ -17,7 +17,7 @@
  *   GET   cms/cloudflare/settings                every zone setting
  *   PATCH cms/cloudflare/settings/{settingId}    { value }
  *   POST  cms/cloudflare/purge                   { everything: true } or { files: [url, ...] }
- *   GET   cms/cloudflare/dns                     every DNS record (up to the page cap; `truncated` past it)
+ *   GET   cms/cloudflare/dns                     one page of DNS records (?page=, 100 a page) and the totals
  *   POST  cms/cloudflare/dns                     add a record
  *   PATCH cms/cloudflare/dns/{recordId}          edit a record
  *   GET   cms/cloudflare/rulesets                the zone's rulesets (no rules)

@@ -466,7 +466,12 @@ says the zone has no records yet; that is normal.
 A call without it acts on `hybridcloudworks.com`, as before. Any other value
 is refused with 400 `CLOUDFLARE_UNMANAGED_ZONE` before Cloudflare is called,
 and so is an empty or repeated `zone`. Network Guy's four switches are the
-same for both zones: there is no separate lab switch.
+same for both zones: there is no separate lab switch. The DNS list comes a
+page at a time, 100 records a page: add `&page=2` (and so on) for the next
+one, and stop when the answer says `hasMore: false`. A record added or
+removed between two pages can shift the rest, so one may be missed or
+listed twice, as the old all-at-once list could miss one too; read again
+from page 1 (on the page, reload the DNS tab) to be sure.
 
 **What is different in the lab zone.** The lab zone is where the lab's
 certificates are proved (the DNS-01 check Caddy answers), so more of it is
@@ -561,7 +566,7 @@ change sends (and Cloudflare's own audit log).
 | "The zone looked up for hybridcloudinsights.com answered with another name" | Cloudflare answered for another zone under the id the site had kept | Try again: the id is looked up afresh; nothing was changed |
 | 400 "zone must be hybridcloudworks.com or hybridcloudinsights.com" | A call named another zone, or named it empty or twice | Name one of the two (Part 5) |
 | On the page: "The server does not manage hybridcloudinsights.com yet" | The site's API is a version from before the lab zone; it answered for the site's zone | Wait a few minutes for the newer API to be deployed, then pick the lab zone again |
-| The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
+| The DNS tab shows only some records, with **Load more** under the list | The tab reads 100 records at a time | Press **Load more** for the next 100; the line under the title says how many the zone holds |
 | 403 "This key may not call that route" for Network Guy | The switch for that kind of change is off | Turn it on (Part 3, step 4) |
 | The Telegram message "Cloudflare API rate limit could not be checked" | The daily check (Part 4) could not read the phase: Cloudflare refused the admin token, or did not answer. The message and the Health card carry the sentence | Check the token on Integrations → Keys (Part 2) and press **Test** on the card on the [Health page](https://hybridcloudworks.com/admin/health?tab=checks). A message "is on again" follows on the first day the rule reads as on |
 | 429 "Too many requests" | Either the agent key's limit of 120 calls a minute, or Cloudflare's own rate limit on the API (Part 4): more than 200 requests in 10 seconds from one address to `/api/`, lifted after 10 seconds. The Cloudflare page calls the API too, so the limit can catch your own page | Wait a minute (the Cloudflare limit lifts after 10 seconds). If your own page keeps being limited, change the rule in the Cloudflare dashboard, because the page that would change it is the one being limited |
