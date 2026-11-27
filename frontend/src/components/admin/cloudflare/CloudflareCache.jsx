@@ -5,7 +5,8 @@
  *
  * Two ways: everything (asks first, because every visitor's next request
  * then goes to the site, which is slower for a while), or up to 30
- * addresses, one per line, each https and on the zone's own names. Both need
+ * addresses, one per line, each https and on the picked zone's own names
+ * (#1911: the site's zone or the lab zone). Both need
  * the super admin role (RoleGate), and each button is disabled while its
  * request is out. Purging deletes nothing on the site itself.
  */
@@ -17,7 +18,12 @@ import { Textarea } from '@/components/ui/textarea';
 import RoleGate from '@/components/admin/RoleGate';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import { MAX_PURGE_FILES, purgeCloudflareCache } from '@/lib/cloudflare';
-import { NotConfigured, WRITE_REASON, useCloudflareWrite } from './CloudflareParts';
+import {
+  NotConfigured,
+  WRITE_REASON,
+  useCloudflareWrite,
+  useCloudflareZone,
+} from './CloudflareParts';
 import useCanWrite from './useCanWrite';
 import { parsePurgeList } from './cloudflareView';
 
@@ -26,7 +32,7 @@ export default function CloudflareCache({ status = null }) {
   const canWrite = useCanWrite();
   const [confirming, setConfirming] = useState(false);
   const [text, setText] = useState('');
-  const zoneName = status?.zone?.name || '';
+  const zoneName = useCloudflareZone();
   const { files, problems } = parsePurgeList(text, { zoneName, max: MAX_PURGE_FILES });
   const typed = text.trim().length > 0;
 
@@ -95,7 +101,7 @@ export default function CloudflareCache({ status = null }) {
               onClick={async () => {
                 const done = await run(
                   'files',
-                  () => purgeCloudflareCache({ files }),
+                  () => purgeCloudflareCache({ files }, zoneName),
                   `${files.length} address${files.length === 1 ? '' : 'es'} purged.`
                 );
                 if (done) setText('');
@@ -119,7 +125,7 @@ export default function CloudflareCache({ status = null }) {
         onConfirm={async () => {
           await run(
             'everything',
-            () => purgeCloudflareCache({ everything: true }),
+            () => purgeCloudflareCache({ everything: true }, zoneName),
             'The whole cache is purged.'
           );
           setConfirming(false);

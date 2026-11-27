@@ -45,6 +45,8 @@ import {
   WRITE_REASON,
   useCloudflareRead,
   useCloudflareWrite,
+  useCloudflareZone,
+  useZoneRead,
 } from './CloudflareParts';
 import {
   editablePhaseList,
@@ -147,7 +149,8 @@ function RulesView({ ruleset, lock, onEdit }) {
 
 /** One phase, opened: its rules, and the editor when the phase may be changed. */
 function PhasePanel({ phase, lock, onClose, onReplaced }) {
-  const load = useCallback(() => readCloudflarePhase(phase), [phase]);
+  const zone = useCloudflareZone();
+  const load = useCallback(() => readCloudflarePhase(phase, zone), [phase, zone]);
   const read = useCloudflareRead(load, null);
   const { busyIds, run } = useCloudflareWrite(read.refresh);
   const [draft, setDraft] = useState(null); // null: viewing; text: editing
@@ -162,11 +165,15 @@ function PhasePanel({ phase, lock, onClose, onReplaced }) {
     const done = await run(
       phase,
       () =>
-        replaceCloudflarePhase(phase, {
-          rules,
-          expectedVersion: read.data?.version ?? ruleset?.version ?? null,
-          ...(ruleset?.description ? { description: ruleset.description } : {}),
-        }),
+        replaceCloudflarePhase(
+          phase,
+          {
+            rules,
+            expectedVersion: read.data?.version ?? ruleset?.version ?? null,
+            ...(ruleset?.description ? { description: ruleset.description } : {}),
+          },
+          zone
+        ),
       `The rules of ${phase} are replaced.`
     );
     setConfirming(false);
@@ -348,7 +355,7 @@ function RulesetsCard({ entrypoints, status, onOpen }) {
 }
 
 export default function CloudflareRules({ status = null }) {
-  const read = useCloudflareRead(readCloudflareRulesets, EMPTY);
+  const read = useZoneRead(readCloudflareRulesets, EMPTY);
   const [open, setOpen] = useState(null);
   const all = read.data?.rulesets ?? [];
   const entrypoints = entrypointRulesets(all);

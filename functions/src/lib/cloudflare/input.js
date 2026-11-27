@@ -1,7 +1,8 @@
 /**
  * cloudflare/input.js — reading and refusing a request to the Cloudflare
  * page's routes (#1905): the body (read with a byte limit), the path
- * values, and the two kinds of authored refusal the routes throw.
+ * values, the zone the request names (#1911), and the two kinds of
+ * authored refusal the routes throw.
  *
  * A Refusal is a sentence written here or in a route, with the status and
  * code to answer with (and, for a protected thing, the reason the page
@@ -9,6 +10,7 @@
  * handlers.js turns either into the answer; nothing here logs.
  */
 import { AuthoredError } from '../http/error-response.js';
+import { MANAGED_ZONES, SITE_ZONE, managedZone } from './protected.js';
 
 /** The largest request body read, in bytes (a phase's rules are the big one). */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -107,3 +109,21 @@ export function refuseUnknownFields(body, allowed) {
 }
 
 export const paramOf = (request, name) => String(request?.params?.[name] ?? '');
+
+const ZONE_NAMES = MANAGED_ZONES.map((zone) => zone.name).join(' or ');
+const unmanagedZone = () =>
+  new Refusal(`zone must be ${ZONE_NAMES}: the site acts on no other zone.`, { status: 400, code: 'CLOUDFLARE_UNMANAGED_ZONE' });
+
+/**
+ * The managed zone a request names in its `zone` query parameter (a zone
+ * name, any letter case), or the site's zone when it names none. An empty,
+ * repeated or unknown value is refused (400) before Cloudflare is called,
+ * so a request can never fall back to another zone by mistake.
+ */
+export function zoneOf(request) {
+  const values = request?.query?.getAll?.('zone') ?? [];
+  if (values.length === 0) return managedZone(SITE_ZONE);
+  const zone = values.length === 1 ? managedZone(values[0]) : null;
+  if (!zone) throw unmanagedZone();
+  return zone;
+}

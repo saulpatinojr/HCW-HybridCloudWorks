@@ -91,7 +91,7 @@ const CLOUDFLARE_ZONE_SETTING = CLOUDFLARE_PROBE.zoneSetting;
 const CLOUDFLARE_UNSET = Object.freeze({
   [CLOUDFLARE_TOKEN_SETTING]: [
     'No token yet',
-    'the Cloudflare admin token has not been pasted on the Keys tab (CLOUDFLARE-ADMIN-TOKEN). Make it in the Cloudflare dashboard for this one zone, paste it there and press Test again',
+    'the Cloudflare admin token has not been pasted on the Keys tab (CLOUDFLARE-ADMIN-TOKEN). Make it in the Cloudflare dashboard for the site zone and the lab zone, paste it there and press Test again',
   ],
   [CLOUDFLARE_ZONE_SETTING]: [
     'No zone id yet',
@@ -526,9 +526,10 @@ export const PROBES = Object.freeze({
   /**
    * `GET /zones/{CF_ZONE_ID}` — the site's zone, read with the Cloudflare
    * admin token the Cloudflare page uses (#1905). Read-only and free. A
-   * pass says the token is live and can read this one zone; it does not
-   * say which kinds of change the token may make (the Cloudflare page's
-   * Overview tab reads each one). The zone id is a plain setting from
+   * pass says the token is live and can read the site's zone; it does not
+   * say which kinds of change the token may make, or whether it reaches the
+   * lab zone too (#1911): the Cloudflare page's Overview tab reads each
+   * kind, for whichever zone is picked. The zone id is a plain setting from
    * Terraform, not a secret, and goes in the path; the token goes in the
    * header. A success relays the zone's name, status and plan only.
    *

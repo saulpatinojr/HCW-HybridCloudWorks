@@ -6,6 +6,8 @@
  * route is the nav registry's (adminNav.js), never typed here.
  */
 import { navItemById } from '@/config/adminNav';
+import { LINK_PARAMS } from '@/lib/itemLinks';
+import { DEFAULT_ZONE, resolveZone } from './cloudflareLocks';
 
 /** The Cloudflare page's route, from the nav registry. */
 export const CLOUDFLARE_PATH = navItemById('cloudflare').to;
@@ -38,6 +40,21 @@ export function resolveTab(requested) {
   return TAB_IDS.has(id) ? id : DEFAULT_TAB;
 }
 
-export function tabHref(tab) {
-  return `${CLOUDFLARE_PATH}?tab=${encodeURIComponent(tab)}`;
+/**
+ * The page's address parameters after a change of tab or zone (#1911): the
+ * tab, and the zone (LINK_PARAMS.zone) unless it is the site's own, so an
+ * address written before the picker still opens the site's zone.
+ */
+export function cloudflareParams(current, { tab, zone } = {}) {
+  const next = new URLSearchParams(current);
+  if (tab !== undefined) next.set('tab', tab);
+  const picked = resolveZone(zone ?? next.get(LINK_PARAMS.zone));
+  if (picked === DEFAULT_ZONE) next.delete(LINK_PARAMS.zone);
+  else next.set(LINK_PARAMS.zone, picked);
+  return next;
+}
+
+/** A link to one tab, in the site's zone unless another managed zone is named. */
+export function tabHref(tab, zone = DEFAULT_ZONE) {
+  return `${CLOUDFLARE_PATH}?${cloudflareParams('', { tab, zone })}`;
 }

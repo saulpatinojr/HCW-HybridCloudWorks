@@ -1,7 +1,7 @@
 /**
  * The Cloudflare page's Overview (#1905): whether the page is set up, the
- * zone it looks after, what the admin token can read, what is locked and
- * why, and where to go for the rest. It only reads; every change is on the
+ * picked zone (#1911) and what it is for, what the admin token can read in
+ * it, what is locked there and why, and where to go for the rest. It only reads; every change is on the
  * other tabs.
  */
 import React from 'react';
@@ -28,7 +28,11 @@ import {
   protectedPrefixList,
   READ_ONLY_PHASE_REASON,
 } from './cloudflareView';
-import { OWNER_ONLY_SETTINGS } from './cloudflareLocks';
+import { DEFAULT_ZONE, OWNER_ONLY_SETTINGS } from './cloudflareLocks';
+
+/** Whether the server named a zone other than the site's (an older server names none: the site's). */
+const isOtherZone = (status) =>
+  Boolean(status?.managed?.name) && status.managed.name.toLowerCase() !== DEFAULT_ZONE;
 import { RATE_LIMIT_RUNBOOK_URL, checkRateLimit } from './rateLimitCheck';
 import { tabHref } from './tabs';
 
@@ -53,7 +57,9 @@ function ZoneCard({ status }) {
         </CardTitle>
         <CardDescription>
           A zone is Cloudflare’s word for one domain and everything under it: its DNS records, its
-          settings and its rules. This page looks after the site’s own zone and no other.
+          settings and its rules. This page looks after two zones, the site’s own and the lab’s
+          certificate zone, and no other; the picker above chooses which one every tab shows.
+          {status.managed?.role ? ` ${status.managed.role}` : ''}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -95,8 +101,8 @@ function NoZone({ zoneError }) {
   }
   return (
     <p className="text-sm text-muted-foreground">
-      The token is set, but Cloudflare did not return the zone. Check that the token is limited to
-      the site’s zone and has the Zone Read permission (
+      The token is set, but Cloudflare did not return the zone. Check that this zone is among the
+      token’s zones and that it has the Zone Read permission (
       <ExternalLink href={CLOUDFLARE_DOCS.permissions}>Cloudflare’s permission list</ExternalLink>
       ).
     </p>
@@ -138,7 +144,8 @@ function FamiliesCard({ status }) {
             ))}
           </ul>
         )}
-        <RateLimitLine />
+        {/* The API rate limit rule is the site's (#1909): hidden only when the server says it answered for another zone (#1911). */}
+        {isOtherZone(status) ? null : <RateLimitLine />}
       </CardContent>
     </Card>
   );
@@ -200,6 +207,11 @@ function LockedNames({ status }) {
         locked name (such as <code>*.www</code>) is locked too, and so is <code>*</code> for the
         whole zone: {APEX_WILDCARD_REASON}
       </p>
+      {status?.protected?.wildcardReason ? (
+        <p className="text-xs text-muted-foreground" data-testid="all-wildcards">
+          In this zone every wildcard is locked: {status.protected.wildcardReason}
+        </p>
+      ) : null}
       <ul className="mt-1 space-y-1 text-sm">
         {protectedPrefixList(status).map((item) => (
           <Reasoned key={item.prefix} code={`${item.prefix}…`} reason={item.reason} />
@@ -226,10 +238,11 @@ function LockedCard({ status }) {
           What is locked, and why
         </CardTitle>
         <CardDescription>
-          The records and the rule phase below keep the site running and are managed by Terraform
-          (the code that builds the site’s cloud resources). Nobody can change them from here, not
-          an admin and not an agent; the server refuses. No DNS record or ruleset can be deleted
-          from this page, but replacing a phase’s rules removes the ones you leave out.
+          The records and rule phases below are looked after elsewhere: in the site’s zone by
+          Terraform (the code that builds the site’s cloud resources), and in the lab zone by the
+          lab host’s web server, which writes its certificate checks there. Nobody can change them
+          from here, not an admin and not an agent; the server refuses. No DNS record or ruleset can
+          be deleted from this page, but replacing a phase’s rules removes the ones you leave out.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -241,6 +254,11 @@ function LockedCard({ status }) {
               <Reasoned key={item.phase} code={item.phase} reason={item.reason} />
             ))}
           </ul>
+          {protectedPhaseList(status).length === 0 && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              None in this zone: Terraform writes no rules here.
+            </p>
+          )}
         </div>
         <div>
           <p className="text-sm font-medium">Rule phases that can be changed here</p>
@@ -299,7 +317,7 @@ function WhereCard() {
             <ExternalLink href={CLOUDFLARE_RUNBOOK_URL}>the Cloudflare admin runbook</ExternalLink>.
           </li>
           <li>
-            Making the admin token (an account-owned token, limited to this zone):{' '}
+            Making the admin token (an account-owned token, limited to the two zones):{' '}
             <ExternalLink href={CLOUDFLARE_DOCS.accountTokens}>account-owned tokens</ExternalLink>,{' '}
             <ExternalLink href={CLOUDFLARE_DOCS.createToken}>creating a token</ExternalLink> and{' '}
             <ExternalLink href={CLOUDFLARE_DOCS.permissions}>the permission list</ExternalLink>.

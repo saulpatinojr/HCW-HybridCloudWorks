@@ -9,8 +9,8 @@
 
 **Scope:** how to set Claude Code up with Cloudflare's tools, how to make the
 token the site uses to read and change Cloudflare, how to give Claude Network
-Guy its key and its switches, what is refused and why, and what each error
-means.
+Guy its key and its switches, how to work on the lab zone, what is refused
+and why, and what each error means.
 
 **Authority:** reading the Cloudflare page needs the portal's **editor** role.
 Every change (a setting, a purge, a DNS record, a rule) needs **super_admin**.
@@ -23,6 +23,18 @@ Cloudflare sits in front of the whole site. It holds the domain's DNS records
 (the names, such as `api-azure` or `docs`, that tell a browser which server to
 go to), the zone's settings (HTTPS, security level, caching and so on), and
 rules that run on each request.
+
+The page and Claude Network Guy look after **two zones** (a zone is
+Cloudflare's word for one domain and everything under it), and no other:
+
+| Zone | What it is for |
+| --- | --- |
+| `hybridcloudworks.com` | The site's own zone: the website, its API, the documentation, the podcast, the link page, the notes and the lab host's addresses |
+| `hybridcloudinsights.com` | The lab zone: the lab host's web server (Caddy) writes the short-lived certificate checks for the lab's certificates here, and nothing else lives in it ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope"; [#948](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/948)) |
+
+The lab zone was added on 2026-11-26
+([#1911](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1911)),
+because the lab is part of the site. Part 5 says how to work on it.
 
 There are two ways to change Cloudflare by asking Claude, and they are set up
 separately:
@@ -84,8 +96,10 @@ The site reads and changes Cloudflare with its own API token: an
 **account-owned token** (Cloudflare's kind meant for a service rather than a
 person,
 [Cloudflare's page](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)),
-limited to the one zone. It is separate from Terraform's token, the lab's
-token and the two audit and analytics tokens, so each can be revoked alone.
+limited to the two zones above. One token covers both, so there is one value
+to paste and one to replace each year. It is separate from Terraform's token,
+the lab's Caddy token and the two audit and analytics tokens, so each can be
+revoked alone.
 
 1. In the [Cloudflare dashboard](https://dash.cloudflare.com/), open
    **Manage account**, then **Account API tokens**, then **Create Token**,
@@ -117,8 +131,22 @@ token and the two audit and analytics tokens, so each can be revoked alone.
 
      Leave out any you do not want the site to be able to change: the page
      shows which parts the token cannot read, and the rest keeps working.
-   - **Zone Resources:** **Include**, **Specific zone**,
-     `hybridcloudworks.com`.
+   - **Zone Resources:** two rows, both **Include**, **Specific zone**: one
+     for `hybridcloudworks.com` and one for `hybridcloudinsights.com` (press
+     **Add more** for the second row). Nothing else: the site refuses any
+     other zone anyway, but a token that cannot reach one cannot be misused
+     there.
+
+     **An accepted trade-off.** Cloudflare applies the token's permission
+     list to every zone under Zone Resources, so the lab zone gets the same
+     permissions as the site's zone: settings, DNS, rules and cache purge,
+     although the lab zone rarely needs more than DNS. That is accepted so
+     there is one token and one yearly replacement, not two. What narrows
+     the lab zone is the site's own code: it refuses the lab zone's apex,
+     its `lab` names (where the lab's certificate checks live), every name
+     starting with an underscore (`_`) and every wildcard there, whoever
+     asks (the
+     table under "What is refused, and why").
    - **Client IP Address Filtering:** leave empty. The Function App's
      outgoing addresses are not fixed, so a filter would block it.
    - **TTL** (the token's expiry): end date **one year from today**. The
@@ -129,9 +157,15 @@ token and the two audit and analytics tokens, so each can be revoked alone.
    find **Cloudflare admin token**, paste the value and save.
 5. Open the **Cloudflare** card on
    [Integrations → Services](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform)
-   and press **Test** on its admin token box. A good answer names the zone
-   and says it is active. "Cloudflare refused the token" means the value or
-   its zone is wrong; make the token again.
+   and press **Test** on its admin token box. A good answer names the site's
+   zone and says it is active. "Cloudflare refused the token" means the value
+   or its zone is wrong; make the token again. The Test reads the site's zone
+   only; to check the lab zone, open the
+   [Cloudflare page in the lab zone](https://hybridcloudworks.com/admin/cloudflare?zone=hybridcloudinsights.com)
+   and look at its Overview: it names the zone and says it is active. If it
+   says instead "The admin token cannot reach the zone
+   hybridcloudinsights.com", the token is missing the lab zone (the next
+   paragraph).
 6. On [Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials),
    find `CLOUDFLARE-ADMIN-TOKEN` and record today's date, so the reminder
    counts from it.
@@ -139,12 +173,24 @@ token and the two audit and analytics tokens, so each can be revoked alone.
    check there is a **Cloudflare** row with your plan (Free), and add it if
    not.
 
-The Function App also needs the zone's id in its `CF_ZONE_ID` setting. That
+**If the token was made before the lab zone was added** (with only
+`hybridcloudworks.com`), you do not need a new token: edit the one you have.
+In the Cloudflare dashboard, **Manage account** → **Account API tokens**, open
+the menu (**⋯**) on the `hcw-site-admin` row, choose **Edit**, add the
+`hybridcloudinsights.com` row under **Zone Resources** as in step 2, then
+**Continue to summary** and **Update token**. Cloudflare keeps the same value,
+so there is nothing to paste again. The steps are on Cloudflare's
+[Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
+page. Check it the way step 5 says.
+
+The Function App also needs the site zone's id in its `CF_ZONE_ID` setting. That
 comes from the `cloudflare_zone_id` variable Terraform already has, and is set
 by the next `hcw-azure` apply after this change merges. Until then the page
 says **not configured** even with the token pasted, and says that the zone id
 is what is missing. There is nothing to paste for it: it is never entered on
-the Keys tab.
+the Keys tab. The lab zone needs no setting of its own: the site looks its id
+up by name with the same token the first time it is used, and keeps it until
+the function app restarts.
 
 When you read that run's plan, the plan check (`tfc-plan-check.yml`, which
 you start by hand) lists one line as unexpected on purpose:
@@ -173,10 +219,13 @@ declared and passes.
    - **Cloudflare: edit rules**
 5. Check it: a session holding the key calls
    `GET https://api-azure.hybridcloudworks.com/api/cms/cloudflare/status`.
-   A good answer has `"configured": true` and the zone's name.
+   A good answer has `"configured": true` and the zone's name. The same
+   switches cover the lab zone; Part 5 says how a call names it.
 
 Each change it makes writes an audit row and sends you a Telegram message
-such as "Claude Network Guy changed the Cloudflare zone setting brotli".
+such as "Claude Network Guy changed the Cloudflare zone setting brotli. Zone:
+hybridcloudworks.com." The message's title and its last sentence name the
+zone, and so does the audit row (`details.zone`).
 Every change gets a message of its own: two changes a minute apart are two
 messages, not one. The audit row for a setting keeps its old and new value;
 the row for a DNS record keeps its type, its name and whether it was
@@ -323,18 +372,67 @@ the Cloudflare dashboard. A rule whose action is only `log` (a paid-plan
 option) does not count as on, since it limits nothing. Someone with only the
 viewer role sees **Unknown** ("needs the editor role"), not red.
 
+## Part 5. Working on the lab zone
+
+**On the page.** Open the
+[Cloudflare page](https://hybridcloudworks.com/admin/cloudflare). Above the
+tabs, the **Zone** list starts on `hybridcloudworks.com`. Choose
+`hybridcloudinsights.com`, and every tab (Overview, Settings, DNS, Rules,
+Cache) shows and changes the lab zone only. The page's address gains
+`?zone=hybridcloudinsights.com`, so a link to it opens the lab zone
+directly, for example the
+[lab zone's DNS records](https://hybridcloudworks.com/admin/cloudflare?tab=dns&zone=hybridcloudinsights.com).
+Choose `hybridcloudworks.com` again to go back. What you should see: the
+Overview names the lab zone and says it is active on the Free plan. Under
+**What is locked, and why** it lists the zone's own address
+(`hybridcloudinsights.com`), `lab.hybridcloudinsights.com` and
+`*.lab.hybridcloudinsights.com` (everything under `lab`), the `_…` line
+(every name starting with an underscore) and a line saying that in this
+zone every wildcard is locked; under **Rule phases Terraform manages** it
+says there are none in this zone. Between certificate renewals the DNS tab
+says the zone has no records yet; that is normal.
+
+**For Claude Network Guy, or any call to the API.** Every route under
+`/api/cms/cloudflare/` takes `?zone=` with a zone's name, for example
+`GET https://api-azure.hybridcloudworks.com/api/cms/cloudflare/dns?zone=hybridcloudinsights.com`.
+A call without it acts on `hybridcloudworks.com`, as before. Any other value
+is refused with 400 `CLOUDFLARE_UNMANAGED_ZONE` before Cloudflare is called,
+and so is an empty or repeated `zone`. Network Guy's four switches are the
+same for both zones: there is no separate lab switch.
+
+**What is different in the lab zone.** The lab zone is where the lab's
+certificates are proved (the DNS-01 check Caddy answers), so more of it is
+locked than its emptiness suggests: its apex (`hybridcloudinsights.com`
+itself, for every record type), `lab` and every name under it (the
+certificate check `_acme-challenge.lab` lives there), every name with a
+part starting with an underscore (`_acme-challenge`, and verification or
+mail-policy names such as `_dmarc`, `s1._domainkey` or a provider's
+`_…-verification` record),
+and every wildcard. `www` and other names are open,
+because nothing uses them. The rule phases, the owner-only settings and
+every limit on an agent key are the same as in the site's zone. A name that
+ends with the other zone (`x.hybridcloudworks.com` sent with the lab zone
+picked) is refused with a sentence telling you to pick that zone.
+
 ## What is refused, and why
 
 The server refuses each of these before it changes anything in Cloudflare,
-whoever asks. Four rows apply to an agent key only, and say so.
+whoever asks. Four rows apply to an agent key only, and say so. Every row
+applies in both zones unless it names one.
 
 | Refused | Why | Change it in |
 | --- | --- | --- |
+| Any zone but `hybridcloudworks.com` and `hybridcloudinsights.com` (a `zone` value that is unknown, empty or given twice) | The site looks after those two zones only, whatever else the token can reach | The Cloudflare dashboard |
 | The apex (`hybridcloudworks.com`) and `www` | They are the site itself, on the Static Web App; a wrong value takes the site down | The Cloudflare dashboard, by hand, with care |
+| The lab zone's apex (`hybridcloudinsights.com`), for every record type | Nothing lives there, and a record there (an MX or TXT, say) could receive mail for the domain or pass a check that the domain is ours | The Cloudflare dashboard, by hand |
+| In the lab zone, `lab` and every name under it (`x.lab`, `_acme-challenge.lab`) | The site zone's `_acme-challenge.lab` names point at `_acme-challenge.lab.hybridcloudinsights.com`, where Caddy proves the lab's certificates; a record nearby could take its place | Nothing to change by hand |
 | The DNS records Terraform manages (`api-azure`, `docs`, `podcast`, `go`, `_cf-custom-hostname.go`, `notes`, `asuid.api-azure`) | An apply would put them back, and some are what Azure checks to keep the custom domain | [`infra/frontend.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/frontend.tf) |
 | The lab's records, and every name under `*.lab` and `*.coder.lab` | The lab's own Terraform and its certificate setup own them | [`infra-lab/dns.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra-lab/dns.tf) |
-| Any `_acme-challenge` name | Certificate checks write these for a few minutes | Nothing to change by hand |
-| A wildcard over any name above (`*.www`, `*.api-azure`), and `*` for the whole zone | A wildcard answers for names nobody listed, so it could stand in for a protected name | The Cloudflare dashboard |
+| Any `_acme-challenge` name in `hybridcloudworks.com` | Certificate checks write these for a few minutes | Nothing to change by hand |
+| In the lab zone `hybridcloudinsights.com`, any name with a part starting with an underscore (`_acme-challenge`, `_dmarc`, `_atproto`, `s1._domainkey` and the like) | The only such names there are the certificate checks the lab host's Caddy writes for a few minutes at each renewal ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope"), and outside services prove the domain is ours or set its mail policy with such names | The Cloudflare dashboard, by hand (Caddy's own names need nothing) |
+| In `hybridcloudworks.com`: every wildcard (`*`, `*.www`, `*.blog`, `*.anything`) | A wildcard answers for names nobody listed: `*.foo` would answer the certificate check `_acme-challenge.foo` and could pass it for someone else, so every wildcard could stand in for a protected name | The Cloudflare dashboard |
+| In the lab zone: every wildcard (`*`, `*.lab`, `*.anything`) | Between Caddy's renewals a wildcard could answer the lab's certificate check and pass it for someone else | The Cloudflare dashboard |
+| A name that ends with the other managed zone (`x.hybridcloudworks.com` with the lab zone picked, and the other way round) | It would be made inside the wrong zone under a confusing name | Pick that zone and add it there |
 | A DNS edit to a record that is not A, AAAA, CNAME, MX or TXT (an NS or CAA record, say) | The page adds and edits only those five types | The Cloudflare dashboard |
 | A badly formed DNS name: a leading, trailing or double dot, `@` anywhere but on its own, `*` anywhere but as the whole first part | The name that is checked must be the name that is sent | Correct the name |
 | The `http_request_late_transform` rule phase | It holds the origin rule; a mistake there refuses every visitor's API call | `infra/frontend.tf`, and the [origin secret rotation runbook](origin-secret-rotation.md) |
@@ -347,7 +445,7 @@ whoever asks. Four rows apply to an agent key only, and say so.
 | A replacement of a phase that changed since it was read | It would quietly undo the newer change. The page sends the version it read; reload and make the change again | Reload the phase on the page |
 | A rule that still holds a hidden value | The page never reads a secret-looking header value (a name with secret, token, auth or key in it), so it cannot send the real one back | The Cloudflare dashboard |
 | Agent key only: SSL mode, minimum TLS version, Always Use HTTPS, HSTS (`security_header`) and the certificate Cloudflare shows the site (`tls_client_auth`) | A wrong value breaks or weakens HTTPS for every visitor | The Settings tab of the [Cloudflare page](https://hybridcloudworks.com/admin/cloudflare?tab=settings), signed in as yourself |
-| Any change, when the zone id points at another zone | The protected list names this zone's records, so it would protect nothing elsewhere | `CF_ZONE_ID`, which Terraform sets on the function app |
+| Any change, when the zone id points at another zone | Each zone's protected list names that zone's records, so it would protect nothing elsewhere | For the site's zone, `CF_ZONE_ID`, which Terraform sets on the function app. For the lab zone, nothing: the looked-up id is forgotten and looked up again on the next request |
 | Any delete | No agent key deletes anything (ADR 0038), and the page offers none. When you (not an agent key) replace a phase's rules, the ones left out of the new list are removed | The Cloudflare dashboard |
 
 What the page shows is limited too. The rules of a phase that cannot be
@@ -362,10 +460,19 @@ The full list is in
 [`functions/src/lib/cloudflare/protected.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cloudflare/protected.js),
 and a test fails if Terraform gains a record the list does not have.
 
-A DNS change made through the site is reported by the daily DNS audit
-(`cloudflare-dns-audit.yml`) as unexpected and opens an issue, because the
-audit does not know this token. That is deliberate for now (ADR 0047): close
-the issue once you have checked the change was yours or Network Guy's.
+A DNS change made through the site in `hybridcloudworks.com` is reported by
+the daily DNS audit (`cloudflare-dns-audit.yml`) as unexpected and opens an
+issue, because the audit does not know this token. That is deliberate for now
+(ADR 0047): close the issue once you have checked the change was yours or
+Network Guy's.
+
+**A DNS change in the lab zone is not reported by that audit at all.** The
+audit reads only the site's zone
+([`scripts/lib/dns-audit-entries.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/lib/dns-audit-entries.mjs),
+`isProductionZone`), and Caddy writes and removes records in the lab zone at
+every renewal, so watching it would need its own allowlist. For the lab zone
+the record of a change is the site's audit log and the Telegram message each
+change sends (and Cloudflare's own audit log).
 
 ## When something is wrong
 
@@ -382,6 +489,10 @@ the issue once you have checked the change was yours or Network Guy's.
 | "No API rate limit rule is on" on the Health page or the Cloudflare page's Overview | The `http_ratelimit` phase has no rule, or its rule is switched off, so one address can send the API as many requests as it likes | Make the rule, or set `"enabled": true` on it again, on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules) (Part 4) |
 | "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
 | "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
+| "The admin token cannot reach the zone hybridcloudinsights.com" | The token's Zone Resources do not include the lab zone, or Cloudflare lists the zone as not active | Add it to the token (the paragraph after Part 2, step 7), and check the zone is **Active** in the dashboard; nothing was changed |
+| "The zone looked up for hybridcloudinsights.com answered with another name" | Cloudflare answered for another zone under the id the site had kept | Try again: the id is looked up afresh; nothing was changed |
+| 400 "zone must be hybridcloudworks.com or hybridcloudinsights.com" | A call named another zone, or named it empty or twice | Name one of the two (Part 5) |
+| On the page: "The server does not manage hybridcloudinsights.com yet" | The site's API is a version from before the lab zone; it answered for the site's zone | Wait a few minutes for the newer API to be deployed, then pick the lab zone again |
 | The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
 | 403 "This key may not call that route" for Network Guy | The switch for that kind of change is off | Turn it on (Part 3, step 4) |
 | 429 "Too many requests" | Either the agent key's limit of 120 calls a minute, or Cloudflare's own rate limit on the API (Part 4): more than 200 requests in 10 seconds from one address to `/api/`, lifted after 10 seconds. The Cloudflare page calls the API too, so the limit can catch your own page | Wait a minute (the Cloudflare limit lifts after 10 seconds). If your own page keeps being limited, change the rule in the Cloudflare dashboard, because the page that would change it is the one being limited |

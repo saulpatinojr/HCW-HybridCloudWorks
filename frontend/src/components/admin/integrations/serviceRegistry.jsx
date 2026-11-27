@@ -1215,7 +1215,7 @@ export const SERVICES = Object.freeze([
       'Change the origin secret in Cloudflare at the same moment, or public forms are refused until both match.',
     dataDirection: `Both ways: the site reads the zone’s settings, records and rules and sends the changes an admin or ${NETWORK_AGENT} makes; a human-check token goes to Cloudflare to verify; the page-view count comes back once a month.`,
     securityNote:
-      'The admin token is an account-owned token limited to this one zone, read on the server only and never sent to a browser. It can change settings, DNS records and rules, but no route deletes anything, and the records and rules that keep the site running are locked. The origin secret and the Turnstile secret go only to Cloudflare, and the analytics token can read page views and nothing else.',
+      'The admin token is an account-owned token limited to two zones, the site’s and the lab’s, read on the server only and never sent to a browser. It can change settings, DNS records and rules, but no route deletes anything, and the records and rules that keep the site running are locked. The origin secret and the Turnstile secret go only to Cloudflare, and the analytics token can read page views and nothing else.',
   },
 
   // ── Hybrid Lab (ADR 0033) ────────────────────────────────────────────────

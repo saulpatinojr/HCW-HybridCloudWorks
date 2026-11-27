@@ -6,7 +6,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { AdminRoleProvider } from '@/hooks/useAdminRole';
 
 const api = {
@@ -37,6 +37,10 @@ vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 const { default: CloudflarePage } = await import('./CloudflarePage');
 const { REDACTED_VALUE } = await import('@/components/admin/cloudflare/cloudflareLocks');
 const { HIDDEN_VALUE_NOTE } = await import('@/components/admin/cloudflare/CloudflareRules');
+
+/** The zone every call names when the address names none: the site's (#1911). */
+const SITE = 'hybridcloudworks.com';
+const LAB = 'hybridcloudinsights.com';
 
 const STATUS = {
   configured: true,
@@ -379,13 +383,16 @@ describe('the DNS tab', () => {
     fireEvent.click(save);
     await waitFor(() => expect(save).toBeDisabled());
     expect(api.createCloudflareDnsRecord).toHaveBeenCalledTimes(1);
-    expect(api.createCloudflareDnsRecord).toHaveBeenCalledWith({
-      type: 'A',
-      name: 'status',
-      content: '192.0.2.20',
-      ttl: 1,
-      proxied: false,
-    });
+    expect(api.createCloudflareDnsRecord).toHaveBeenCalledWith(
+      {
+        type: 'A',
+        name: 'status',
+        content: '192.0.2.20',
+        ttl: 1,
+        proxied: false,
+      },
+      SITE
+    );
     pending.resolve({ record: { id: 'rec3' } });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.readCloudflareDns).toHaveBeenCalledTimes(2);
@@ -413,7 +420,11 @@ describe('the DNS tab', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: /Save the change/ }));
     await waitFor(() =>
-      expect(api.updateCloudflareDnsRecord).toHaveBeenCalledWith('rec2', { content: '192.0.2.11' })
+      expect(api.updateCloudflareDnsRecord).toHaveBeenCalledWith(
+        'rec2',
+        { content: '192.0.2.11' },
+        SITE
+      )
     );
   });
 });
@@ -457,10 +468,14 @@ describe('the Rules tab', () => {
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Replace the rules' }));
     await waitFor(() =>
-      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_request_firewall_custom', {
-        rules: [{ id: 'r1', expression: 'true', action: 'block' }],
-        expectedVersion: '5',
-      })
+      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith(
+        'http_request_firewall_custom',
+        {
+          rules: [{ id: 'r1', expression: 'true', action: 'block' }],
+          expectedVersion: '5',
+        },
+        SITE
+      )
     );
     expect(api.replaceCloudflarePhase).toHaveBeenCalledTimes(1);
   });
@@ -510,10 +525,14 @@ describe('the Rules tab', () => {
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Replace the rules' }));
     await waitFor(() =>
-      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_request_dynamic_redirect', {
-        rules: [{ expression: 'true', action: 'redirect' }],
-        expectedVersion: null,
-      })
+      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith(
+        'http_request_dynamic_redirect',
+        {
+          rules: [{ expression: 'true', action: 'redirect' }],
+          expectedVersion: null,
+        },
+        SITE
+      )
     );
   });
 
@@ -619,10 +638,14 @@ describe('the Rules tab', () => {
     expect(go).toBeEnabled();
     fireEvent.click(go);
     await waitFor(() =>
-      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_ratelimit', {
-        rules: [kept],
-        expectedVersion: '2',
-      })
+      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith(
+        'http_ratelimit',
+        {
+          rules: [kept],
+          expectedVersion: '2',
+        },
+        SITE
+      )
     );
   });
 
@@ -717,7 +740,9 @@ describe('the Settings tab', () => {
     fireEvent.click(within(row).getByRole('switch', { name: 'Brotli' }));
     expect(save).toBeEnabled();
     fireEvent.click(save);
-    await waitFor(() => expect(api.saveCloudflareSetting).toHaveBeenCalledWith('brotli', 'off'));
+    await waitFor(() =>
+      expect(api.saveCloudflareSetting).toHaveBeenCalledWith('brotli', 'off', SITE)
+    );
     const ipv6 = screen.getByTestId('setting-ipv6');
     expect(within(ipv6).queryByRole('button')).toBeNull();
     expect(within(ipv6).getByText(/does not allow this one to be changed/)).toBeInTheDocument();
@@ -742,7 +767,9 @@ describe('the Settings tab', () => {
     expect(api.saveCloudflareSetting).not.toHaveBeenCalled();
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Change it' }));
-    await waitFor(() => expect(api.saveCloudflareSetting).toHaveBeenCalledWith('ssl', 'full'));
+    await waitFor(() =>
+      expect(api.saveCloudflareSetting).toHaveBeenCalledWith('ssl', 'full', SITE)
+    );
   });
 });
 
@@ -763,7 +790,7 @@ describe('the Cache tab', () => {
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
     fireEvent.click(within(confirm).getByRole('button', { name: 'Purge everything' }));
     await waitFor(() =>
-      expect(api.purgeCloudflareCache).toHaveBeenCalledWith({ everything: true })
+      expect(api.purgeCloudflareCache).toHaveBeenCalledWith({ everything: true }, SITE)
     );
   });
 
@@ -771,17 +798,196 @@ describe('the Cache tab', () => {
     api.purgeCloudflareCache.mockResolvedValue({ ok: true });
     renderAt('/admin/cloudflare?tab=cache');
     const box = await screen.findByLabelText('Addresses to purge');
-    await waitFor(() => expect(screen.getByText(/and on example\.com/)).toBeInTheDocument());
-    fireEvent.change(box, { target: { value: 'https://other.net/a' } });
-    expect(screen.getByRole('alert')).toHaveTextContent(/not on example\.com/);
+    await waitFor(() =>
+      expect(screen.getByText(`and on ${SITE}`, { exact: false })).toBeInTheDocument()
+    );
+    fireEvent.change(box, { target: { value: `https://${LAB}/a` } });
+    expect(screen.getByRole('alert')).toHaveTextContent(`not on ${SITE}`);
     fireEvent.change(box, {
-      target: { value: 'https://example.com/a\nhttps://www.example.com/b' },
+      target: { value: `https://${SITE}/a\nhttps://www.${SITE}/b` },
     });
     fireEvent.click(screen.getByRole('button', { name: /Purge 2 addresses/ }));
     await waitFor(() =>
-      expect(api.purgeCloudflareCache).toHaveBeenCalledWith({
-        files: ['https://example.com/a', 'https://www.example.com/b'],
-      })
+      expect(api.purgeCloudflareCache).toHaveBeenCalledWith(
+        { files: [`https://${SITE}/a`, `https://www.${SITE}/b`] },
+        SITE
+      )
     );
+  });
+});
+
+describe('the zone picker (#1911)', () => {
+  const SITE_ROLE = "The site's own zone: the website and its API.";
+  const LAB_ROLE = "The lab's certificate zone: Caddy writes its certificate checks here.";
+  const CADDY = 'A certificate check the lab host’s Caddy writes. Caddy owns these names.';
+  const APEX = 'The lab zone’s own address. Nothing lives there.';
+  const SUBTREE = 'Where the lab’s certificate checks live.';
+  const WILDCARDS = 'A wildcard in the lab zone could answer the lab’s certificate check.';
+  const statusFor = (zone) =>
+    zone === LAB
+      ? {
+          ...STATUS,
+          zone: { id: 'z2', name: LAB, status: 'active', plan: 'Free Website' },
+          managed: { name: LAB, role: LAB_ROLE },
+          protected: {
+            dnsNames: [
+              { name: LAB, reason: APEX },
+              { name: `lab.${LAB}`, reason: SUBTREE },
+              { name: `*.lab.${LAB}`, reason: SUBTREE },
+            ],
+            dnsPrefixes: [{ prefix: '_', reason: CADDY }],
+            wildcardReason: WILDCARDS,
+            phases: [],
+            ownerOnlySettings: STATUS.protected.ownerOnlySettings,
+          },
+        }
+      : { ...STATUS, managed: { name: SITE, role: SITE_ROLE } };
+
+  function Where() {
+    const location = useLocation();
+    return <output data-testid="where">{location.search}</output>;
+  }
+
+  function renderWithAddress(path) {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <AdminRoleProvider value="super_admin">
+          <Routes>
+            <Route
+              path="/admin/cloudflare"
+              element={
+                <>
+                  <CloudflarePage />
+                  <Where />
+                </>
+              }
+            />
+          </Routes>
+        </AdminRoleProvider>
+      </MemoryRouter>
+    );
+  }
+
+  beforeEach(() => {
+    api.readCloudflareStatus.mockImplementation(async (zone) => statusFor(zone));
+  });
+
+  it('offers exactly the two managed zones, starts on the site’s, and says what it is for', async () => {
+    renderWithAddress('/admin/cloudflare');
+    const picker = screen.getByLabelText('Zone');
+    expect(
+      within(picker)
+        .getAllByRole('option')
+        .map((option) => option.value)
+    ).toEqual([SITE, LAB]);
+    expect(picker).toHaveValue(SITE);
+    await screen.findByText('Free Website');
+    expect(screen.queryByTestId('all-wildcards')).toBeNull();
+    expect(await screen.findByTestId('zone-role')).toHaveTextContent(SITE_ROLE);
+    expect(api.readCloudflareStatus).toHaveBeenCalledWith(SITE);
+    expect(screen.getByTestId('where')).toHaveTextContent(/^$/);
+  });
+
+  it('keeps the picked zone in the address, reads every tab in it, and keeps it across tabs', async () => {
+    renderWithAddress('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    expect(api.readCloudflareDns).toHaveBeenLastCalledWith(SITE);
+    fireEvent.change(screen.getByLabelText('Zone'), { target: { value: LAB } });
+    expect(screen.getByTestId('where')).toHaveTextContent(`?tab=dns&zone=${LAB}`);
+    await waitFor(() => expect(api.readCloudflareDns).toHaveBeenLastCalledWith(LAB));
+    expect(await screen.findByTestId('zone-role')).toHaveTextContent(LAB_ROLE);
+    fireEvent.click(screen.getByRole('tab', { name: 'Rules' }));
+    expect(screen.getByTestId('where')).toHaveTextContent(`?tab=rules&zone=${LAB}`);
+    await waitFor(() => expect(api.readCloudflareRulesets).toHaveBeenLastCalledWith(LAB));
+    fireEvent.change(screen.getByLabelText('Zone'), { target: { value: SITE } });
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\?tab=rules$/);
+  });
+
+  it('opens the zone a link names, in any letter case, and the site’s for any other name', async () => {
+    const first = renderWithAddress('/admin/cloudflare?tab=settings&zone=HybridCloudInsights.com');
+    expect(screen.getByLabelText('Zone')).toHaveValue(LAB);
+    await waitFor(() => expect(api.readCloudflareSettings).toHaveBeenCalledWith(LAB));
+    first.unmount();
+    api.readCloudflareSettings.mockClear();
+    renderWithAddress('/admin/cloudflare?tab=settings&zone=example.com');
+    expect(screen.getByLabelText('Zone')).toHaveValue(SITE);
+    await waitFor(() => expect(api.readCloudflareSettings).toHaveBeenCalledWith(SITE));
+    expect(api.readCloudflareSettings).not.toHaveBeenCalledWith('example.com');
+  });
+
+  it('locks the lab zone’s certificate names, its apex and every wildcard, and sends a lab record to the lab zone', async () => {
+    api.createCloudflareDnsRecord.mockResolvedValue({ record: {} });
+    renderWithAddress(`/admin/cloudflare?tab=dns&zone=${LAB}`);
+    await screen.findByTestId('dns-row-rec2');
+    await screen.findByTestId('zone-role');
+    fireEvent.click(screen.getByRole('button', { name: /Add a record/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Name'), {
+      target: { value: '_acme-challenge.lab' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'x' } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${SUBTREE}`);
+    for (const [name, reason] of [
+      ['_acme-challenge', CADDY],
+      ['_dmarc', CADDY],
+      ['x.lab', SUBTREE],
+      ['@', APEX],
+      ['*.foo', WILDCARDS],
+    ]) {
+      fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: name } });
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${reason}`);
+    }
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: `x.${SITE}.` } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(
+      `That name ends with ${SITE}, which is its own zone: pick ${SITE} above and add it there.`
+    );
+    expect(within(dialog).getByRole('button', { name: /Add the record/ })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'www' } });
+    fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: '192.0.2.30' } });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Add the record/ }));
+    await waitFor(() => expect(api.createCloudflareDnsRecord).toHaveBeenCalledTimes(1));
+    expect(api.createCloudflareDnsRecord.mock.calls[0][1]).toBe(LAB);
+  });
+
+  it('shows no Terraform phase in the lab zone', async () => {
+    renderWithAddress(`/admin/cloudflare?zone=${LAB}`);
+    expect(
+      await screen.findByText(/None in this zone: Terraform writes no rules here/)
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('locked-phases')).toBeEmptyDOMElement();
+    expect(screen.getByTestId('all-wildcards')).toHaveTextContent(WILDCARDS);
+  });
+
+  it('shows the API rate limit line only on the site’s zone, since the rule is the site’s (#1909)', async () => {
+    renderWithAddress(`/admin/cloudflare?zone=${LAB}`);
+    await screen.findByText(/None in this zone: Terraform writes no rules here/);
+    expect(screen.queryByTestId('rate-limit-check')).not.toBeInTheDocument();
+    expect(api.readCloudflarePhase).not.toHaveBeenCalledWith('http_ratelimit');
+  });
+
+  it('shows a note in place of the tabs when the server answers for another zone, and offers no change', async () => {
+    // A server older than #1911 ignores ?zone= and answers for the site's zone, without `managed`.
+    api.readCloudflareStatus.mockResolvedValue(STATUS);
+    renderWithAddress(`/admin/cloudflare?tab=dns&zone=${LAB}`);
+    expect(await screen.findByText(`The server does not manage ${LAB} yet`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a record/ })).toBeNull();
+    expect(screen.queryByTestId('dns-row-rec2')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: `Go back to ${SITE}` }));
+    expect(screen.getByLabelText('Zone')).toHaveValue(SITE);
+    expect(await screen.findByTestId('dns-row-rec2')).toBeInTheDocument();
+  });
+
+  it('mounts no tab for the lab zone until the server has said which zone it answered for (#1913 review)', async () => {
+    const held = deferred();
+    api.readCloudflareStatus.mockReturnValue(held.promise);
+    renderWithAddress(`/admin/cloudflare?tab=dns&zone=${LAB}`);
+    // While the status is in flight, nothing reads DNS and no write control exists.
+    expect(screen.queryByRole('button', { name: /Add a record/ })).toBeNull();
+    expect(api.readCloudflareDns).not.toHaveBeenCalled();
+    // An older server answers for the site's zone: the note replaces the tabs, still no DNS read.
+    held.resolve(STATUS);
+    expect(await screen.findByText(`The server does not manage ${LAB} yet`)).toBeInTheDocument();
+    expect(api.readCloudflareDns).not.toHaveBeenCalled();
   });
 });

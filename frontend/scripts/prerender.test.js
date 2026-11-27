@@ -897,21 +897,21 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
 describe('outputPathFor: every page lands inside the build folder', () => {
   const dist = '/tmp/build/dist';
 
+  // Expected paths use the platform's separator, as outputPathFor does (join),
+  // so the exact path is checked on Windows as well as Linux (#1915).
+  const at = (...parts) => join(dist, ...parts, 'index.html');
+
   it('writes a route to its folder index, and the home page to the root index', () => {
-    expect(outputPathFor(dist, '/')).toBe('/tmp/build/dist/index.html');
-    expect(outputPathFor(dist, '/azure/blog/a-post')).toBe(
-      '/tmp/build/dist/azure/blog/a-post/index.html'
-    );
+    expect(outputPathFor(dist, '/')).toBe(at());
+    expect(outputPathFor(dist, '/azure/blog/a-post')).toBe(at('azure', 'blog', 'a-post'));
     expect(outputPathFor(dist, '/azure/blog/mixed-Case--6chars/')).toBe(
-      '/tmp/build/dist/azure/blog/mixed-Case--6chars/index.html'
+      at('azure', 'blog', 'mixed-Case--6chars')
     );
   });
 
   it('keeps a folder whose name only starts with two dots', () => {
-    expect(outputPathFor(dist, '/notes/..hidden')).toBe(
-      '/tmp/build/dist/notes/..hidden/index.html'
-    );
-    expect(outputPathFor(dist, '/..notes')).toBe('/tmp/build/dist/..notes/index.html');
+    expect(outputPathFor(dist, '/notes/..hidden')).toBe(at('notes', '..hidden'));
+    expect(outputPathFor(dist, '/..notes')).toBe(at('..notes'));
   });
 
   it('refuses a route that would write outside it', () => {
