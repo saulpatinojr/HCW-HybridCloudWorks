@@ -1,4 +1,4 @@
-/** The Platform hub's probes (ADR 0033 §1 Platform, §8): Cosmos, Blob, configuration, Key Vault, Qlty, pricing, the session. */
+/** The Platform hub's probes (ADR 0033 §1 Platform, §8): Cosmos, Blob, configuration, Key Vault, Qlty, Cloudflare, pricing, the session. */
 import {
   GALLERY,
   IDENTITY,
@@ -7,9 +7,15 @@ import {
   SETTINGS,
   fromService,
   liveProbe,
+  result,
   sessionProbe,
   snapshotProbe,
 } from '../probeKit';
+import {
+  RATE_LIMIT_RUNBOOK_URL,
+  checkRateLimit,
+} from '@/components/admin/cloudflare/rateLimitCheck';
+import { tabHref as cloudflareTabHref } from '@/components/admin/cloudflare/tabs';
 import {
   evaluateContentAgent,
   evaluateCosmos,
@@ -129,6 +135,25 @@ export const PLATFORM_PROBES = [
     impact:
       'The Cloudflare page and Claude Network Guy cannot read or change the zone. The site itself keeps running: visitors do not go through this token.',
     action: 'Paste a new admin token on Keys, or check it is still limited to the right zone.',
+  }),
+  // #1909: the API rate limit rule lives only in Cloudflare, so this is what
+  // notices it going. Same verdict as the Cloudflare page's Overview.
+  liveProbe({
+    id: 'cloudflare-rate-limit',
+    label: 'Cloudflare API rate limit',
+    hub: 'platform',
+    covers:
+      'Whether the zone’s rate limiting phase (http_ratelimit) has a rule switched on, read through the Cloudflare page’s own route. It changes nothing.',
+    impact:
+      'With no rule on, one address can send the API as many requests as it likes. The site keeps running.',
+    action:
+      'Make the rule, or switch it back on, on the Cloudflare page’s Rules tab; Part 4 of the Cloudflare admin runbook has the values.',
+    href: { to: cloudflareTabHref('rules'), label: 'Cloudflare Rules' },
+    docs: { href: RATE_LIMIT_RUNBOOK_URL, label: 'Runbook, Part 4' },
+    run: async () => {
+      const check = await checkRateLimit();
+      return result(check.status, check.sentence);
+    },
   }),
   fromService('cloud-pricing', {
     hub: 'platform',

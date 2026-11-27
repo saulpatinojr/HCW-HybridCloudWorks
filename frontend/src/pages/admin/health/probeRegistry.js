@@ -33,6 +33,10 @@
  *             own token (identity, the Labs no-op probe, the smoke tests);
  *             its "Test" is that check's own action.
  *
+ * An entry may also carry `docs: { href, label }`, a runbook its card links
+ * beside the fix (the Cloudflare rate limit probe links Part 4 of its
+ * runbook).
+ *
  * `safe` says whether Test all may press it. A probe that writes real data
  * (the smoke tests enqueue jobs and build digests; the Labs probe creates a
  * job) or spends quota (YouTube) is run from its own card only, and its

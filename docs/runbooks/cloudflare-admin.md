@@ -297,6 +297,24 @@ as many requests as it likes. On a paid plan with several rate limiting
 rules, removing one of them from the page asks you to type `http_ratelimit`
 first.
 
+**The Health page warns when the rule is missing or off**
+([#1909](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1909)).
+Because the rule lives only in Cloudflare and not in Terraform, nothing else
+would notice it going. The **Cloudflare API rate limit** card on the Checks
+tab of the [Health page](https://hybridcloudworks.com/admin/health?tab=checks),
+and the line under "What the token can read" on the Cloudflare page's
+[Overview](https://hybridcloudworks.com/admin/cloudflare?tab=overview), read
+the `http_ratelimit` phase (it changes nothing) and say the same thing:
+
+- **Healthy** (green): at least one rule is switched on, and it says how many.
+- **Degraded** (amber): "No API rate limit rule is on." The phase has no
+  rule, or every rule in it is switched off. Make the rule, or switch it back
+  on, with the steps above.
+- **Unknown** (not checked): the Cloudflare page is not set up yet (the token
+  or the zone id is missing, Part 2), so nothing was asked.
+- **Critical or Offline** (red): the read itself failed. The card shows
+  Cloudflare's or the site's sentence; see "When something is wrong" below.
+
 ## What is refused, and why
 
 The server refuses each of these before it changes anything in Cloudflare,
@@ -353,6 +371,7 @@ the issue once you have checked the change was yours or Network Guy's.
 | "Cloudflare refused the token" | The token is wrong, expired or revoked | Make a new one (Part 2) and paste it |
 | "That name is protected", "That rule phase may not be changed from here" or "That record is read-only here" | The table above | Change it where the table says |
 | "An agent key may not change ssl" (or another owner-only setting) | Only you change that one | Change it yourself on the [Settings tab](https://hybridcloudworks.com/admin/cloudflare?tab=settings) |
+| "No API rate limit rule is on" on the Health page or the Cloudflare page's Overview | The `http_ratelimit` phase has no rule, or its rule is switched off, so one address can send the API as many requests as it likes | Make the rule, or set `"enabled": true` on it again, on the [Rules tab](https://hybridcloudworks.com/admin/cloudflare?tab=rules) (Part 4) |
 | "This phase changed since you opened it" | Someone changed the phase after you opened it | Close the phase, open it again and make your change again |
 | "The zone this site is set to (CF_ZONE_ID) is not hybridcloudworks.com" | The zone id points at another zone | Check `CF_ZONE_ID` in Terraform; nothing was changed |
 | The DNS tab says the list stops at the limit | The zone holds more than 5,000 records | Find the rest in the Cloudflare dashboard |
