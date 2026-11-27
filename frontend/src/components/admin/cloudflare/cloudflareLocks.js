@@ -8,6 +8,9 @@
  * the request instead of after it. cloudflareLocks.test.js imports that file
  * (it imports nothing) and fails when the two differ:
  *
+ *   MANAGED_ZONE_NAMES   the zones the page may pick (#1911), names only:
+ *                        each zone's role and protected lists come from the
+ *                        status answer for that zone
  *   PROTECTED_PHASES     the phase Terraform writes, with its reason (the API
  *                        rate limit left Terraform for this page in #1903)
  *   EDITABLE_PHASES      the only phases that may be replaced (an allow-list:
@@ -23,8 +26,21 @@
  * list here is used only until the status has been read.
  */
 
-/** The zone the site lives in, used when the status has not named it yet. */
-export const ZONE_APEX = 'hybridcloudworks.com';
+/** The zones the page may act on, the site's first (the server's MANAGED_ZONES, by name). */
+export const MANAGED_ZONE_NAMES = Object.freeze([
+  'hybridcloudworks.com',
+  'hybridcloudinsights.com',
+]);
+
+/** The zone the site lives in: the one picked when the address names none. */
+export const [DEFAULT_ZONE] = MANAGED_ZONE_NAMES;
+export const ZONE_APEX = DEFAULT_ZONE;
+
+/** The managed zone an address names (any letter case), or the site's zone for anything else. */
+export function resolveZone(requested) {
+  const wanted = String(requested ?? '').toLowerCase();
+  return MANAGED_ZONE_NAMES.includes(wanted) ? wanted : DEFAULT_ZONE;
+}
 
 /** The rule phases Terraform writes, and why. The server's own reason wins when it gives one. */
 export const PROTECTED_PHASES = Object.freeze([
@@ -112,14 +128,19 @@ const listOf = (items, key) => (items ?? []).map((item) => entry(item, key)).fil
 
 // ── Rule phases ──────────────────────────────────────────────────────────────
 
-/** Every Terraform phase with its reason: the server's list joined with the mirror. */
+/**
+ * Every Terraform phase with its reason: the status answer's list for its
+ * zone once read (the lab zone has none), each reason filled from the
+ * mirror when the server gave none; the mirror until then.
+ */
 export function protectedPhaseList(status) {
-  const byPhase = new Map(PROTECTED_PHASES.map((item) => [item.phase, { ...item }]));
-  for (const item of listOf(status?.protected?.phases, 'phase')) {
-    const known = byPhase.get(item.phase);
-    byPhase.set(item.phase, { phase: item.phase, reason: item.reason || known?.reason || '' });
-  }
-  return [...byPhase.values()];
+  const fromServer = status?.protected?.phases;
+  if (!Array.isArray(fromServer)) return PROTECTED_PHASES.map((item) => ({ ...item }));
+  return listOf(fromServer, 'phase').map((item) => ({
+    phase: item.phase,
+    reason:
+      item.reason || PROTECTED_PHASES.find((known) => known.phase === item.phase)?.reason || '',
+  }));
 }
 
 /** The phases that may be replaced: the server's list once read, else the mirror. */
@@ -208,7 +229,7 @@ function wildcardLock(full, status, zone) {
  * dnsNameProtection, read against the status answer's lists.
  */
 export function dnsNameLock(name, { status = null, zoneName = '' } = {}) {
-  const zone = lower(zoneName || status?.zone?.name || ZONE_APEX);
+  const zone = lower(zoneName || status?.managed?.name || status?.zone?.name || DEFAULT_ZONE);
   const full = normalizeDnsName(name, zone);
   if (!full) return null;
   return (

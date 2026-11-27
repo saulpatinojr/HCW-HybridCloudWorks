@@ -509,6 +509,21 @@ describe('the Cloudflare switches (#1905)', () => {
     expect(audits[0]).toMatchObject({ agent: 'koda', reason: 'section-off', section: 'admin.cloudflare' });
   });
 
+  it('applies the same switches whichever zone the query names (#1911)', async () => {
+    const record = networkRecord({ 'admin.cloudflare': true, 'admin.cloudflare.dns': true });
+    const { guard } = setup({ record, user: agentUserOf(NETWORK) });
+    const lab = 'zone=hybridcloudinsights.com';
+    expect(apiPathOf({ url: `https://h/api/cms/cloudflare/dns?${lab}` })).toBe('cms/cloudflare/dns');
+    const read = await guard.requireRole(request({ path: `cms/cloudflare/status?${lab}` }), 'editor');
+    expect(read.error).toBeNull();
+    const dns = await guard.requireRole(request({ method: 'POST', path: `cms/cloudflare/dns?${lab}`, body: {} }), 'super_admin');
+    expect(dns.error).toBeNull();
+    const rules = await guard.requireRole(request({ method: 'PUT', path: `cms/cloudflare/rulesets/phases/http_ratelimit?${lab}`, body: {} }), 'super_admin');
+    expect(rules.error.status).toBe(403);
+    const settings = await guard.requireRole(request({ method: 'PATCH', path: `cms/cloudflare/settings/brotli?${lab}`, body: {} }), 'super_admin');
+    expect(settings.error.status).toBe(403);
+  });
+
   it('never matches a DELETE on a Cloudflare route', () => {
     for (const path of ['cms/cloudflare/dns/00000000000000000000000000000001', 'cms/cloudflare/rulesets/phases/x', 'cms/cloudflare/settings/ssl']) {
       expect(matchPolicy('DELETE', path)).toBeNull();

@@ -1,12 +1,19 @@
 /**
  * cloudflare/handlers.js — the Cloudflare page's routes (#1905).
  *
+ * Every route takes an optional `zone` query parameter (#1911): the name of
+ * a zone in protected.js MANAGED_ZONES, the site's own when it is left out,
+ * so a call written before #1911 keeps acting on the site's zone. Any other
+ * value is refused with 400 before Cloudflare is called. The site's zone is
+ * reached by its id (CF_ZONE_ID); another managed zone by a lookup of its
+ * name with the same token (client.js).
+ *
  * Reads need `editor`; every change needs `super_admin`, the same level as
  * making an agent key, because a change here reaches every visitor at once.
  * An agent key reaches these routes only through its own Cloudflare switches
  * (agent-content/admin-access.js, POLICY). There is no delete route at all.
  *
- *   GET   cms/cloudflare/status                  is it set up; the zone; what the token can read; what is protected
+ *   GET   cms/cloudflare/status                  is it set up; the zone and its role; what the token can read; what is protected
  *   GET   cms/cloudflare/settings                every zone setting
  *   PATCH cms/cloudflare/settings/{settingId}    { value }
  *   POST  cms/cloudflare/purge                   { everything: true } or { files: [url, ...] }
@@ -34,7 +41,8 @@
  *
  * "Not set up" names what is missing (`missing`: `token`, `zoneId` or both)
  * and where it comes from: the token is pasted on Integrations → Keys; the
- * zone id is set by Terraform and never pasted.
+ * zone id is set by Terraform and never pasted. The zone id is needed only
+ * for the site's zone; another zone's id is looked up.
  *
  * Log lines are content-free: the route's name, a status and a code, never
  * a record name, a value, a URL or the token.
@@ -42,14 +50,15 @@
 import { readSetting } from '../http/read-setting.js';
 import { authoredMessage, codeShaped, errorCode, errorResponse } from '../http/error-response.js';
 import { CloudflareError, TOKEN_SETTING, ZONE_ID_PATTERN, ZONE_SETTING, createCloudflareClient } from './client.js';
-import { Refusal, fail } from './input.js';
+import { Refusal, fail, zoneOf } from './input.js';
+import { SITE_ZONE } from './protected.js';
 import { clockOf } from './record.js';
 import { getSettings, getStatus, patchSetting, purge } from './zone-routes.js';
 import { notConfiguredMessage } from './prerequisites.js';
 import { createDns, listDns, patchDns } from './dns-routes.js';
 import { getPhase, listRulesets, putPhase } from './rules-routes.js';
 
-export { MAX_PURGE_FILES, SETTING_ID_PATTERN, FAMILIES, PROTECTED_VIEW } from './zone-routes.js';
+export { MAX_PURGE_FILES, SETTING_ID_PATTERN, FAMILIES, PROTECTED_VIEW, protectedView } from './zone-routes.js';
 export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 export { DNS_TYPES, RECORD_ID_PATTERN } from './dns-routes.js';
 export { PHASE_PATTERN, REDACTED_VALUE } from './rules-routes.js';
@@ -72,17 +81,24 @@ const ROUTES = Object.freeze([
   ['putPhase', 'phase-replace', WRITE_ROLE, putPhase],
 ]);
 
-/**
- * The client, or null with the list of what is missing: `token` when the
- * admin token is not set, `zoneId` when the zone id is not set or is not a
- * zone id.
- */
-function clientOf(deps) {
-  const token = readSetting(deps.env, TOKEN_SETTING);
+/** How the client names the zone: the site's by its configured id, any other by its name. */
+function zoneTarget(deps, zone) {
+  if (zone.name !== SITE_ZONE) return { target: { zoneName: zone.name }, missing: [] };
   const zoneId = readSetting(deps.env, ZONE_SETTING).toLowerCase();
-  const missing = [...(token ? [] : ['token']), ...(ZONE_ID_PATTERN.test(zoneId) ? [] : ['zoneId'])];
+  return ZONE_ID_PATTERN.test(zoneId) ? { target: { zoneId }, missing: [] } : { target: null, missing: ['zoneId'] };
+}
+
+/**
+ * The client for a zone, or null with the list of what is missing: `token`
+ * when the admin token is not set, `zoneId` when the site's zone id is not
+ * set or is not a zone id.
+ */
+function clientOf(deps, zone) {
+  const token = readSetting(deps.env, TOKEN_SETTING);
+  const { target, missing: zoneMissing } = zoneTarget(deps, zone);
+  const missing = [...(token ? [] : ['token']), ...zoneMissing];
   if (missing.length) return { client: null, missing };
-  return { client: createCloudflareClient({ token, zoneId, ...deps.doubles }), missing };
+  return { client: createCloudflareClient({ token, ...target, ...deps.doubles }), missing };
 }
 
 /**
@@ -102,14 +118,28 @@ function answerError({ error, label, request, context }) {
   return errorResponse(context, 'The Cloudflare request failed.', error, 500, request);
 }
 
-/** One route: the role, then the client (503 when not set up), then the work. */
+/**
+ * The work for one request: the zone it names (400 for any other), then the
+ * client (503 when not set up), then the route's own work. Every error is
+ * answered by answerError.
+ */
+async function begin(deps, call, { label, work, needsClient }) {
+  try {
+    const zone = zoneOf(call.request);
+    const { client, missing } = clientOf(deps, zone);
+    if (needsClient && !client) return fail(503, 'CLOUDFLARE_NOT_CONFIGURED', notConfiguredMessage(missing), { missing });
+    return await work({ deps, ...call, client, missing, zone });
+  } catch (error) {
+    return answerError({ error, label, request: call.request, context: call.context });
+  }
+}
+
+/** One route: the role, then the zone and the client, then the work. */
 function route(deps, [label, role, work, { needsClient = true } = {}]) {
   return async (request, context) => {
     const auth = await deps.guard.requireRole(request, role);
     if (auth.error) return auth.error;
-    const { client, missing } = clientOf(deps);
-    if (needsClient && !client) return fail(503, 'CLOUDFLARE_NOT_CONFIGURED', notConfiguredMessage(missing), { missing });
-    return work({ deps, request, context, client, missing, user: auth.user }).catch((error) => answerError({ error, label, request, context }));
+    return begin(deps, { request, context, user: auth.user }, { label, work, needsClient });
   };
 }
 

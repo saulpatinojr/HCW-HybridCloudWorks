@@ -14,14 +14,19 @@ import { terraformSource } from '../../../test/terraform-source.js';
 import {
   APEX_WILDCARD_REASON,
   EDITABLE_PHASES,
+  LAB_ZONE,
+  MANAGED_ZONES,
   OWNER_ONLY_SETTINGS,
   PROTECTED_DNS_NAMES,
   PROTECTED_PHASES,
   READ_ONLY_PHASE_REASON,
+  SITE_ZONE,
+  UNMANAGED_ZONE_REASON,
   ZONE_APEX,
   checkDnsName,
   dnsNameProtection,
   isEditablePhase,
+  managedZone,
   normalizeDnsName,
   ownerOnlySettingReason,
   phaseProtection,
@@ -223,5 +228,56 @@ describe('the module itself', () => {
   it('imports nothing, so the browser can mirror it', () => {
     const source = readFileSync(join(ROOT, 'functions/src/lib/cloudflare/protected.js'), 'utf8');
     expect(source).not.toMatch(/^\s*import\s/m);
+  });
+});
+
+describe('the managed zones (#1911)', () => {
+  it('names exactly the site’s zone, first, and the lab zone, each with its role', () => {
+    expect(MANAGED_ZONES.map((zone) => zone.name)).toEqual([ZONE_APEX, LAB_ZONE]);
+    expect(SITE_ZONE).toBe(ZONE_APEX);
+    for (const zone of MANAGED_ZONES) expect(zone.role.length, zone.name).toBeGreaterThan(40);
+  });
+
+  it('names the lab zone Caddy writes into (infra-lab/variables.tf, the delegation target)', () => {
+    expect(defaultOf(labVariables, 'lab_acme_challenge_target')).toBe(`_acme-challenge.lab.${LAB_ZONE}`);
+  });
+
+  it('reads a zone name in any letter case, and nothing else', () => {
+    expect(managedZone('HybridCloudInsights.com')?.name).toBe(LAB_ZONE);
+    for (const name of ['', 'example.com', `${LAB_ZONE}.`, ` ${LAB_ZONE}`, `x.${LAB_ZONE}`, null, undefined]) {
+      expect(managedZone(name), String(name)).toBeNull();
+    }
+  });
+
+  it('protects only the certificate checks in the lab zone, with Caddy’s reason', () => {
+    const lab = (name) => dnsNameProtection(name, LAB_ZONE);
+    for (const name of ['_acme-challenge.lab', `_acme-challenge.lab.${LAB_ZONE}`, '_acme-challenge', '*._acme-challenge.lab', '_acme-challenge-x']) {
+      expect(lab(name), name).toMatch(/Caddy.*lab-host\/README\.md/);
+    }
+    expect(lab('*')).toBe(APEX_WILDCARD_REASON);
+    for (const name of ['@', LAB_ZONE, 'www', 'lab', 'note', '*.lab']) expect(lab(name), name).toBeNull();
+  });
+
+  it('keeps every site protection out of the lab zone, and the lab zone’s apex out of the site’s', () => {
+    expect(dnsNameProtection('www', LAB_ZONE)).toBeNull();
+    expect(dnsNameProtection(`www.${ZONE_APEX}`, ZONE_APEX)).not.toBeNull();
+    expect(dnsNameProtection('@')).not.toBeNull();
+  });
+
+  it('refuses everything in a zone that is not managed', () => {
+    expect(dnsNameProtection('blog', 'example.com')).toBe(UNMANAGED_ZONE_REASON);
+  });
+
+  it('keeps the allow-list of phases the same in the lab zone, without the site’s Terraform reason', () => {
+    expect(phaseProtection('http_request_late_transform', LAB_ZONE)).toBe(READ_ONLY_PHASE_REASON);
+    expect(phaseProtection('http_request_late_transform', ZONE_APEX)).toMatch(/origin secret rule/);
+    for (const entry of EDITABLE_PHASES) expect(phaseProtection(entry.phase, LAB_ZONE), entry.phase).toBeNull();
+    expect(phaseProtection('http_request_origin', LAB_ZONE)).toBe(READ_ONLY_PHASE_REASON);
+  });
+
+  it('holds no Terraform record in the lab zone: infra-lab writes only into the site’s zone', () => {
+    const zoneIds = [...terraformSource(join(ROOT, 'infra-lab')).matchAll(/^\s*zone_id\s*=\s*(\S+)/gm)].map((match) => match[1]);
+    expect(zoneIds.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(zoneIds)).toEqual(new Set(['var.cloudflare_zone_id']));
   });
 });

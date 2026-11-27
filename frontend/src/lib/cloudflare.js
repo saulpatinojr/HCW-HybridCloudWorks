@@ -19,6 +19,10 @@
  *                                              rules { rules,
  *                                              expectedVersion }           super_admin
  *
+ * Every call takes the zone last (#1911): a managed zone's name, sent as
+ * `?zone=`, and the site's zone on the server when it is left out. The
+ * server refuses any zone it does not manage.
+ *
  * Every id that goes into a path is checked here first, with the same rule
  * the server uses (functions/src/lib/cloudflare/zone-routes.js,
  * dns-routes.js and rules-routes.js, wrapped by handlers.js), so a bad value
@@ -42,54 +46,67 @@ export const MAX_PURGE_FILES = 30;
 /** The code the API answers with while the token or zone id is not set. */
 export const NOT_CONFIGURED = 'CLOUDFLARE_NOT_CONFIGURED';
 
+/** The shape of a zone name: lower-case letters, digits, dots and hyphens. */
+export const ZONE_NAME = /^[a-z0-9.-]{1,253}$/;
+
 function checked(pattern, value, what) {
   const text = String(value ?? '');
   if (!pattern.test(text)) throw new Error(`That is not a valid ${what}.`);
   return encodeURIComponent(text);
 }
 
-export function readCloudflareStatus() {
-  return getJSON(`${BASE}/status`);
+/** A route, with `?zone=` when a zone is named. */
+function at(route, zone) {
+  if (zone === undefined || zone === null) return route;
+  return `${route}?zone=${checked(ZONE_NAME, zone, 'zone name')}`;
 }
 
-export function readCloudflareSettings() {
-  return getJSON(`${BASE}/settings`);
+export function readCloudflareStatus(zone) {
+  return getJSON(at(`${BASE}/status`, zone));
 }
 
-export function saveCloudflareSetting(settingId, value) {
-  return sendJSON(`${BASE}/settings/${checked(SETTING_ID, settingId, 'setting id')}`, 'PATCH', {
-    value,
-  });
+export function readCloudflareSettings(zone) {
+  return getJSON(at(`${BASE}/settings`, zone));
+}
+
+export function saveCloudflareSetting(settingId, value, zone) {
+  const route = at(`${BASE}/settings/${checked(SETTING_ID, settingId, 'setting id')}`, zone);
+  return sendJSON(route, 'PATCH', { value });
 }
 
 /** `{ everything: true }` or `{ files: [url, …] }`, nothing else. */
-export function purgeCloudflareCache(request) {
+export function purgeCloudflareCache(request, zone) {
   const body =
     request?.everything === true ? { everything: true } : { files: [...(request?.files ?? [])] };
-  return postJSON(`${BASE}/purge`, body);
+  return postJSON(at(`${BASE}/purge`, zone), body);
 }
 
-export function readCloudflareDns() {
-  return getJSON(`${BASE}/dns`);
+export function readCloudflareDns(zone) {
+  return getJSON(at(`${BASE}/dns`, zone));
 }
 
-export function createCloudflareDnsRecord(record) {
-  return postJSON(`${BASE}/dns`, record);
+export function createCloudflareDnsRecord(record, zone) {
+  return postJSON(at(`${BASE}/dns`, zone), record);
 }
 
-export function updateCloudflareDnsRecord(recordId, patch) {
+export function updateCloudflareDnsRecord(recordId, patch, zone) {
   // Cloudflare's record ids are 32 lower-case hex characters; the server checks them too.
-  return sendJSON(`${BASE}/dns/${checked(RECORD_ID, recordId, 'record id')}`, 'PATCH', patch);
+  const route = at(`${BASE}/dns/${checked(RECORD_ID, recordId, 'record id')}`, zone);
+  return sendJSON(route, 'PATCH', patch);
 }
 
-export function readCloudflareRulesets() {
-  return getJSON(`${BASE}/rulesets`);
+export function readCloudflareRulesets(zone) {
+  return getJSON(at(`${BASE}/rulesets`, zone));
 }
 
-export function readCloudflarePhase(phase) {
-  return getJSON(`${BASE}/rulesets/phases/${checked(PHASE_ID, phase, 'rule phase')}`);
+/** One phase's route, checked. */
+const phaseRoute = (phase, zone) =>
+  at(`${BASE}/rulesets/phases/${checked(PHASE_ID, phase, 'rule phase')}`, zone);
+
+export function readCloudflarePhase(phase, zone) {
+  return getJSON(phaseRoute(phase, zone));
 }
 
-export function replaceCloudflarePhase(phase, body) {
-  return sendJSON(`${BASE}/rulesets/phases/${checked(PHASE_ID, phase, 'rule phase')}`, 'PUT', body);
+export function replaceCloudflarePhase(phase, body, zone) {
+  return sendJSON(phaseRoute(phase, zone), 'PUT', body);
 }

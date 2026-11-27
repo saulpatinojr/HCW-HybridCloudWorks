@@ -34,7 +34,9 @@ import {
   settingLabel,
   settingMatches,
   ttlText,
+  zoneStatus,
 } from './cloudflareView';
+import { cloudflareParams, tabHref } from './tabs';
 
 const ZONE = 'example.com';
 const STATUS = {
@@ -373,5 +375,56 @@ describe('a saved change that needs checking', () => {
       /saved just before yours/
     );
     expect(changeWarning({ audited: true, concurrentWrite: false })).toBeNull();
+  });
+});
+
+describe('the status for the picked zone (#1911)', () => {
+  const SITE = 'hybridcloudworks.com';
+  const LAB = 'hybridcloudinsights.com';
+  const answer = (name) => ({ configured: true, ...(name ? { managed: { name } } : {}) });
+  const read = (data, pending = false) => ({ loaded: Boolean(data), data, pending });
+
+  it('uses an answer about the picked zone', () => {
+    expect(zoneStatus(read(answer(LAB)), LAB)).toEqual({ status: answer(LAB), otherZone: false });
+    expect(zoneStatus(read(answer(SITE)), SITE)).toEqual({
+      status: answer(SITE),
+      otherZone: false,
+    });
+  });
+
+  it('reads an answer that names no zone (a server before #1911) as the site’s', () => {
+    expect(zoneStatus(read(answer(null)), SITE).status).toEqual(answer(null));
+    expect(zoneStatus(read(answer(null)), LAB)).toEqual({ status: null, otherZone: true });
+  });
+
+  it('shows nothing while the picked zone’s read is out, and says so once another zone’s answer has settled', () => {
+    expect(zoneStatus(read(answer(SITE), true), LAB)).toEqual({ status: null, otherZone: false });
+    expect(zoneStatus(read(answer(SITE)), LAB)).toEqual({ status: null, otherZone: true });
+    expect(zoneStatus(read(null), LAB)).toEqual({ status: null, otherZone: false });
+  });
+});
+
+describe('the page address (#1911)', () => {
+  it('keeps the tab, and the zone unless it is the site’s', () => {
+    expect(String(cloudflareParams('tab=dns', { zone: 'hybridcloudinsights.com' }))).toBe(
+      'tab=dns&zone=hybridcloudinsights.com'
+    );
+    expect(String(cloudflareParams('tab=dns&zone=hybridcloudinsights.com', { tab: 'rules' }))).toBe(
+      'tab=rules&zone=hybridcloudinsights.com'
+    );
+    expect(
+      String(
+        cloudflareParams('tab=dns&zone=hybridcloudinsights.com', { zone: 'hybridcloudworks.com' })
+      )
+    ).toBe('tab=dns');
+    expect(String(cloudflareParams('tab=dns&zone=example.com', {}))).toBe('tab=dns');
+    expect(String(cloudflareParams('program=x', { tab: 'cache' }))).toBe('program=x&tab=cache');
+  });
+
+  it('links a tab in the site’s zone by default, and in the lab zone when asked', () => {
+    expect(tabHref('dns')).toBe('/admin/cloudflare?tab=dns');
+    expect(tabHref('rules', 'hybridcloudinsights.com')).toBe(
+      '/admin/cloudflare?tab=rules&zone=hybridcloudinsights.com'
+    );
   });
 });

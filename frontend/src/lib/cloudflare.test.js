@@ -85,3 +85,46 @@ describe('the Cloudflare routes', () => {
     expect(getJSON).not.toHaveBeenCalled();
   });
 });
+
+describe('the zone (#1911)', () => {
+  const LAB = 'hybridcloudinsights.com';
+  const ID = '0123456789abcdef0123456789abcdef';
+
+  it('names the zone on every call when one is given, and leaves it off when not', async () => {
+    await api.readCloudflareStatus(LAB);
+    await api.readCloudflareSettings(LAB);
+    await api.readCloudflareDns(LAB);
+    await api.readCloudflareRulesets(LAB);
+    await api.readCloudflarePhase('http_ratelimit', LAB);
+    await api.readCloudflareStatus();
+    expect(getJSON.mock.calls.map(([route]) => route)).toEqual([
+      `cms/cloudflare/status?zone=${LAB}`,
+      `cms/cloudflare/settings?zone=${LAB}`,
+      `cms/cloudflare/dns?zone=${LAB}`,
+      `cms/cloudflare/rulesets?zone=${LAB}`,
+      `cms/cloudflare/rulesets/phases/http_ratelimit?zone=${LAB}`,
+      'cms/cloudflare/status',
+    ]);
+    await api.saveCloudflareSetting('brotli', 'on', LAB);
+    await api.updateCloudflareDnsRecord(ID, { content: 'x' }, LAB);
+    await api.replaceCloudflarePhase('http_ratelimit', { rules: [] }, LAB);
+    expect(sendJSON.mock.calls.map(([route]) => route)).toEqual([
+      `cms/cloudflare/settings/brotli?zone=${LAB}`,
+      `cms/cloudflare/dns/${ID}?zone=${LAB}`,
+      `cms/cloudflare/rulesets/phases/http_ratelimit?zone=${LAB}`,
+    ]);
+    await api.createCloudflareDnsRecord({ type: 'A' }, LAB);
+    await api.purgeCloudflareCache({ everything: true }, LAB);
+    expect(postJSON.mock.calls.map(([route]) => route)).toEqual([
+      `cms/cloudflare/dns?zone=${LAB}`,
+      `cms/cloudflare/purge?zone=${LAB}`,
+    ]);
+  });
+
+  it('refuses a zone that is not a plain name before any request', () => {
+    for (const zone of ['', 'a b', 'x&zone=evil', 'HYBRIDCLOUDINSIGHTS.COM/..']) {
+      expect(() => api.readCloudflareDns(zone), zone).toThrow(/not a valid zone name/);
+    }
+    expect(getJSON).not.toHaveBeenCalled();
+  });
+});

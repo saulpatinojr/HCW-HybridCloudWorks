@@ -2,7 +2,8 @@
  * cloudflare/zone-routes.js — the Cloudflare page's status, zone settings
  * and cache purge routes (#1905). handlers.js wraps each in the role check
  * and the error handling; each is handed one `call` object: { deps,
- * request, context, client, user }.
+ * request, context, client, user, zone } (zone: the managed zone the
+ * request names, protected.js MANAGED_ZONES).
  *
  * A change is checked in this order, so a bad request never reaches
  * Cloudflare: the path value, the body's shape, what the caller may change
@@ -15,15 +16,7 @@ import { CloudflareError } from './client.js';
 import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './input.js';
 import { recordChange, requireOurZone } from './record.js';
 import { notConfiguredMessage } from './prerequisites.js';
-import {
-  EDITABLE_PHASES,
-  OWNER_ONLY_SETTINGS,
-  PROTECTED_DNS_NAMES,
-  PROTECTED_DNS_PREFIXES,
-  PROTECTED_PHASES,
-  ZONE_APEX,
-  ownerOnlySettingReason,
-} from './protected.js';
+import { EDITABLE_PHASES, MANAGED_ZONES, OWNER_ONLY_SETTINGS, SITE_ZONE, managedZone, ownerOnlySettingReason } from './protected.js';
 
 export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 
@@ -39,13 +32,24 @@ export const FAMILIES = Object.freeze([
   Object.freeze({ id: 'cache', label: 'Cache settings (purging needs its own permission, which cannot be tested without a purge)' }),
 ]);
 
-/** What `protected.js` holds, as the status route shows it. */
-export const PROTECTED_VIEW = Object.freeze({
-  dnsNames: PROTECTED_DNS_NAMES.map(({ name, reason }) => ({ name, reason })),
-  dnsPrefixes: PROTECTED_DNS_PREFIXES.map(({ prefix, reason }) => ({ prefix, reason })),
-  phases: PROTECTED_PHASES.map(({ phase, reason }) => ({ phase, reason })),
-  editablePhases: EDITABLE_PHASES.map(({ phase, description }) => ({ phase, description })),
-  ownerOnlySettings: OWNER_ONLY_SETTINGS.map(({ setting, reason }) => ({ setting, reason })),
+/** What `protected.js` holds for one managed zone, as the status route shows it. */
+export function protectedView(zone) {
+  return {
+    dnsNames: zone.dnsNames.map(({ name, reason }) => ({ name, reason })),
+    dnsPrefixes: zone.dnsPrefixes.map(({ prefix, reason }) => ({ prefix, reason })),
+    phases: zone.phases.map(({ phase, reason }) => ({ phase, reason })),
+    editablePhases: EDITABLE_PHASES.map(({ phase, description }) => ({ phase, description })),
+    ownerOnlySettings: OWNER_ONLY_SETTINGS.map(({ setting, reason }) => ({ setting, reason })),
+  };
+}
+
+/** The site zone's view, as before #1911. */
+export const PROTECTED_VIEW = Object.freeze(protectedView(managedZone(SITE_ZONE)));
+
+/** The zone a status answer is about, and every zone the page may pick, each by name and role. */
+const zoneViews = (zone) => ({
+  managed: { name: zone.name, role: zone.role },
+  managedZones: MANAGED_ZONES.map(({ name, role }) => ({ name, role })),
 });
 
 /** The zone's id, name, status and plan, or the sentence saying why it could not be read. */
@@ -61,14 +65,17 @@ async function zoneSummary(client) {
 }
 
 /**
- * GET cms/cloudflare/status. 200 even when not set up, with `missing`
- * naming `token` and/or `zoneId` and a sentence saying where each comes
- * from. Never holds a rule, a record or a value.
+ * GET cms/cloudflare/status[?zone=]. One zone's status: 200 even when not
+ * set up, with `missing` naming `token` and/or `zoneId` and a sentence
+ * saying where each comes from. `managed` names the zone the answer is
+ * about and its role; `managedZones` every zone the page may pick. Never
+ * holds a rule, a record or a value.
  */
-export async function getStatus({ client, missing = [] }) {
+export async function getStatus({ client, missing = [], zone: managed }) {
+  const views = { ...zoneViews(managed), protected: protectedView(managed) };
   if (!client) {
     const message = notConfiguredMessage(missing);
-    return json(200, { ok: true, configured: false, missing, message, zone: null, families: [], protected: PROTECTED_VIEW });
+    return json(200, { ok: true, configured: false, missing, message, zone: null, families: [], ...views });
   }
   const { zone, zoneError } = await zoneSummary(client);
   const readable = await Promise.all(FAMILIES.map((family) => client.canRead(family.id)));
@@ -79,7 +86,7 @@ export async function getStatus({ client, missing = [] }) {
     zone,
     zoneError,
     families: FAMILIES.map((family, index) => ({ ...family, readable: readable[index] })),
-    protected: PROTECTED_VIEW,
+    ...views,
   });
 }
 
@@ -117,13 +124,13 @@ function refuseOwnerOnly(user, settingId) {
  * settings hold no secrets).
  */
 export async function patchSetting(call) {
-  const { request, client, user } = call;
+  const { request, client, user, zone } = call;
   const settingId = settingIdOf(request);
   const body = await bodyOf(request);
   refuseUnknownFields(body, ['value']);
   if (!Object.hasOwn(body, 'value')) throw bad('Send { "value": ... }.');
   refuseOwnerOnly(user, settingId);
-  await requireOurZone(client);
+  await requireOurZone(client, zone.name);
   const before = (await client.getSetting(settingId))?.value ?? null;
   const result = await client.patchSetting(settingId, body.value);
   const saved = settingView({ ...result, id: result?.id ?? settingId, value: result?.value ?? body.value });
@@ -132,7 +139,7 @@ export async function patchSetting(call) {
 }
 
 /** Whether a host is the zone or one of its names. */
-const onZone = (host) => host === ZONE_APEX || host.endsWith(`.${ZONE_APEX}`);
+const onZone = (host, zoneName) => host === zoneName || host.endsWith(`.${zoneName}`);
 
 /** A URL from a purge list, or null when it is not text of a sane length or not a URL. */
 function urlOrNull(value) {
@@ -145,14 +152,14 @@ function urlOrNull(value) {
 }
 
 /** Whether a purge address is https, carries no sign-in, and is on the zone's own names. */
-function purgeable(url) {
+function purgeable(url, zoneName) {
   if (!url || url.protocol !== 'https:') return false;
   if (url.username || url.password) return false;
-  return onZone(url.hostname.toLowerCase());
+  return onZone(url.hostname.toLowerCase(), zoneName);
 }
 
 /** A purge request, checked: everything, or 1 to 30 https URLs on the zone's own names. */
-function purgeBody(body) {
+function purgeBody(body, zoneName) {
   refuseUnknownFields(body, ['everything', 'files']);
   if (body.everything !== undefined) {
     if (body.everything !== true || body.files !== undefined) throw bad('Send { "everything": true } or { "files": [...] }, not both.');
@@ -164,17 +171,17 @@ function purgeBody(body) {
   }
   const checked = files.map((value, index) => {
     const url = urlOrNull(value);
-    if (!purgeable(url)) throw bad(`Address ${index + 1} must be an https address on ${ZONE_APEX} or one of its subdomains.`);
+    if (!purgeable(url, zoneName)) throw bad(`Address ${index + 1} must be an https address on ${zoneName} or one of its subdomains.`);
     return url.toString();
   });
   return { files: checked };
 }
 
-/** POST cms/cloudflare/purge { everything: true } or { files }. */
+/** POST cms/cloudflare/purge { everything: true } or { files } (on the zone's own names). */
 export async function purge(call) {
-  const { request, client } = call;
-  const sent = purgeBody(await bodyOf(request));
-  await requireOurZone(client);
+  const { request, client, zone } = call;
+  const sent = purgeBody(await bodyOf(request), zone.name);
+  await requireOurZone(client, zone.name);
   await client.purge(sent);
   const everything = sent.purge_everything === true;
   const details = everything ? { family: 'cache', purge: 'everything' } : { family: 'cache', purge: 'files', count: sent.files.length };
