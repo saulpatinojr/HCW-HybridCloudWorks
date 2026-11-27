@@ -148,6 +148,19 @@ export function namesItsRecord(change) {
   return known(change.recordName) && known(change.recordType);
 }
 
+/**
+ * What makes a change the owner's own dashboard edit of a record Terraform
+ * does not manage: a dashboard session, a person, the owner, an entry that
+ * names its record, and not one of the two site CNAMEs (#1929).
+ */
+const OWNER_DASHBOARD_CHECKS = [
+  (change) => change.actorContext === 'dash',
+  (change) => change.actorType === 'user',
+  (change, settings) => isOwner(change, settings),
+  (change) => namesItsRecord(change),
+  (change) => !isTerraformSiteCname(change),
+];
+
 /** The two things Cloudflare's own certificate validation does to its TXT record. */
 const DCV_ACTIONS = new Set(['create', 'delete']);
 
@@ -233,12 +246,7 @@ export const ALLOWLIST = [
       `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
       'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',
-    matches: (change, settings) =>
-      change.actorContext === 'dash' &&
-      change.actorType === 'user' &&
-      isOwner(change, settings) &&
-      namesItsRecord(change) &&
-      !isTerraformSiteCname(change),
+    matches: (change, settings) => OWNER_DASHBOARD_CHECKS.every((check) => check(change, settings)),
   },
   {
     id: 'cloudflare-dcv',
