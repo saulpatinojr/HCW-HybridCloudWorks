@@ -40,12 +40,11 @@ const isVerb = (n) => (n === 1 ? 'is' : 'are');
  * rule whose action is `log` (paid plans only) records requests without
  * limiting any, so it does not count either.
  */
-export const isLimitingRule = (rule) =>
-  Boolean(rule) &&
-  typeof rule === 'object' &&
-  !Array.isArray(rule) &&
-  (rule.enabled === undefined || rule.enabled === true) &&
-  String(rule.action ?? '').toLowerCase() !== 'log';
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const isSwitchedOn = (rule) => rule.enabled === undefined || rule.enabled === true;
+const isNotLogOnly = (rule) => String(rule.action ?? '').toLowerCase() !== 'log';
+
+export const isLimitingRule = (rule) => isPlainObject(rule) && [isSwitchedOn, isNotLogOnly].every((check) => check(rule));
 
 function onSentence(on, total) {
   if (on === total) return `${rulesWord(on)} ${isVerb(on)} on.`;

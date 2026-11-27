@@ -48,15 +48,15 @@ const notUpdated = () => ({
 });
 
 /** A verdict the page can show as it is: a known state with its status, a count and a sentence. */
+const SHOWABLE_CHECKS = [
+  (verdict) => Object.hasOwn(KNOWN, verdict.state) && KNOWN[verdict.state] === verdict.status,
+  (verdict) => Number.isSafeInteger(verdict.count) && verdict.count >= 0,
+  (verdict) => typeof verdict.sentence === 'string' && verdict.sentence.trim() !== '',
+];
 const isShowable = (verdict) =>
   Boolean(verdict) &&
   typeof verdict === 'object' &&
-  Object.hasOwn(KNOWN, verdict.state) &&
-  KNOWN[verdict.state] === verdict.status &&
-  Number.isSafeInteger(verdict.count) &&
-  verdict.count >= 0 &&
-  typeof verdict.sentence === 'string' &&
-  verdict.sentence.trim() !== '';
+  SHOWABLE_CHECKS.every((check) => check(verdict));
 
 /** The verdict on a phase read that answered: the server's `rateLimit`, field by field, or "not updated". */
 export function rateLimitVerdict(answer) {
