@@ -16,7 +16,7 @@ import { CloudflareError } from './client.js';
 import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './input.js';
 import { actorOf, recordChange, requireOurZone } from './record.js';
 import { notConfiguredMessage } from './prerequisites.js';
-import { EDITABLE_PHASES, MANAGED_ZONES, OWNER_ONLY_SETTINGS, SITE_ZONE, managedZone, ownerOnlySettingReason } from './protected.js';
+import { EDITABLE_PHASES, MANAGED_ZONES, OWNER_ONLY_SETTINGS, SITE_ZONE, managedZone, onZone, ownerOnlySettingReason } from './protected.js';
 
 export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 
@@ -138,9 +138,6 @@ export async function patchSetting(call) {
   const audited = await recordChange(call, { family: 'settings', settingId, before, after: saved.value }, `changed the Cloudflare zone setting ${settingId}.`);
   return json(200, { ok: true, setting: saved, audited });
 }
-
-/** Whether a host is the zone or one of its names. */
-const onZone = (host, zoneName) => host === zoneName || host.endsWith(`.${zoneName}`);
 
 /** A URL from a purge list, or null when it is not text of a sane length or not a URL. */
 function urlOrNull(value) {

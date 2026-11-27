@@ -107,7 +107,7 @@ const methods = (api) => api.calls.map((call) => `${call.method} ${call.path.rep
 const WRITES = (api) => api.calls.filter((call) => call.method !== 'GET');
 
 /** A redirect to an https:// address, the kind an agent key may make (#1933). */
-const TO_HTTPS = Object.freeze({ from_value: { target_url: { value: 'https://example.com/' }, status_code: 301 } });
+const TO_HTTPS = Object.freeze({ from_value: { target_url: { value: `https://www.${ZONE_APEX}/` }, status_code: 301 } });
 const RULE = { expression: 'true', action: 'redirect', action_parameters: TO_HTTPS };
 
 /** Every route, with a request that would pass its checks. */
@@ -1458,7 +1458,7 @@ describe('rules', () => {
       expect(WRITES(api)).toEqual([]);
       expect(store.upsertDoc).not.toHaveBeenCalled();
       expect(notifier.notifyTelegram).not.toHaveBeenCalled();
-      expect(res.body.error).not.toMatch(/redir-|rw-|docs\.|example\.net|\/old|\/new/);
+      expect(res.body.error).not.toMatch(/redir-|rw-|docs\.|example\.net|evil|attacker|8443|\/old|\/new/);
       expect(logs(context)).not.toMatch(/redir-|rw-|docs\.|example\.net|\/old|\/new|http:\/\//);
     }
 
@@ -1474,7 +1474,7 @@ describe('rules', () => {
         ['no target at all', { from_value: { status_code: 301 } }],
         ['both a fixed and a worked-out target', { from_value: { target_url: { value: 'https://example.net/', expression: 'concat("http://", http.host)' } } }],
         ['a list of redirects instead of one target', { from_list: { name: 'list', key: 'http.request.full_uri' } }],
-        ['a field Cloudflare does not document next to from_value', { from_value: { target_url: { value: 'https://example.net/' } }, extra: true }],
+        ['a field Cloudflare does not document next to from_value', { from_value: { target_url: { value: `https://www.${ZONE_APEX}/` } }, extra: true }],
       ])('refuses an agent key adding a redirect with %s', async (_label, parameters) => {
         const result = await send(NETWORK_GUY, REDIRECT, null, [redirect(parameters)], null);
         expectRefused(result, ['https://', 'always_use_https', '(rule 1)'], HTTPS_REDIRECT_REASON);
@@ -1486,22 +1486,52 @@ describe('rules', () => {
       });
 
       it.each([
-        ['a fixed https:// address', fixed('https://example.net/')],
-        ['a fixed HTTPS:// address in capitals', fixed('HTTPS://example.net/')],
-        ['concat( starting with an https:// string', worked('concat("https://example.net", http.request.uri.path)')],
-        ['concat( starting with an HTTPS:// string in capitals', worked('concat("HTTPS://example.net", http.request.uri.path)')],
-        ['concat( starting with a raw https:// string', worked('concat(r"https://example.net", http.request.uri.path)')],
-        ['concat( starting with a raw https:// string with #', worked('concat(r#"https://example.net"#, http.request.uri.path)')],
-        ['an https:// string on its own', worked('"https://example.net/"')],
+        ['a fixed address on another site', fixed('https://example.net/')],
+        ['a fixed address on a name that only contains the zone', fixed(`https://evil.com.${ZONE_APEX}.attacker.net/`)],
+        ['a fixed address on a name that only ends like the zone', fixed(`https://evil${ZONE_APEX}/`)],
+        ['a fixed address with the zone as a user name before another site', fixed(`https://${ZONE_APEX}@evil.com/`)],
+        ['a fixed address with a port', fixed(`https://${ZONE_APEX}:8443/`)],
+        ['a fixed address with a backslash, which browsers read as a slash', fixed(`https://${ZONE_APEX}\\@evil.com/`)],
+        ['a worked-out address on another site', worked('concat("https://example.net/", http.request.uri.path)')],
+        ['a worked-out address whose host is only https://, the rest from a field', worked('concat("https://", http.host, http.request.uri.path)')],
+        ['a worked-out address whose next part carries the host on', worked(`concat("https://${ZONE_APEX}", ".evil.com/")`)],
+        ['a worked-out address with a port', worked(`concat("https://${ZONE_APEX}:8443/", http.request.uri.path)`)],
+        ['a worked-out address with a user name before another site', worked(`"https://${ZONE_APEX}@evil.com/"`)],
+        ['a worked-out address on a name that only contains the zone', worked(`"https://evil.com.${ZONE_APEX}.attacker.net/"`)],
+        ['a worked-out address with an empty part in the host', worked(`"https://.${ZONE_APEX}/"`)],
+        ['a worked-out address whose string holds an escape', worked(`"https://${ZONE_APEX}\\"/"`)],
+      ])('refuses an agent key adding a redirect to %s (#1933 review)', async (_label, parameters) => {
+        const result = await send(NETWORK_GUY, REDIRECT, null, [redirect(parameters)], null);
+        expectRefused(result, ["the site's own zones", ZONE_APEX, LAB_ZONE, 'always_use_https'], HTTPS_REDIRECT_REASON);
+      });
+
+      it.each([
+        ['the bare zone, fixed', fixed(`https://${ZONE_APEX}/`)],
+        ['a subdomain, fixed', fixed(`https://www.${ZONE_APEX}/blog?x=1`)],
+        ['the lab zone, fixed, in capitals', fixed(`HTTPS://${LAB_ZONE.toUpperCase()}/`)],
+        ['concat( with the bare zone just before the path', worked(`concat("https://${ZONE_APEX}", http.request.uri.path)`)],
+        ['concat( with a subdomain just before the path and query', worked(`concat("https://www.${ZONE_APEX}", http.request.uri)`)],
+        ['concat( with a subdomain and a slash, anything after', worked(`concat("https://docs.${ZONE_APEX}/", http.request.uri.query)`)],
+        ['concat( starting with an HTTPS:// string in capitals', worked(`concat("HTTPS://${ZONE_APEX}", http.request.uri.path)`)],
+        ['concat( starting with a raw https:// string', worked(`concat(r"https://${ZONE_APEX}", raw.http.request.uri.path)`)],
+        ['concat( starting with a raw https:// string with #', worked(`concat(r#"https://${ZONE_APEX}"#, http.request.uri.path)`)],
+        ['an https:// string on its own, with no path', worked(`"https://www.${ZONE_APEX}"`)],
+        ['an https:// string on its own, with a path', worked(`"https://www.${ZONE_APEX}/landing"`)],
       ])('lets an agent key add a redirect to %s', async (_label, parameters) => {
         const result = await send(NETWORK_GUY, REDIRECT, null, [redirect(parameters)], null);
         expect(result.res.status).toBe(200);
         expect(WRITES(result.api)).toHaveLength(1);
       });
 
-      it('lets the owner add any redirect, switch one off and remove one', async () => {
+      it('lets the owner add any redirect, to another site too, switch one off and remove one', async () => {
         const held = { id: 'redir-1', ...redirect(fixed('https://example.net/')), enabled: true };
-        const rules = [redirect(fixed('http://example.net/')), redirect(worked('wildcard_replace(http.request.full_uri, r"*", r"http://${1}")')), { ...held, enabled: false }];
+        const rules = [
+          redirect(fixed('http://example.net/')),
+          redirect(fixed(`https://${ZONE_APEX}@evil.com:8443/`)),
+          redirect(worked('concat("https://", http.host, http.request.uri.path)')),
+          redirect(worked('wildcard_replace(http.request.full_uri, r"*", r"http://${1}")')),
+          { ...held, enabled: false },
+        ];
         expect((await send(PERSON, REDIRECT, [held], rules)).res.status).toBe(200);
         expect((await send(PERSON, REDIRECT, [held, UPGRADE], [UPGRADE])).res.status).toBe(200);
       });
@@ -1512,14 +1542,14 @@ describe('rules', () => {
       const OLD_HTTP = { id: 'redir-old', ...redirect(fixed('http://example.net/')), enabled: false };
 
       it('lets an agent key keep the owner’s redirects as they are, a description changed, and add https:// ones after them', async () => {
-        const rules = [{ ...UPGRADE, description: 'Send http to https' }, OLD_HTTP, redirect(fixed('https://example.net/'))];
+        const rules = [{ ...UPGRADE, description: 'Send http to https' }, OLD_HTTP, redirect(fixed(`https://www.${ZONE_APEX}/`))];
         const result = await send(NETWORK_GUY, REDIRECT, [UPGRADE, OLD_HTTP], rules);
         expect(result.res.status).toBe(200);
         expect(WRITES(result.api)).toHaveLength(1);
       });
 
       it('lets an agent key add a redirect that matches on the scheme after the ones there are', async () => {
-        const added = { expression: 'http.request.scheme eq "http"', action: 'redirect', action_parameters: worked('concat("https://", http.host, http.request.uri.path)') };
+        const added = { expression: 'http.request.scheme eq "http"', action: 'redirect', action_parameters: worked(`concat("https://www.${ZONE_APEX}", http.request.uri.path)`) };
         expect((await send(NETWORK_GUY, REDIRECT, [UPGRADE], [UPGRADE, added])).res.status).toBe(200);
       });
 

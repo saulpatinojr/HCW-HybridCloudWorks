@@ -186,6 +186,12 @@ export const MANAGED_ZONES = Object.freeze(
   ].map(Object.freeze)
 );
 
+/** Whether a host name (in lower case) is a zone's apex or one of its subdomains. */
+export const onZone = (host, zoneName) => host === zoneName || host.endsWith(`.${zoneName}`);
+
+/** Whether a host name (in lower case) is on one of the managed zones: an apex or a subdomain of one. */
+export const onManagedZone = (host) => MANAGED_ZONES.some((zone) => onZone(host, zone.name));
+
 /** The managed zone a name means (any letter case), or null when it is not one. */
 export function managedZone(name) {
   const wanted = String(name ?? '').toLowerCase();
@@ -235,11 +241,16 @@ const OWNER_STEP = 'Change it on the Cloudflare page yourself, signed in as the 
  * and sha1_support and tls_1_2_only (the zone settings API,
  * https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/edit/).
  * Every other setting stays open to an agent key whose switch allows it.
- * Three in the same area stay open on purpose: automatic_https_rewrites
+ * Four in the same area stay open on purpose: automatic_https_rewrites
  * rewrites links inside pages, opportunistic_encryption offers encryption
  * to http:// visitors (whom always_use_https already sends to https://),
- * and ssl_recommender only enrols the zone in emailed recommendations.
- * None of them decides how an https:// connection is encrypted.
+ * ssl_recommender only enrols the zone in emailed recommendations, and
+ * replace_insecure_js swaps script links to known unsafe services (such as
+ * polyfill.io) for copies on cdnjs, keeping their scheme
+ * (https://developers.cloudflare.com/waf/tools/replace-insecure-js-libraries/,
+ * read 2026-11-27). None of them decides how an https:// connection is
+ * encrypted. Whether the security level, Browser Integrity Check or the WAF
+ * should be the owner's is a separate decision, not made here.
  */
 export const OWNER_ONLY_SETTINGS = Object.freeze(
   [

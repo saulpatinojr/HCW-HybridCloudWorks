@@ -97,7 +97,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
      its own, `*` only as the whole first part) and the full name that was
      checked is the one sent to Cloudflare. Only A, AAAA, CNAME, MX and TXT
      records are added or edited, judged by the record's current type.
-   - **Rules:** only five phases may be replaced: redirects
+   - **Rules:** only five phases may be replaced *(six since the
+     2026-11-26 amendment below added the rate limit, `http_ratelimit`)*:
+     redirects
      (`http_request_dynamic_redirect`), URL rewrites
      (`http_request_transform`), response headers
      (`http_response_headers_transform`), configuration rules
@@ -425,19 +427,34 @@ redirect limits, closed here as well.
   each rule. It means the agent key cannot change a redirect it made
   earlier either. The owner changes it, or removes it so the agent key
   can add it again.
-- **A new redirect from an agent key goes to an https:// address.** A
-  redirect to `http://` sends that visitor to a page without encryption,
-  which is what Always Use HTTPS (`always_use_https`) exists to stop. A new
-  redirect from an agent key is refused unless:
-  - a fixed target (`target_url.value`) starts with `https://`;
-  - a target worked out per request (`target_url.expression`) is a string
-    starting with `"https://"`, or `concat(` whose first part is such a
-    string. The result of `concat` starts with its first part, so the
-    scheme is fixed by text the check can read. Anything else, such as
-    `wildcard_replace` or a field, is refused to an agent key, because its
-    result can be the request's own `http://` address. This keeps the
-    common "send www to the bare name" redirect open to the agent key,
-    which refusing every worked-out target would not.
+- **A new redirect from an agent key goes to an https:// address on the
+  site's own zones.** A redirect to `http://` sends that visitor to a page
+  without encryption, which is what Always Use HTTPS (`always_use_https`)
+  exists to stop. A redirect to another site lets anyone send visitors
+  there through the site's own address (an open redirect). So the target
+  must be on one of the managed zones, `hybridcloudworks.com` or
+  `hybridcloudinsights.com`, or one of their subdomains, the same rule
+  the cache purge already uses. A new redirect from an agent key is
+  refused unless:
+  - a fixed target (`target_url.value`) is an `https://` address on one of
+    those names, with no user name before the host (`https://zone@elsewhere`
+    goes to elsewhere), no port and no backslash;
+  - a target worked out per request (`target_url.expression`) starts with a
+    string, on its own or as the first part of `concat(`, that holds
+    `https://` and a host on one of those names. The result of `concat`
+    starts with its first part, so the scheme and host are fixed by text
+    the check can read. The host must be followed by a slash, or end a
+    string that is the whole address. Inside `concat(` it may also end the
+    string just before a part that always starts with a slash
+    (`http.request.uri.path`, `http.request.uri` or their `raw.` forms).
+    Otherwise the next part could carry the host on, as in
+    `concat("https://hybridcloudworks.com", ".elsewhere.com")`. Anything
+    else is refused to an agent key, because its result can be the
+    request's own `http://` address or another site: `wildcard_replace`, a
+    field such as `http.host` for the host, or a string with an escape in
+    it. This keeps the common "send www to the bare name" redirect,
+    `concat("https://hybridcloudworks.com", http.request.uri.path)`, open
+    to the agent key.
   - the rule's parameters hold only what
     [Cloudflare documents for a redirect](https://developers.cloudflare.com/rules/url-forwarding/single-redirects/settings/)
     (`from_value` with `target_url`, `status_code` and
@@ -475,14 +492,19 @@ redirect limits, closed here as well.
   is allowed, for two reasons. An allow-list would take away settings the
   owner has already given Network Guy, and every allowed id would need
   checking first. "Owner-only" here means the settings that decide how an
-  https:// connection is encrypted, and those can be listed. Three
+  https:// connection is encrypted, and those can be listed. Four
   settings nearby stay open on purpose:
   - `automatic_https_rewrites` rewrites links inside pages;
   - `opportunistic_encryption` offers encryption to http:// visitors,
     whom Always Use HTTPS already sends to https://;
-  - `ssl_recommender` only enrols the zone in emailed recommendations.
+  - `ssl_recommender` only enrols the zone in emailed recommendations;
+  - `replace_insecure_js` swaps script links to known unsafe services for
+    copies on cdnjs
+    ([Cloudflare's page](https://developers.cloudflare.com/waf/tools/replace-insecure-js-libraries/)).
 
-  Revisit if Cloudflare adds a setting in this family.
+  Revisit if Cloudflare adds a setting in this family. Whether the
+  security level, Browser Integrity Check or the WAF should be owner-only
+  is a separate decision for the owner, not made here.
 - **Refusals name the key.** The new refusals, and the refusal of a rule
   switched off, begin with the key's name, for example "Claude Network
   Guy (an agent key) may not switch a redirect off".
@@ -503,7 +525,8 @@ redirect limits, closed here as well.
   API host.** The six editable phases apply to every host in the zone,
   `api-azure.hybridcloudworks.com` included: a redirect can send the API's
   callers elsewhere (from an agent key, only a new redirect to an https://
-  address, placed after the existing ones, since #1933), a URL rewrite can change which route a request reaches (the
+  address on the site's own zones, placed after the existing ones, since
+  #1933), a URL rewrite can change which route a request reaches (the
   owner's alone since #1933), a response header rule can change what the browser is told,
   and a configuration rule can turn off a setting (such as the security
   level) for matching requests, though not an owner-only one (#1931). None of them can read or change the origin

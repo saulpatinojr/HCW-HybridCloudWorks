@@ -12,6 +12,7 @@
  *   appendOnly    the rules the phase holds now come back first, exactly
  *                 as they are and in the same order; new rules go after them
  *   httpsTargets  a new redirect sends visitors only to an https:// address
+ *                 on one of the managed zones
  *   keepAsIs      the rules come back exactly as they are, and none is added
  *
  * Why the redirect and URL rewrite phases have theirs (#1933):
@@ -34,6 +35,10 @@
  *     request), status_code and preserve_query_string. A fixed address
  *     without a scheme is sent as it is, and a browser reads it as a path
  *     on the address it is on, which may be http://.
+ *   - A redirect to another site lets anyone send a visitor there through
+ *     the site's own address (an open redirect), so an agent key's new
+ *     redirect also stays on the managed zones (MANAGED_ZONES): an apex or
+ *     one of its subdomains, the rule the purge route already uses.
  *   - A URL rewrite runs before the configuration rules, the custom
  *     security rules, the rate limit, the cache rules and Cloudflare's own
  *     managed rules (https://developers.cloudflare.com/ruleset-engine/reference/phases-list/,
@@ -48,6 +53,7 @@ import { Refusal } from './input.js';
 import { isAgentUser } from '../agent-content/agent-keys.js';
 import { actorOf } from './record.js';
 import { behaviourOf, isPlainObject } from './rule-shape.js';
+import { MANAGED_ZONES, onManagedZone } from './protected.js';
 
 const REDIRECT = 'http_request_dynamic_redirect';
 const URL_REWRITE = 'http_request_transform';
@@ -72,7 +78,7 @@ export const ruleNameOf = (phase) => (Object.hasOwn(AGENT_PHASE_LIMITS, phase) ?
 const OWNER_STEP = 'Change it on the Cloudflare page yourself, signed in as the owner.';
 
 /** Why an agent key's redirect must go to an https:// address: the reason the page shows. */
-export const HTTPS_REDIRECT_REASON = `A redirect to an http:// address sends visitors to a page without encryption, which the zone setting always_use_https keeps for the owner. ${OWNER_STEP}`;
+export const HTTPS_REDIRECT_REASON = `A redirect to an http:// address sends visitors to a page without encryption, which the zone setting always_use_https keeps for the owner, and a redirect to another site lets anyone send visitors there through the site's own address. ${OWNER_STEP}`;
 
 /** Why an agent key may only add redirects after the ones the phase holds now: the reason the page shows. */
 export const KEEP_REDIRECTS_REASON = `The first redirect that matches a request is the one used, so changing a redirect, or putting a new one before it, can turn off one the owner relies on, such as one that sends visitors from http:// to https:// in place of always_use_https. ${OWNER_STEP}`;
@@ -80,20 +86,69 @@ export const KEEP_REDIRECTS_REASON = `The first redirect that matches a request 
 /** Why the URL rewrite phase stays as it is for an agent key: the reason the page shows. */
 export const KEEP_REWRITES_REASON = `A URL rewrite changes the path and query that every later rule sees, the owner's rules that match on them included, so URL rewrites are the owner's. ${OWNER_STEP}`;
 
-/** A fixed redirect address that starts with https:// (any letter case, as browsers read a scheme). */
-const HTTPS_VALUE = /^https:\/\//i;
+/** The managed zones, as a refusal names them. */
+const ZONE_NAMES = MANAGED_ZONES.map((zone) => zone.name).join(' or ');
+
+/** A fixed address as written: printable characters only, no space and no backslash, which browsers read as a slash. */
+const PLAIN_ADDRESS = /^[\x21-\x5b\x5d-\x7e]+$/;
 
 /**
- * A redirect address worked out per request whose result starts with
- * https://: a string that starts with it, or concat( whose first part is
- * such a string. The string may be plain ("...") or raw (r"..." or
- * r#"..."#), and https may be in any letter case, as in a fixed address.
- * The result of concat starts with its first part, so the scheme is fixed
- * by text this check reads. Any other start (wildcard_replace, a field,
- * another function) is refused, because its result can be the request's
- * own http:// address.
+ * Whether a fixed redirect address goes to an https:// page on a managed
+ * zone (#1933 review): https in any letter case, a host that is one of the
+ * zones or a subdomain of one, no user name or password before the host
+ * (`https://zone@elsewhere` goes to elsewhere) and no port. An address
+ * Node cannot read is refused.
  */
-const HTTPS_EXPRESSION = /^\s*(?:concat\(\s*)?(?:r#*)?"https:\/\//i;
+function onOurHttps(value) {
+  if (typeof value !== 'string' || !PLAIN_ADDRESS.test(value) || !/^https:\/\//i.test(value)) return false;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const checks = [url.protocol === 'https:', url.username === '', url.password === '', url.port === '', onManagedZone(url.hostname.toLowerCase())];
+  return checks.every(Boolean);
+}
+
+/**
+ * The start of a redirect address worked out per request: an optional
+ * concat(, then a string, plain ("...") or raw (r"..." or r#"..."#), then
+ * what follows it. Letters may be in any case.
+ */
+const EXPRESSION_START = /^\s*(concat\(\s*)?(?:r(#*)"([\s\S]*?)"\2|"([^"\\]*)")([\s\S]*)$/i;
+
+/** The start of a string that fixes the address's scheme and host: https://, a host, then a slash or the string's end. */
+const HTTPS_HOST = /^https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)(\/|$)/i;
+
+/** The fields that always start with a slash, so a host written just before one is the whole host. */
+const PATH_FIELDS = Object.freeze(['http.request.uri.path', 'http.request.uri', 'raw.http.request.uri.path', 'raw.http.request.uri']);
+
+/** Whether what follows a string inside concat( starts with one of PATH_FIELDS as the next part. */
+const nextPartIsPath = (rest) => PATH_FIELDS.some((field) => new RegExp(`^\\s*,\\s*${field.replace(/\./g, '\\.')}\\s*[,)]`).test(rest));
+
+/**
+ * Whether a redirect address worked out per request goes to an https://
+ * page on a managed zone (#1933 review). Its first string, on its own or
+ * as the first part of concat(, must start with https:// and a managed
+ * host. The result of concat starts with its first part, so the scheme and
+ * host are fixed by text this check reads. The host must end in a slash,
+ * or at the end of a string that is the whole address, or (inside concat)
+ * just before a field that always starts with a slash; otherwise the next
+ * part could carry the host on (`.elsewhere`). A plain string may hold no
+ * backslash. Anything else (wildcard_replace, a field first, another
+ * function) is refused, because its result can be the request's own
+ * http:// address or another site.
+ */
+function expressionOnOurHttps(expression) {
+  const found = typeof expression === 'string' ? EXPRESSION_START.exec(expression) : null;
+  if (!found) return false;
+  const [, inConcat, , raw, plain, rest] = found;
+  const head = HTTPS_HOST.exec(raw ?? plain);
+  if (!head || !onManagedZone(head[1].toLowerCase())) return false;
+  if (head[2] === '/') return true;
+  return inConcat ? nextPartIsPath(rest) : rest.trim() === '';
+}
 
 const FROM_VALUE_FIELDS = Object.freeze(['target_url', 'status_code', 'preserve_query_string']);
 const TARGET_FIELDS = Object.freeze(['value', 'expression']);
@@ -101,13 +156,16 @@ const TARGET_FIELDS = Object.freeze(['value', 'expression']);
 /** Whether every key of an object is one of `allowed`. */
 const onlyFields = (object, allowed) => Object.keys(object).every((key) => allowed.includes(key));
 
-/** What is wrong with a redirect's target, as the end of a sentence, or '' when nothing is. */
+/** What is wrong with a redirect's target, as the end of a sentence, or '' when nothing is. It never repeats the target. */
 function targetProblem(target) {
   const sent = TARGET_FIELDS.filter((field) => Object.hasOwn(target, field));
   if (sent.length !== 1 || !onlyFields(target, TARGET_FIELDS)) return 'its target_url must hold exactly one of value or expression';
-  if (sent[0] === 'value') return typeof target.value === 'string' && HTTPS_VALUE.test(target.value) ? '' : 'a fixed target (target_url.value) must start with https://';
-  const fixedStart = typeof target.expression === 'string' && HTTPS_EXPRESSION.test(target.expression);
-  return fixedStart ? '' : 'a target worked out per request (target_url.expression) must be a string starting with "https://", or concat( whose first part is such a string';
+  if (sent[0] === 'value') {
+    return onOurHttps(target.value) ? '' : `a fixed target (target_url.value) must be an https:// address on ${ZONE_NAMES} or one of their subdomains, with no user name or port`;
+  }
+  return expressionOnOurHttps(target.expression)
+    ? ''
+    : `a target worked out per request (target_url.expression) must start with a string holding https:// and a host on ${ZONE_NAMES} or one of their subdomains, followed by a slash, on its own or as the first part of concat(`;
 }
 
 /** What is wrong with a redirect rule from an agent key, as the end of a sentence, or '' when nothing is. */
@@ -154,7 +212,7 @@ function refuseHttpRedirects(user, phase, current, rules) {
     if (index < kept) return;
     const problem = redirectProblem(rule);
     if (!problem) return;
-    const message = `${actorOf(user)} (an agent key) may not add a redirect (rule ${index + 1}) whose target is not an https:// address: ${problem}. It stands in for the zone setting always_use_https.`;
+    const message = `${actorOf(user)} (an agent key) may not add a redirect (rule ${index + 1}) whose target is not an https:// address on the site's own zones: ${problem}. It stands in for the zone setting always_use_https.`;
     throw limitRefusal(message, HTTPS_REDIRECT_REASON);
   });
 }
