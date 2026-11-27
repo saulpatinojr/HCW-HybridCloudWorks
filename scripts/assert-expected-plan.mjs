@@ -156,15 +156,11 @@ import {
   sideEffects,
 } from "./lib/plan-actions.mjs";
 import {
-  coversOnlyInItsStep,
-  creditedDeclarations,
+  coverDifference,
   declarationLines,
-  describeIncomplete,
   findDeclaredAction,
-  incompleteSteps,
   KNOWN_AFTER_APPLY,
-  matchesDeclaration,
-  presentSteps,
+  settleSteps,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
@@ -820,19 +816,10 @@ function checkUpdate(change, { tolerated, declared, matched, pending, secrets })
   const lines = [];
   for (const difference of differences) {
     if (tolerated.get(address)?.has(difference.path)) continue;
-    // Every declaration that covers the difference is credited, not only the
-    // first (#1929): a forward and a going-back step on one record both cover
-    // its unknown modified_on, and which of them the plan holds is settled
-    // by their declared values in checkPlan. The difference is printed once.
-    const covering = declared.filter((d) =>
-      matchesDeclaration(d, address, difference),
-    );
-    for (const declaration of covering) matched.add(declaration);
+    // Which declarations cover it, and whether that can be told yet, is
+    // lib/plan-declarations.mjs's (#1929); an uncovered difference is named.
     const line = `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`;
-    if (covering.length === 0) lines.push(line);
-    // Covered only by computed values of steps: whether that holds is known
-    // once every change has been read, so checkPlan decides (#1929).
-    else if (covering.every(coversOnlyInItsStep)) pending.push({ line, covering });
+    if (!coverDifference({ declared, matched, pending }, address, difference, line)) lines.push(line);
   }
   return lines;
 }
@@ -932,26 +919,17 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   // stands between the app and a connection string it must not have (T-511).
   const missing = [...expectedReplaced].filter((address) => !seen.has(address));
 
-  // A step's declarations stand or fall together (#1929): a plan that carries
-  // part of a step names the rest, rather than passing as if it were whole.
-  // A step is in the plan only when one of its declared values matched; a
-  // computed value alone (modified_on) never opens one. A difference covered
-  // only by computed values of steps that are not in the plan is named, as
-  // it would be with no declaration at all.
-  const present = presentSteps(declared, matched);
-  for (const { line, covering } of context.pending) {
-    if (!covering.some((d) => present.has(d.step))) unexpected.push(line);
-  }
-  const incomplete = incompleteSteps(declared, matched);
-  unexpected.push(...incomplete.map(describeIncomplete));
-  const credited = creditedDeclarations(declared, matched);
+  // A step's declarations stand or fall together (#1929); settleSteps in
+  // lib/plan-declarations.mjs says what that adds to the report.
+  const steps = settleSteps(declared, matched, context.pending);
+  unexpected.push(...steps.unexpected);
 
   return {
     ok: unexpected.length === 0 && missing.length === 0,
     unexpected,
     missing,
-    declared: credited,
-    unused: declared.filter((d) => !credited.includes(d) && !incomplete.includes(d)),
+    declared: steps.credited,
+    unused: steps.unused,
   };
 }
 

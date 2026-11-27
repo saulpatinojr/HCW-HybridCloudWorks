@@ -178,6 +178,45 @@ export function creditedDeclarations(declared, matched) {
   return declared.filter((d) => matched.has(d) && (!d.step || present.has(d.step)));
 }
 
+/**
+ * Whether one difference in an update is covered, crediting in `matched`
+ * every declaration that covers it, not only the first (#1929): a forward
+ * and a going-back step on one record both cover its unknown modified_on,
+ * and which of them the plan holds is settled by their declared values in
+ * `settleSteps`. A difference covered only by computed values of steps is
+ * held in `pending` with its report `line` until then, and counts as
+ * covered here. Returns false for a difference no declaration covers,
+ * which the caller names.
+ */
+export function coverDifference({ declared, matched, pending }, address, difference, line) {
+  const covering = declared.filter((d) => matchesDeclaration(d, address, difference));
+  for (const declaration of covering) matched.add(declaration);
+  if (covering.length > 0 && covering.every(coversOnlyInItsStep)) pending.push({ line, covering });
+  return covering.length > 0;
+}
+
+/**
+ * What the steps add to a plan's report, once every change has been read
+ * (#1929). A step is in the plan only when one of its declared values
+ * matched; a computed value alone (modified_on) never opens one.
+ *   `unexpected`  each held difference none of whose steps is in the plan
+ *                 (named as it would be with nothing declared), then each
+ *                 declaration a step in the plan lacks;
+ *   `credited`    the declarations the plan is credited with;
+ *   `unused`      the rest, which print as NOTEs.
+ */
+export function settleSteps(declared, matched, pending) {
+  const present = presentSteps(declared, matched);
+  const held = pending.filter(({ covering }) => !covering.some((d) => present.has(d.step)));
+  const incomplete = incompleteSteps(declared, matched);
+  const credited = creditedDeclarations(declared, matched);
+  return {
+    unexpected: [...held.map(({ line }) => line), ...incomplete.map(describeIncomplete)],
+    credited,
+    unused: declared.filter((d) => !credited.includes(d) && !incomplete.includes(d)),
+  };
+}
+
 /** How a declaration missing from a step the plan holds is named. */
 export function describeIncomplete(declaration) {
   return (
