@@ -2,6 +2,15 @@
  * The Cloudflare Web Analytics beacon, built into index.html at build time
  * (#1302).
  *
+ * NOT IN USE: CF_WEB_ANALYTICS_TOKEN MUST STAY UNSET (#1929). On 2026-11-27
+ * this hand-placed beacon was shown not to work while the apex and www are
+ * DNS-only (Cloudflare answers its report with no Access-Control-Allow-Origin
+ * header, so the browser blocks it), and the variable was deleted. The site's
+ * pages are counted once Cloudflare proxies them (site_proxied_hosts in
+ * infra/), because Cloudflare's automatic setup then injects its own beacon;
+ * this one as well would count every view twice. With no token this plugin
+ * emits nothing. The text below describes how it was meant to work.
+ *
  * WHY A BUILD STEP AND NOT A LINE IN index.html. The site must be able to
  * state a monthly audience figure (owner decision 2026-10-20: the Docker
  * Captain application goes in on the Thought Leader track, 5,000 monthly

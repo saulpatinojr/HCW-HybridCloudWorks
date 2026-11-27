@@ -317,16 +317,16 @@ jobs:
           # is the Function App's, in Key Vault. Unset, the build still
           # succeeds and the button says this build has no site key.
           VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
-          # The site token of the Cloudflare Web Analytics beacon (#1302): the
-          # page-view count behind the monthly audience figure the Ambassador
-          # hub records. Public by nature — it ships in every page — so a
-          # repository variable, never a secret, like the Turnstile site key
-          # above. The owner copies it from the `web_analytics_site_token`
-          # output after the TFC apply. Still needed since the site moved to
-          # automatic setup (#1923): the apex and www are DNS-only, so
-          # Cloudflare injects nothing into these pages. Unset, the build serves no beacon tag
-          # at all; a value that is not token-shaped fails the build
-          # (frontend/scripts/cf-web-analytics.mjs).
+          # The site token of a hand-placed Cloudflare Web Analytics beacon
+          # (#1302). MUST STAY UNSET (#1929): on 2026-11-27 this beacon was
+          # shown not to work while the apex and www are DNS-only (Cloudflare
+          # answers its report with no Access-Control-Allow-Origin, so the
+          # browser blocks it) and the variable was deleted. The site's pages
+          # are counted once Cloudflare proxies them (site_proxied_hosts in
+          # infra/), because automatic setup then injects its own beacon; a
+          # second one would count every view twice. Unset, the build serves
+          # no beacon tag at all, which is the intended state; a value that is
+          # not token-shaped fails the build (frontend/scripts/cf-web-analytics.mjs).
           VITE_CF_WEB_ANALYTICS_TOKEN: ${{ vars.CF_WEB_ANALYTICS_TOKEN }}
           # NOTE: VITE_COSMOS_* vars are intentionally absent.
           # The frontend never accesses Cosmos directly — all data goes through the API.

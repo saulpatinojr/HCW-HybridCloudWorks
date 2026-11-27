@@ -204,13 +204,7 @@ From a workstation with `gh` authenticated to the repository, seed variables fro
 pwsh scripts/set-github-variables.ps1
 ```
 
-The script does not seed `CF_WEB_ANALYTICS_TOKEN` (#1302). Set it by hand from the `web_analytics_site_token` output recorded in Phase 4; the value is public (it ships in every page), so it is read at the prompt in the clear:
-
-```powershell
-$t = Read-Host 'web_analytics_site_token from the hcw-azure outputs'; gh variable set CF_WEB_ANALYTICS_TOKEN --body $t
-```
-
-Nothing clears or refreshes this variable later. Terraform does not destroy or replace the site by itself: with the site in state, unsetting the Web Analytics variables or changing the account id stops the plan at the site's `prevent_destroy` ([#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)). But if the site is ever let go of (the steps in the comment above the site in `infra/frontend.tf`) or another site is imported, every page keeps shipping a beacon with a dead or wrong token until the value is re-copied from the new output, or cleared, and the frontend deployed again; after a clear the next deploy ships no tag:
+**Do not set `CF_WEB_ANALYTICS_TOKEN`** ([#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929)). It used to put a hand-placed Cloudflare Web Analytics beacon into every page. On 2026-11-27 that beacon was shown not to work for the site: while the apex and `www` are DNS-only, Cloudflare answers the beacon's report with no `Access-Control-Allow-Origin` header, so the browser blocks it, and the variable was deleted that day. The site's pages are counted once Cloudflare proxies them (the `site_proxied_hosts` switch, [Proxying the site's own names through Cloudflare](proxy-site-hosts.md)), because Cloudflare's automatic setup then puts its own beacon into each page; a hand-placed one as well would count every view twice. `scripts/set-github-variables.ps1` does not seed it, and nothing else needs it. If a rebuild finds it set, delete it and deploy the frontend again:
 
 ```powershell
 gh variable delete CF_WEB_ANALYTICS_TOKEN -R saulpatinojr/HCW-HybridCloudWorks

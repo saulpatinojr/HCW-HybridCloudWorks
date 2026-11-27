@@ -1609,13 +1609,15 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^data "cloudflare_dns_record" "site" \{$/m);
 
     // The owner's run, as the plan JSON will carry it: each record imported with only its comment added.
+    // The live TTLs: 1 (automatic) on the apex, 60 on www.
+    const LIVE_TTL = { [RECORDS[0]]: 1, [RECORDS[1]]: 60 };
     const recordChange = (address) => ({
       address,
       change: {
         actions: ['update'],
         importing: { id: 'zone-placeholder/record-placeholder' },
-        before: { comment: null, modified_on: '2026-08-23T00:00:00Z', comment_modified_on: null, proxied: false, ttl: 60 },
-        after: { comment: SITE_RECORD_COMMENTS[address], proxied: false, ttl: 60 },
+        before: { comment: null, modified_on: '2026-08-23T00:00:00Z', comment_modified_on: null, proxied: false, ttl: LIVE_TTL[address] },
+        after: { comment: SITE_RECORD_COMMENTS[address], proxied: false, ttl: LIVE_TTL[address] },
         after_unknown: { modified_on: true, comment_modified_on: true },
         before_sensitive: {},
         after_sensitive: {},
@@ -1634,6 +1636,11 @@ describe('DECLARED', () => {
       `${RECORDS[1]}: update proxied: false -> true`,
       `${RECORDS[1]}: update ttl: 60 -> 1`,
     ]);
+
+    // An apex TTL that moves off automatic in that run is not declared either, so it is named.
+    const apexTtl = structuredClone(plan);
+    apexTtl.resource_changes.find((change) => change.address === RECORDS[0]).change.after.ttl = 60;
+    expect(checkPlan(apexTtl).unexpected).toEqual([`${RECORDS[0]}: update ttl: 1 -> 60`]);
   });
 
   it('prunes the Developer API container’s create once applied, with the container still in the spec (#1754, pruned 2026-11-27)', () => {
