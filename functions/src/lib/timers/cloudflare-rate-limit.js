@@ -181,6 +181,10 @@ async function tellIfChanged(d, verdict) {
   const current = await d.store.readDoc(CONTAINER, WATCH_DOC_ID, ADMIN_CONFIG_PARTITION);
   const step = nextStep(verdict, current);
   if (!step) return { told: false };
+  // Two overlapping runs cannot both send: notifyTelegram claims this
+  // source's 15-minute cooldown with a conditional write BEFORE it sends
+  // (notify.js header, "THE COOLDOWN IS CLAIMED BEFORE THE SEND"), so the
+  // second run is told `cooldown`, sends nothing and records nothing here.
   if (!(await sent(d, step.alert))) return { told: false };
   const fields = { alerted: step.alerted, state: verdict.state, changedAt: d.now().toISOString() };
   const written = await writeWatch(d, current, fields);
