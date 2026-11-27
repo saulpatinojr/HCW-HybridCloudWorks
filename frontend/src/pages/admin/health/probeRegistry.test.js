@@ -561,3 +561,70 @@ describe('the heartbeat and sync runners', () => {
     expect(mcpServersVerdict([]).status).toBe('unknown');
   });
 });
+
+describe('the Cloudflare API rate limit probe (#1909)', () => {
+  const probe = () => byId('cloudflare-rate-limit');
+  const PHASE_ROUTE = 'cms/cloudflare/rulesets/phases/http_ratelimit';
+
+  beforeEach(() => getJSON.mockReset());
+
+  it('is a live, Test-all-safe Platform probe that links the Rules tab and the runbook', () => {
+    expect(probe()).toMatchObject({
+      kind: 'live',
+      safe: true,
+      hub: 'platform',
+      label: 'Cloudflare API rate limit',
+      href: { to: '/admin/cloudflare?tab=rules' },
+      docs: {
+        href: expect.stringContaining('cloudflare-admin.md#part-4-making-the-api-rate-limit-rule'),
+      },
+    });
+  });
+
+  it('is healthy when a rule is on, naming how many', async () => {
+    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: true }] } });
+    expect(await probe().run()).toMatchObject({
+      status: 'healthy',
+      summary: '1 API rate limit rule is on.',
+    });
+    expect(getJSON).toHaveBeenCalledWith(PHASE_ROUTE);
+  });
+
+  it('is degraded (amber) when no rule is set, or none is on', async () => {
+    getJSON.mockResolvedValueOnce({ ruleset: null });
+    expect(await probe().run()).toMatchObject({
+      status: 'degraded',
+      summary: expect.stringMatching(/^No API rate limit rule is on\. .*has no rules/),
+    });
+    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: false }] } });
+    expect(await probe().run()).toMatchObject({
+      status: 'degraded',
+      summary: expect.stringContaining('switched off'),
+    });
+  });
+
+  it('is not checked (unknown) with the server’s sentence while Cloudflare is not set up', async () => {
+    getJSON.mockRejectedValueOnce(
+      Object.assign(new Error('Cloudflare is not set up yet.'), {
+        status: 503,
+        code: 'CLOUDFLARE_NOT_CONFIGURED',
+      })
+    );
+    expect(await probe().run()).toMatchObject({
+      status: 'unknown',
+      summary: 'Not checked. Cloudflare is not set up yet.',
+    });
+  });
+
+  it('is red only when the read fails, with the error’s sentence', async () => {
+    getJSON.mockRejectedValueOnce(
+      Object.assign(new Error('Cloudflare answered with an error.'), { status: 500 })
+    );
+    expect(await probe().run()).toMatchObject({
+      status: 'critical',
+      summary: 'The rate limiting rules could not be read: Cloudflare answered with an error.',
+    });
+    getJSON.mockRejectedValueOnce(new Error('Failed to fetch'));
+    expect((await probe().run()).status).toBe('offline');
+  });
+});
