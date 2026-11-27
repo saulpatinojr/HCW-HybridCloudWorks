@@ -2,8 +2,9 @@
  * The probe registry on screen (ADR 0033 Platform): one card per probe, in
  * hub groups, each saying the same five things — what it covers, how it is
  * doing (one StatusBadge word), when that was last true, what breaks if it is
- * not, and what to do — with a Test button where one exists and a link to
- * the page that holds the fix.
+ * not, and what to do — with a Test button where one exists, a link to
+ * the page that holds the fix, and (`docs`) a link to the runbook that
+ * explains it.
  *
  * Every card has the same three parts, in the same places (#1010):
  *
@@ -69,6 +70,16 @@ function ProbeActions({ probe, running, onRun }) {
         >
           {probe.href.label} <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
         </Link>
+      ) : null}
+      {probe.docs ? (
+        <a
+          href={probe.docs.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+        >
+          {probe.docs.label} <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+        </a>
       ) : null}
       {!probe.safe && probe.costNote ? (
         <span className="text-xs text-muted-foreground">Not in Test all: {probe.costNote}</span>

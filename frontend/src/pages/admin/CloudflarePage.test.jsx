@@ -195,6 +195,9 @@ describe('the Cloudflare page', () => {
       'href',
       '/admin/integrations?tab=keys'
     );
+    // The rate limit line (#1909) is not shown, and its read not made, until Cloudflare is set up.
+    expect(screen.queryByTestId('rate-limit-check')).not.toBeInTheDocument();
+    expect(api.readCloudflarePhase).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: 'DNS' }));
     expect(await screen.findByText('Cloudflare is not set up here yet')).toBeInTheDocument();
   });
@@ -277,6 +280,67 @@ describe('the Cloudflare page', () => {
   it('lands an old word on its tab', async () => {
     renderAt('/admin/cloudflare?tab=records');
     expect(await screen.findByRole('tab', { selected: true })).toHaveTextContent('DNS');
+  });
+});
+
+describe('the Overview’s API rate limit line (#1909)', () => {
+  /** The line once its read has landed. */
+  async function rateLimitLine() {
+    renderAt();
+    const line = await screen.findByTestId('rate-limit-check');
+    await waitFor(() => expect(line).not.toHaveTextContent('Checking…'));
+    return line;
+  }
+
+  it('is green when a rule is on, naming how many, and links the Rules tab', async () => {
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { rules: [{ id: 'r1', enabled: true }] },
+    });
+    const line = await rateLimitLine();
+    expect(api.readCloudflarePhase).toHaveBeenCalledWith('http_ratelimit');
+    expect(line).toHaveTextContent('1 API rate limit rule is on.');
+    expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'healthy');
+    expect(within(line).getByRole('link', { name: 'Open the Rules tab' })).toHaveAttribute(
+      'href',
+      '/admin/cloudflare?tab=rules'
+    );
+    expect(within(line).queryByRole('link', { name: /Part 4/ })).toBeNull();
+  });
+
+  it('is amber when no rule is on, and links Part 4 of the runbook', async () => {
+    api.readCloudflarePhase.mockResolvedValue({ ruleset: null, version: null });
+    const line = await rateLimitLine();
+    expect(line).toHaveTextContent('No API rate limit rule is on.');
+    expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'degraded');
+    expect(
+      within(line).getByRole('link', { name: 'Part 4 of the Cloudflare admin runbook' })
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md#part-4-making-the-api-rate-limit-rule'
+    );
+  });
+
+  it('says it was not checked, with the server’s sentence, when the phase read is not set up', async () => {
+    api.readCloudflarePhase.mockRejectedValue(
+      Object.assign(new Error('Cloudflare is not set up yet.'), {
+        status: 503,
+        code: 'CLOUDFLARE_NOT_CONFIGURED',
+      })
+    );
+    const line = await rateLimitLine();
+    expect(line).toHaveTextContent('Not checked. Cloudflare is not set up yet.');
+    expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'unknown');
+  });
+
+  it('is red with the error’s sentence when the read fails', async () => {
+    api.readCloudflarePhase.mockRejectedValue(
+      Object.assign(new Error('Cloudflare answered with an error.'), { status: 500 })
+    );
+    const line = await rateLimitLine();
+    expect(line).toHaveTextContent(
+      'The rate limiting rules could not be read: Cloudflare answered with an error.'
+    );
+    expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'critical');
   });
 });
 
@@ -893,6 +957,13 @@ describe('the zone picker (#1911)', () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId('locked-phases')).toBeEmptyDOMElement();
     expect(screen.getByTestId('all-wildcards')).toHaveTextContent(WILDCARDS);
+  });
+
+  it('shows the API rate limit line only on the site’s zone, since the rule is the site’s (#1909)', async () => {
+    renderWithAddress(`/admin/cloudflare?zone=${LAB}`);
+    await screen.findByText(/None in this zone: Terraform writes no rules here/);
+    expect(screen.queryByTestId('rate-limit-check')).not.toBeInTheDocument();
+    expect(api.readCloudflarePhase).not.toHaveBeenCalledWith('http_ratelimit');
   });
 
   it('shows a note in place of the tabs when the server answers for another zone, and offers no change', async () => {
