@@ -56,9 +56,14 @@ session also merges the declarations for going back one step as soon as a
 forward step has applied, so they are already on `main` if a rollback is
 needed.
 
+The declarations for one row share a `step` name in
+`scripts/assert-expected-plan.mjs`, so they count only together: a plan
+that carries part of a row (`www` proxied with its `ttl` still `60`, say)
+reads UNEXPECTED and names the part that is missing.
+
 | Step | Variable change | What the pull request declares (and nothing else) |
 | --- | --- | --- |
-| Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply |
+| Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply. **On `main` since 2026-11-27 (this pull request), step `#1929 step 1`.** |
 | Part 3, step 2 (test) and any rollback of `www` | `www` to `none` | `cloudflare_dns_record.site_www`: `proxied` `true` -> `false`, `ttl` `1` -> `60`, `modified_on` known after apply |
 | Part 3, step 2 (back on) | `none` to `www` | the step 1 row again (its entry stays until this run has applied) |
 | Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply |

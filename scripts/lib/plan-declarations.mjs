@@ -33,6 +33,10 @@
  *                        exactly, as for any update.
  * Neither prints a value: the report names the stand-in, not what it stands
  * for. A sensitive difference still never matches anything.
+ *
+ * Either shape may also carry `step`, a short name shared by every
+ * declaration of one run's change (#1929). Declarations of one step stand or
+ * fall together: see `incompleteSteps` below.
  */
 import { isDeepStrictEqual } from 'node:util';
 
@@ -117,4 +121,30 @@ export const DECLARABLE_ACTIONS = Object.freeze(['create', 'delete', 'import']);
 export function findDeclaredAction(declared, address, action) {
   if (!DECLARABLE_ACTIONS.includes(action)) return undefined;
   return declared.find((d) => d.action === action && d.address === address);
+}
+
+/**
+ * Declarations that name the same `step` stand or fall together (#1929). A
+ * step is one run's whole change, such as proxying www, which moves proxied
+ * and ttl together. A plan that carries some of a step's changes and not the
+ * rest is not that step, so each declaration of it the plan lacks is
+ * returned, to be named as unexpected. A step none of whose changes is in
+ * the plan is not returned: it has usually applied, and each declaration
+ * prints as a NOTE like any other.
+ *
+ * @param {object[]} declared every declaration
+ * @param {Set<object>} matched the declarations this plan matched
+ * @returns {object[]} the declarations of partly matched steps that did not match
+ */
+export function incompleteSteps(declared, matched) {
+  const partial = new Set(declared.filter((d) => d.step && matched.has(d)).map((d) => d.step));
+  return declared.filter((d) => d.step && partial.has(d.step) && !matched.has(d));
+}
+
+/** How a declaration missing from a partly matched step is named. */
+export function describeIncomplete(declaration) {
+  return (
+    `${describeDeclaration(declaration)}: not in this plan, although the rest of ` +
+    `step "${declaration.step}" is. A step's declarations apply together.`
+  );
 }

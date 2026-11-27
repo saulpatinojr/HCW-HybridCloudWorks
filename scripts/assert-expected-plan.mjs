@@ -103,6 +103,13 @@
  * `before`). Both are scoped to one exact address and path, and the report
  * prints the stand-in, never the value.
  *
+ * Declarations that make up one run's change can share a `step` (#1929),
+ * such as `"#1929 step 1"` on www's proxied, ttl and modified_on. They then
+ * stand or fall together: a plan that carries some of a step's changes and
+ * not the others is UNEXPECTED, naming each one it lacks, where without
+ * `step` the missing one would only be a NOTE. A step none of whose changes
+ * is in the plan still prints as NOTEs, as it does once it has applied.
+ *
  * `tfc-plan-check.yml` reads the declarations on the ref it was dispatched
  * from (normally `main`), not those at the commit the run was planned for.
  *
@@ -143,7 +150,10 @@ import {
 } from "./lib/plan-actions.mjs";
 import {
   declarationLines,
+  describeIncomplete,
   findDeclaredAction,
+  incompleteSteps,
+  KNOWN_AFTER_APPLY,
   matchesDeclaration,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
@@ -542,7 +552,49 @@ export const DECLARED = [
   // were deleted here with the lookup and the import blocks in
   // infra/frontend.tf (#1937). A plan that changes either record now, a
   // proxied or ttl change before the owner sets site_proxied_hosts above
-  // all, is UNEXPECTED and is read.
+  // all, is UNEXPECTED and is read, except www's step declared just below.
+  //
+  // #1929 step 1 (Part 3, step 1 of docs/runbooks/proxy-site-hosts.md): the
+  // owner sets site_proxied_hosts from "none" to "www", and the run changes
+  // cloudflare_dns_record.site_www in place and nothing else:
+  //   - proxied false -> true (local.site_www_proxied in infra/frontend.tf);
+  //   - ttl 60 -> 1, because ttl follows the switch (`site_www_proxied ? 1 :
+  //     60`), and a proxied record takes only 1, "automatic";
+  //   - modified_on known after apply. Read from the provider's source
+  //     (5.29.0, internal/services/dns_record/custom.go, ModifyPlan): a
+  //     changed proxied or ttl leaves modified_on unknown, while created_on,
+  //     proxiable, meta, settings and tags keep their state values, and
+  //     comment_modified_on keeps its own because the comment does not change.
+  // The apex is declared nothing: "www" leaves local.site_apex_proxied false
+  // and its ttl is 1 either way, so any apex change in that run is UNEXPECTED.
+  // The three share a step, so a plan that proxies www and leaves its ttl at
+  // 60 (or changes ttl alone) names the missing one instead of passing.
+  // Delete these three once the owner's run has applied, in the same pull
+  // request that adds www's going-back declarations (proxied true -> false,
+  // ttl 1 -> 60, modified_on), as the runbook's table says.
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "proxied",
+    step: "#1929 step 1",
+    before: false,
+    after: true,
+    reason: "#1929 step 1: site_proxied_hosts none -> www puts www behind Cloudflare's proxy",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "ttl",
+    step: "#1929 step 1",
+    before: 60,
+    after: 1,
+    reason: "#1929 step 1: a proxied record's ttl is 1 (automatic), from the switch in infra/frontend.tf",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "modified_on",
+    step: "#1929 step 1",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 1: the record's modified_on, set by Cloudflare when proxied and ttl change",
+  },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied. Live "false" on
@@ -830,12 +882,17 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   // stands between the app and a connection string it must not have (T-511).
   const missing = [...expectedReplaced].filter((address) => !seen.has(address));
 
+  // A step's declarations stand or fall together (#1929): a plan that carries
+  // part of a step names the rest, rather than passing as if it were whole.
+  const incomplete = incompleteSteps(declared, matched);
+  unexpected.push(...incomplete.map(describeIncomplete));
+
   return {
     ok: unexpected.length === 0 && missing.length === 0,
     unexpected,
     missing,
     declared: declared.filter((d) => matched.has(d)),
-    unused: declared.filter((d) => !matched.has(d)),
+    unused: declared.filter((d) => !matched.has(d) && !incomplete.includes(d)),
   };
 }
 
