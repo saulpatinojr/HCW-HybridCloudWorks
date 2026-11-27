@@ -483,7 +483,9 @@ same check again: if the report is clean the archive starts then, the same
 morning, and if it is not, nothing starts and your phone gets the message
 "Content archive of 2026 is waiting for you". A **Dry run** you press works
 the same way: once it finishes, the archive starts at once if the report
-allows it. (Until #1811's fix of 2026-11-27 the archive waited for the next
+allows it. (Two exceptions leave it to the next 03:00 UTC check: the nightly
+export is off, or the dry run's last part finished with under three minutes
+of its 28-minute job time left.) (Until #1811's fix of 2026-11-27 the archive waited for the next
 03:00 UTC check, so any change to the list of what is kept in between sent
 it back a day.)
 
