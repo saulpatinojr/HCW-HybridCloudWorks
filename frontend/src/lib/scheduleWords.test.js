@@ -21,6 +21,7 @@ const EVERY_SCHEDULE_IN_USE = new Map([
   ['0 6 * * 1', 'Every Monday at 06:00 UTC'],
   ['43 7 * * 3', 'Every Wednesday at 07:43 UTC'],
   ['20 7 * * 1', 'Every Monday at 07:20 UTC'],
+  ['35 5 * * *', 'Every day at 05:35 UTC'],
   ['50 5 * * *', 'Every day at 05:50 UTC'],
   ['5 7 * * 2', 'Every Tuesday at 07:05 UTC'],
   ['31 4 * * 1', 'Every Monday at 04:31 UTC'],
