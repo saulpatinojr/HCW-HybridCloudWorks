@@ -53,7 +53,9 @@ Issue a replacement token strictly restricted to needed permissions:
      - `Zone` -> `Zone` -> `Read`
      - `Zone` -> `Transform Rules` -> `Edit` (the origin secret rule)
      - `Account` -> `Account Rulesets` -> `Read`
-     - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site)
+     - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site;
+       the dashboard's `Edit` is the permission the API reference and
+       `infra/variables.tf` call `Write`)
    - **Zone Resources:**
      - `Include` -> `Specific zone` -> `hybridcloudworks.com`
    - **Account Resources** (needed because two permissions above are
@@ -80,7 +82,8 @@ in Key Vault and not a GitHub Actions secret (the credential register,
 2. Edit `cloudflare_api_token`, paste the new token into the value field
    (it stays marked **Sensitive**), and save. Do not paste it anywhere else,
    chat included.
-3. Revoke the old token on the same Cloudflare **API Tokens** page.
+3. Check that the old token shows as revoked on the Cloudflare **API Tokens**
+   page (section 1 revoked it). If it is still active, go back to section 1.
 
 The roll script (`scripts/roll-cloudflare-tokens.mjs`), used for routine
 renewal, does not fit here: it rolls an existing token, and step 1 has
