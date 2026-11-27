@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its two rules) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its two rules) Account Settings:Read and Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1142,10 +1142,13 @@ variable "cloudflare_web_analytics_site_tag" {
 #
 # AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. Since #1923 the Web Analytics
 # site (frontend.tf) is imported, read through GET and then updated through
-# PUT /accounts/{account_id}/rum/site_info/{site_id}; Cloudflare's API schema
-# lists Account → Account Settings → Read and Write for those. Add Write (it
-# includes Read) to the same token (hcp-terraform-cloudflare-dns in the
-# dashboard) before the apply that imports the site. The same apply creates
+# PUT /accounts/{account_id}/rum/site_info/{site_id}; Cloudflare's API
+# reference accepts only Account Settings Read for the GET and only Account
+# Settings Write for the PUT. So the same token (hcp-terraform-cloudflare-dns
+# in the dashboard) carries BOTH, as two rows (the dashboard calls Write
+# "Edit"), before the run that imports the site. Without Read, even a plan
+# fails, at the import's first read, with "Authentication error (10000)"
+# (observed 2026-11-27 on the pull request's speculative plan). The same apply creates
 # the two exclusion rules (notes_excluded and api_excluded) through POST
 # /accounts/{account_id}/rum/v2/{ruleset_id}/rule. That endpoint lists no
 # permission in the schema (read 2026-11-27); every site endpoint and the bulk

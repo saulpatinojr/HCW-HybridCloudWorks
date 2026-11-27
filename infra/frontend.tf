@@ -630,9 +630,10 @@ resource "cloudflare_ruleset" "origin_secret" {
 # protect nothing; the no-key-outputs rule in outputs.tf is about
 # credentials, and this is not one.
 #
-# THE TOKEN NEEDS Account → Account Settings → Write. Cloudflare's API schema
-# lists it for every site endpoint (the update this run makes among them) and
-# for the bulk rules endpoint. The single-rule endpoint the provider uses for
+# THE TOKEN NEEDS Account → Account Settings → Read AND Write. The import
+# reads the site (GET, Read only) and the update writes it (PUT, Write only);
+# without Read even a plan fails, with "Authentication error (10000)" (seen
+# 2026-11-27). Write is listed for the bulk rules endpoint too. The single-rule endpoint the provider uses for
 # the rules below lists no permission at all, so that the same permission
 # covers it is inferred, not documented. The permission paragraph beside
 # cloudflare_origin_secret in variables.tf carries the full list.
