@@ -1019,16 +1019,34 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
   });
 
-  it('passes the plan after #1612’s merge: the disarmed flag and the four GSC settings', () => {
-    // Its overdue row applied by 2026-11-10 and is in TIMER_SCHEDULES_APPLIED (#1918).
-    const { plan, app } = fixture();
-    app.after.app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE = 'false';
-    app.after.app_settings.GSC_WIF_AUDIENCE = '';
-    app.after.app_settings.GSC_ENTRA_APP_ID_URI = '';
-    app.after.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';
-    app.after.app_settings.GSC_SITE_URL = 'sc-domain:hybridcloudworks.com';
-    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
+  it('reads #1612’s catalogue plan as unexpected now that it has applied, and keeps only its arming (#1918)', () => {
+    // The disarmed flag, the four GSC settings and the overdue row applied by
+    // 2026-11-10: the plan check on actions run 42728440587 printed each as
+    // "declared, not in this plan". So adding any of them from nothing again
+    // is unexpected, and the row is in TIMER_SCHEDULES_APPLIED.
+    const settings = {
+      FEATURE_FLAG_SYNC_SEARCH_CONSOLE: 'false',
+      GSC_WIF_AUDIENCE: '',
+      GSC_ENTRA_APP_ID_URI: '',
+      GSC_SERVICE_ACCOUNT_EMAIL: '',
+      GSC_SITE_URL: 'sc-domain:hybridcloudworks.com',
+    };
+    for (const [name, value] of Object.entries(settings)) {
+      const { plan, app } = fixture();
+      app.after.app_settings[name] = value;
+      const result = checkPlan(plan);
+      expect(result.ok, name).toBe(false);
+      expect(result.unexpected.some((line) => line.includes(`app_settings.${name}`)), name).toBe(true);
+    }
     expect(TIMER_SCHEDULES_APPLIED.map(([name]) => name)).toContain('syncSearchConsole');
+
+    const armed = fixture();
+    armed.app.before.app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE = 'false';
+    armed.app.after.app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE = 'true';
+    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+    const entries = DECLARED.filter((entry) => entry.path === 'app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE');
+    expect(entries.map((entry) => [entry.before, entry.after])).toEqual([['false', 'true']]);
+    expect(DECLARED.some((entry) => /^app_settings\.GSC_/.test(entry.path ?? ''))).toBe(false);
   });
 
   it('passes the plan after #1918’s merge (the disarmed flag and the overdue row), and the plan that arms it', () => {

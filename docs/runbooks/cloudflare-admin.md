@@ -360,7 +360,10 @@ the `http_ratelimit` phase (it changes nothing) and say the same thing:
   rule, or every rule in it is switched off. Make the rule, or switch it back
   on, with the steps above.
 - **Unknown** (not checked): the Cloudflare page is not set up yet (the token
-  or the zone id is missing, Part 2), so nothing was asked.
+  or the zone id is missing, Part 2), so nothing was asked. Or "Not checked:
+  the server has not been updated yet": the site was deployed before the back
+  end, whose answer does not carry the verdict yet; deploy the back end (step
+  1 of "Switching it on" below).
 - **Critical or Offline** (red): the read itself failed. The card shows
   Cloudflare's or the site's sentence; see
   [When something is wrong](#when-something-is-wrong) below.
@@ -368,7 +371,12 @@ the `http_ratelimit` phase (it changes nothing) and say the same thing:
 The check runs when the Health page or the Cloudflare page is opened (and
 with **Test all**). A rule whose action is only `log` (a paid-plan option)
 does not count as on, since it limits nothing. Someone with only the viewer
-role sees **Unknown** ("needs the editor role"), not red.
+role sees **Unknown** ("needs the editor role"), not red. The page does not
+judge the rules itself: the back end works the verdict out and sends it with
+the rules (`rateLimit` in the phase route's answer, since
+[#1918](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1918)),
+from the one rule in `functions/src/lib/cloudflare/rate-limit.js` that the
+daily check uses too.
 
 ### The daily check
 
@@ -381,19 +389,22 @@ its name is `checkCloudflareRateLimit`. Each day it:
 
 1. Reads the `http_ratelimit` phase of the site's zone with the admin token
    from Part 2. It only reads; it changes nothing in Cloudflare. It judges
-   the answer with the same rule as the card (the server's
-   `functions/src/lib/cloudflare/rate-limit.js`, which a test holds equal to
-   the browser's copy).
+   the answer with the same rule as the card, the one in
+   `functions/src/lib/cloudflare/rate-limit.js`.
 2. Writes the answer onto the **Cloudflare API rate limit** card on the
    [Health page](https://hybridcloudworks.com/admin/health?tab=checks). The
    card then says "by the scheduled check" and, as for every card, since when
    the colour has held. The daily answer counts as current for 26 hours, so
    the card turns grey (stale) only if a day's run is missed.
 3. Sends one Telegram message when the answer turns amber (no rule on) or red
-   (Cloudflare refused the token or did not answer) from anything else, and
-   one more when it is green again. While nothing changes it says nothing,
-   so a rule left off sends one message, not one a day. "Not checked"
-   (the token or zone id is not set) never sends a message.
+   (the rules could not be read) from anything else, one more if it moves
+   from one of those two to the other (off, then unreadable, or the other way
+   round), and one more when it is green again. While nothing changes it
+   says nothing, so a rule left off sends one message, not one a day. "Not
+   checked" (the token or zone id is not set) never sends a message. A read
+   that failed gets the same colour the card's **Test** would give it:
+   **Offline** when Cloudflare could not be reached or refused the token
+   (the site answers both with 502), **Critical** otherwise.
 
 What it remembers about the last message is kept in one small document,
 `cloudflare_rate_limit_watch`, in the `admin_config` container; pressing
@@ -403,34 +414,54 @@ the next day's run tries again.
 
 **Switching it on.** Like every timer in the Function App, it is off until
 its name is added to `enabled_timers` (the list of switched-on timers in the
-HCP Terraform workspace `hcw-azure`). Do this once the pull request that
-added it has been merged and the Terraform run that merge started has been
-confirmed:
+HCP Terraform workspace `hcw-azure`). The back end (the Function App's code)
+is deployed by hand, separately from Terraform, so the order matters: deploy
+the code first, then confirm the Terraform run. The Terraform run that the
+merge starts adds the timer's row to `alert-timer-overdue` (the alert that
+fires when a timer has not run when it should), and that row goes live the
+moment the run applies. If the code is not deployed by then, the alert sees a
+timer that never runs. Do this once the pull request that added the timer
+has been merged:
 
-1. Open the [workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
-   The run for the merge should show as **Applied**. Its plan adds
+1. Deploy the back end from `main`. Open
+   [Deploy Functions](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml),
+   press **Run workflow**, leave the branch on `main`, and press the green
+   **Run workflow** button. The run waits as **Waiting** for the
+   `production-backend` approval: open the run, press **Review deployments**,
+   tick `production-backend` and **Approve and deploy**. When it worked, the
+   run is green after about five minutes and its step **Assert every
+   expected function is registered** passes, which now includes
+   `checkCloudflareRateLimit`. If that step fails naming the timer, the
+   deploy did not take; read the run's log before going on. If the run
+   refuses because a Terraform apply is running, wait for that apply to
+   finish and run it again.
+2. Only then open the [workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
+   and find the run for the merge. Its plan adds
    `FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT` as `"false"` and one row
    (`checkCloudflareRateLimit`) to the `alert-timer-overdue` query; both are
-   `DECLARED` in the plan check. If it is still waiting, read its plan and
-   confirm it first. Confirming applies the change to Azure.
-2. Open the [workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+   `DECLARED` in the plan check. Read the plan and confirm it. Confirming
+   applies the change to Azure. If it shows as **Applied** already, go on.
+3. Open the [workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
    and check that `schedulers_master_enabled` is `true`. If it is `false`,
    stop: turning it on lets every timer in `enabled_timers` run, which is a
    separate decision.
-3. In the same place, edit `enabled_timers` (HCL) to add
+4. In the same place, edit `enabled_timers` (HCL) to add
    `"CHECK_CLOUDFLARE_RATE_LIMIT"` to the list, and save. A misspelt name is
    refused by the plan with "enabled_timers accepts only flag suffixes".
-4. Back on the [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
+5. Back on the [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
    start a run (**+ New run**) and read the plan. You should see one change
    for this timer: `FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT` from `"false"`
    to `"true"`, marked `DECLARED` by the plan check. Anything the plan check
    calls UNEXPECTED needs reading before you confirm. If the flag appears
-   from nothing straight to `"true"`, the run from step 1 had not applied:
-   discard this one and do step 1 first.
-5. Confirm the run. The next day after 12:40 UTC, the card on the
+   from nothing straight to `"true"`, the run from step 2 had not applied:
+   discard this one and do step 2 first.
+6. Confirm the run. The next day after 12:40 UTC, the card on the
    [Health page](https://hybridcloudworks.com/admin/health?tab=checks)
    should say "by the scheduled check". If it still says "an admin" or "Not
-   tested yet", the timer has not run: check that step 4's run applied.
+   tested yet", the timer has not run: check that step 1's deploy finished
+   green (the new code is not deployed yet otherwise) and that step 5's run
+   applied. If the card or the Overview says "Not checked: the server has
+   not been updated yet", the site is newer than the back end: do step 1.
 
 **Switching it off.** Remove `"CHECK_CLOUDFLARE_RATE_LIMIT"` from
 `enabled_timers` in the
@@ -439,6 +470,13 @@ and start a run. The plan check lists the one flag line (`"true"` to
 `"false"`) as UNEXPECTED, because only switching on is declared; when that
 is the only change, confirm it. The card goes back to showing only what a
 Test finds.
+
+**What follows up on it.** Its only output is a Telegram message to the
+owner and the Health card, so the daily scheduled Claude session (which
+finishes what GitHub's scheduled jobs leave behind) needs no change for it.
+A source on the Dashboard's "waiting on you" list (the Decision Center) was
+considered in [#1918](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1918)
+as optional and was not added.
 
 ## Part 5. Working on the lab zone
 

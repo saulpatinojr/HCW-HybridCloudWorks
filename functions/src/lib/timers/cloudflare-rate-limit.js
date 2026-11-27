@@ -17,8 +17,11 @@
  *      daily answer and, through `statusSince`, how long it has held.
  *   3. Speaks on Telegram only when the answer crosses the line: once when it
  *      goes amber (rule off) or red (Cloudflare refused or did not answer)
- *      from anything else, and once when it is green again after that.
- *      Nothing while it stays the same. What the owner was last told is kept
+ *      from anything else, once more if it moves from one of those to the
+ *      other, and once when it is green again after that. Nothing while it
+ *      stays the same. A failed read has the status the browser's probe gives
+ *      the same failure (health/status-model.js classifyFailure: offline for
+ *      a gateway status or an unreachable server, critical otherwise). What the owner was last told is kept
  *      in its own document (`cloudflare_rate_limit_watch`), not read from the
  *      Health card, because a Test pressed on the Health page rewrites the
  *      card and must not make the timer say the same thing twice.
@@ -40,7 +43,7 @@
  * code, never a rule, an expression, a zone id or the token.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { authoredMessage, errorCode } from '../http/error-response.js';
+import { authoredMessage, errorCode, isAuthoredError } from '../http/error-response.js';
 import { notConfiguredMessage } from '../cloudflare/prerequisites.js';
 import {
   RATE_LIMIT_PHASE,
@@ -50,6 +53,7 @@ import {
   rateLimitVerdict,
 } from '../cloudflare/rate-limit.js';
 import { healthProbe } from '../health/probe-catalogue.js';
+import { classifyFailure } from '../health/status-model.js';
 import { MAX_SUMMARY_LENGTH, recordProbeResult } from '../health/probe-results.js';
 
 export const TIMER_NAME = 'checkCloudflareRateLimit';
@@ -65,6 +69,10 @@ export const HEALTH_PAGE = 'https://hybridcloudworks.com/admin/health';
 export const RUNBOOK_PART_4 =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md#part-4-making-the-api-rate-limit-rule';
 
+/** What the Cloudflare page's route answers for a failure that is not Cloudflare's (handlers.js answerError). */
+const ROUTE_FAILED = 'The Cloudflare request failed.';
+const ROUTE_FAILURE = Object.freeze({ status: 500, message: ROUTE_FAILED });
+
 /** Statuses the owner is told about: amber and red. */
 const ALARMING = new Set(['degraded', 'critical', 'offline']);
 
@@ -76,7 +84,13 @@ async function judge(d) {
     return rateLimitVerdict({ ruleset: await client.getPhase(RATE_LIMIT_PHASE) });
   } catch (error) {
     d.log.warn?.(`[${TIMER_NAME}] the rate limiting phase could not be read (${errorCode(error)})`);
-    return failedVerdict(authoredMessage(error, 'Cloudflare did not answer.'));
+    // The sentence and the status the browser's probe would show for the same
+    // failure: a CloudflareError carries the status the Cloudflare page's
+    // route answers with (502 when Cloudflare could not be reached or refused
+    // the token, which the browser reads as offline), and anything else is the
+    // route's 500 "The Cloudflare request failed." (critical).
+    const failure = isAuthoredError(error) ? error : ROUTE_FAILURE;
+    return failedVerdict(authoredMessage(error, ROUTE_FAILED), classifyFailure(failure));
   }
 }
 
@@ -117,10 +131,17 @@ const recoveredMessage = (verdict) => ({
   message: `${verdict.sentence} The daily check reads the rule as on again.`,
 });
 
-/** What to say and what to remember, or null when nothing changes for the owner. */
+/**
+ * What to say and what to remember, or null when nothing changes for the
+ * owner. The kind of alarm the owner was told about is kept (`state`: off or
+ * failed), so a rule that was off and now cannot be read, or the other way
+ * round, is said once more; the same kind again says nothing.
+ */
 export function nextStep(verdict, current) {
   const told = current?.alerted === true;
-  if (ALARMING.has(verdict.status) && !told) return { alerted: true, alert: alarmMessage(verdict) };
+  if (ALARMING.has(verdict.status) && !(told && current.state === verdict.state)) {
+    return { alerted: true, alert: alarmMessage(verdict) };
+  }
   if (verdict.status === 'healthy' && told) return { alerted: false, alert: recoveredMessage(verdict) };
   return null;
 }

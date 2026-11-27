@@ -1179,7 +1179,7 @@ export const SERVICES = Object.freeze([
     testedSecrets: ['CLOUDFLARE-ADMIN-TOKEN'],
     keyGroups: [
       {
-        title: `Admin token (the ${CLOUDFLARE_PAGE} page and ${NETWORK_AGENT} use it)`,
+        title: `Admin token (the ${CLOUDFLARE_PAGE} page, ${NETWORK_AGENT} and the daily rate limit check use it)`,
         secrets: ['CLOUDFLARE-ADMIN-TOKEN'],
       },
       {
@@ -1196,6 +1196,7 @@ export const SERVICES = Object.freeze([
       'Read the zone’s settings, change one, and empty the cache',
       'Read, add and edit DNS records (never delete one)',
       'Read the rules, and replace the rules of a phase that is not locked',
+      'Read the API rate limit rule once a day, for the Health page (the daily check, once it is switched on)',
       'Prove a visitor reached the site through Cloudflare',
       'Read the site’s monthly page-view count',
       'Verify the human check on the lab',

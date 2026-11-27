@@ -584,7 +584,15 @@ describe('the Cloudflare API rate limit probe (#1909)', () => {
   });
 
   it('is healthy when a rule is on, naming how many', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: true }] } });
+    getJSON.mockResolvedValueOnce({
+      ruleset: { rules: [{ id: 'r1', enabled: true }] },
+      rateLimit: {
+        state: 'on',
+        status: 'healthy',
+        count: 1,
+        sentence: '1 API rate limit rule is on.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'healthy',
       summary: '1 API rate limit rule is on.',
@@ -593,12 +601,30 @@ describe('the Cloudflare API rate limit probe (#1909)', () => {
   });
 
   it('is degraded (amber) when no rule is set, or none is on', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: null });
+    getJSON.mockResolvedValueOnce({
+      ruleset: null,
+      rateLimit: {
+        state: 'off',
+        status: 'degraded',
+        count: 0,
+        sentence:
+          'No API rate limit rule is on. The rate limiting phase (http_ratelimit) has no rules, so one address can send the API as many requests as it likes.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'degraded',
       summary: expect.stringMatching(/^No API rate limit rule is on\. .*has no rules/),
     });
-    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: false }] } });
+    getJSON.mockResolvedValueOnce({
+      ruleset: { rules: [{ id: 'r1', enabled: false }] },
+      rateLimit: {
+        state: 'off',
+        status: 'degraded',
+        count: 0,
+        sentence:
+          'No API rate limit rule is on. The rate limiting phase (http_ratelimit) holds one rule, switched off or only logging, so one address can send the API as many requests as it likes.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'degraded',
       summary: expect.stringContaining('switched off'),

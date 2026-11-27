@@ -145,31 +145,67 @@ describe('checkCloudflareRateLimit', () => {
     expect(h.store.data.has(WATCH_DOC_ID)).toBe(false);
   });
 
-  it('a refusal or an outage is red, said once, and logged by code only', async () => {
+  it('a failed read has the browser’s status: offline for a 502 or unreachable, critical otherwise; said once', async () => {
     const h = harness();
+    // The route answers a token Cloudflare refused with 502, which the browser reads as offline.
     const refused = new CloudflareError('Cloudflare refused the token for this (HTTP 403).', {
       status: 502,
       upstreamStatus: 403,
     });
-    expect(await h.run(refused)).toMatchObject({ state: 'failed', status: 'critical', told: true });
-    expect(h.store.data.get(PROBE_DOC).summary).toBe(
-      'The rate limiting rules could not be read: Cloudflare refused the token for this (HTTP 403).'
-    );
+    expect(await h.run(refused)).toMatchObject({ state: 'failed', status: 'offline', told: true });
+    expect(h.store.data.get(PROBE_DOC)).toMatchObject({
+      status: 'offline',
+      summary: 'The rate limiting rules could not be read: Cloudflare refused the token for this (HTTP 403).',
+    });
     expect(h.notifier.notifyTelegram.mock.calls[0][0]).toMatchObject({ severity: 'critical', source: RATE_LIMIT_SOURCE });
     expect(h.log.warn).toHaveBeenCalledWith(
       '[checkCloudflareRateLimit] the rate limiting phase could not be read (CLOUDFLARE_REFUSED)'
     );
 
-    // Still unreadable the next day, by another cause: no second message.
+    // Still unreadable the next day, by another cause: the same kind, no second message.
     const unreachable = new CloudflareError('Cloudflare could not be reached. Try again shortly.', {
       status: 502,
       code: 'CLOUDFLARE_UNREACHABLE',
     });
-    expect(await h.run(unreachable)).toMatchObject({ status: 'critical', told: false });
-    // A thrown error that is not ours shows a fixed sentence, never its own text.
+    expect(await h.run(unreachable)).toMatchObject({ state: 'failed', status: 'offline', told: false });
+    // A refusal the route answers with its own status (429) is critical, as in the browser.
+    const limited = new CloudflareError('Cloudflare is limiting requests right now. Wait a minute and try again.', {
+      status: 429,
+      upstreamStatus: 429,
+    });
+    expect(await h.run(limited)).toMatchObject({ status: 'critical', told: false });
+    // A thrown error that is not ours shows the route's own sentence, never its own text: critical.
     expect(await h.run(new Error('secret-looking text'))).toMatchObject({ status: 'critical', told: false });
-    expect(h.store.data.get(PROBE_DOC).summary).toBe('The rate limiting rules could not be read: Cloudflare did not answer.');
+    expect(h.store.data.get(PROBE_DOC).summary).toBe('The rate limiting rules could not be read: The Cloudflare request failed.');
     expect(h.notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the same status as the browser for every failure shape (classifyFailure)', async () => {
+    const cases = [
+      [new CloudflareError('Cloudflare could not be reached. Try again shortly.', { status: 502, code: 'CLOUDFLARE_UNREACHABLE' }), 'offline'],
+      [new CloudflareError('Cloudflare has no such item.', { status: 404 }), 'critical'],
+      [new CloudflareError('Cloudflare refused the change as not valid.', { status: 400 }), 'critical'],
+      [Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), 'critical'],
+    ];
+    for (const [error, status] of cases) {
+      expect((await harness().run(error)).status, error.message).toBe(status);
+    }
+  });
+
+  it('says once more when the alarm changes kind, off to unreadable and back, and nothing while it holds', async () => {
+    const h = harness();
+    const unreadable = new CloudflareError('Cloudflare could not be reached. Try again shortly.', { status: 502 });
+    await h.run(OFF);
+    expect(await h.run(unreadable)).toMatchObject({ state: 'failed', told: true });
+    expect(h.notifier.notifyTelegram.mock.calls[1][0].title).toBe('Cloudflare API rate limit could not be checked');
+    expect(h.store.data.get(WATCH_DOC_ID)).toMatchObject({ alerted: true, state: 'failed' });
+    expect(await h.run(unreadable)).toMatchObject({ told: false });
+    expect(await h.run(OFF)).toMatchObject({ state: 'off', told: true });
+    expect(h.notifier.notifyTelegram.mock.calls[2][0].title).toBe('Cloudflare API rate limit is off');
+    expect(await h.run(OFF)).toMatchObject({ told: false });
+    expect(await h.run(ON)).toMatchObject({ state: 'on', told: true });
+    expect(await h.run(ON)).toMatchObject({ told: false });
+    expect(h.notifier.notifyTelegram).toHaveBeenCalledTimes(4);
   });
 
   it('records nothing about the alert when the message did not go, so the next run tries again', async () => {
@@ -221,10 +257,18 @@ describe('checkCloudflareRateLimit', () => {
 
 describe('nextStep', () => {
   const verdict = (status, state = 'x') => ({ status, state, sentence: 'S.' });
-  it('speaks only across the line', () => {
+  it('speaks only across the line, or when the alarm changes kind', () => {
     expect(nextStep(verdict('degraded', 'off'), null)?.alerted).toBe(true);
     expect(nextStep(verdict('critical', 'failed'), { alerted: false })?.alerted).toBe(true);
-    expect(nextStep(verdict('degraded'), { alerted: true })).toBeNull();
+    expect(nextStep(verdict('degraded', 'off'), { alerted: true, state: 'off' })).toBeNull();
+    expect(nextStep(verdict('offline', 'failed'), { alerted: true, state: 'failed' })).toBeNull();
+    expect(nextStep(verdict('critical', 'failed'), { alerted: true, state: 'failed' })).toBeNull();
+    expect(nextStep(verdict('offline', 'failed'), { alerted: true, state: 'off' })?.alert.title).toBe(
+      'Cloudflare API rate limit could not be checked'
+    );
+    expect(nextStep(verdict('degraded', 'off'), { alerted: true, state: 'failed' })?.alert.title).toBe(
+      'Cloudflare API rate limit is off'
+    );
     expect(nextStep(verdict('healthy'), { alerted: true })?.alerted).toBe(false);
     expect(nextStep(verdict('healthy'), null)).toBeNull();
     expect(nextStep(verdict('unknown'), { alerted: true })).toBeNull();

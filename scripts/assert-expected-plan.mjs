@@ -751,43 +751,23 @@ export const DECLARED = [
     reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
   },
 
-  // #1612: the admin Search Console page. The plan after the merge adds the
-  // syncSearchConsole timer's flag, disarmed, and the four GSC_* settings at
-  // their defaults (three empty, the property's name). Its row on
-  // alert-timer-overdue applied by 2026-11-10 and was folded into
-  // TIMER_SCHEDULES_APPLIED by #1918, which deleted that entry. The
-  // arming plan (false -> true) stays until the owner adds
-  // SYNC_SEARCH_CONSOLE to enabled_timers, like the other arming plans. The
-  // owner's own values for the three empty settings ("" -> a value) are
-  // workspace edits and deliberately not declared: they show as UNEXPECTED
-  // and are read by hand, since this file holds no real identifier.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
-    before: undefined,
-    after: "false",
-    reason: "#1612: the Search Console timer catalogued, disarmed",
-  },
+  // #1612: the admin Search Console page. Its catalogue plan (the timer's
+  // flag "false", the four GSC_* settings at their defaults, and its row on
+  // alert-timer-overdue) applied by 2026-11-10: the plan check on the run for
+  // 442a24b (actions run 42728440587) printed each of them as "declared, not
+  // in this plan". #1918 deleted those entries and folded the row into
+  // TIMER_SCHEDULES_APPLIED. The arming plan (false -> true) stays until the
+  // owner adds SYNC_SEARCH_CONSOLE to enabled_timers and that run has
+  // applied, like the other arming plans. The owner's own values for the
+  // three empty GSC_* settings ("" -> a value) are workspace edits and
+  // deliberately not declared: they show as UNEXPECTED and are read by hand,
+  // since this file holds no real identifier.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
     before: "false",
     after: "true",
     reason: "#1612: SYNC_SEARCH_CONSOLE added to enabled_timers, arming the twice-daily run",
-  },
-  ...["GSC_WIF_AUDIENCE", "GSC_ENTRA_APP_ID_URI", "GSC_SERVICE_ACCOUNT_EMAIL"].map((name) => ({
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: `app_settings.${name}`,
-    before: undefined,
-    after: "",
-    reason: `#1612: ${name} declared empty until the owner sets up Google's side`,
-  })),
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.GSC_SITE_URL",
-    before: undefined,
-    after: "sc-domain:hybridcloudworks.com",
-    reason: "#1612: the Search Console property the page reads",
   },
 
   // #1918: the daily check that the Cloudflare API rate limit rule is on

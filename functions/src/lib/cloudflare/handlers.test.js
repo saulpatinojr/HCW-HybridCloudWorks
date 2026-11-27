@@ -792,6 +792,25 @@ describe('rules', () => {
     expect(JSON.stringify(res.body)).not.toContain(ORIGIN_SECRET);
   });
 
+  it('adds the server’s rate limit verdict to the rate limiting phase only (#1918)', async () => {
+    const limit = { id: 'l1', expression: 'true', action: 'block', ratelimit: { period: 10 } };
+    const on = setup({ routes: entrypoint('http_ratelimit', { id: 'rl', version: '2', rules: [limit, { ...limit, id: 'l2', enabled: false }] }) });
+    const read = parse(await on.handlers.getPhase(request({ params: { phase: 'http_ratelimit' } }), {}));
+    expect(read.body.rateLimit).toEqual({ state: 'on', status: 'healthy', count: 1, sentence: '1 of 2 API rate limit rules is on.' });
+
+    // No entry point at all (Cloudflare answers 404): amber, not an error.
+    const none = setup();
+    const empty = parse(await none.handlers.getPhase(request({ params: { phase: 'http_ratelimit' } }), {}));
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({ ruleset: null, rateLimit: { state: 'off', status: 'degraded', count: 0 } });
+    expect(empty.body.rateLimit.sentence).toMatch(/^No API rate limit rule is on\. .*has no rules/);
+
+    // Any other phase answers no verdict.
+    const other = setup({ routes: entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, version: '3', rules: [] }) });
+    const redirect = parse(await other.handlers.getPhase(request({ params: { phase: REDIRECT } }), {}));
+    expect(Object.hasOwn(redirect.body, 'rateLimit')).toBe(false);
+  });
+
   it('reads a phase that may not be replaced as a summary of each rule only, never its parameters', async () => {
     const { handlers } = setup({ routes: entrypoint(LATE, LATE_RULESET) });
     const res = parse(await handlers.getPhase(request({ params: { phase: LATE } }), {}));

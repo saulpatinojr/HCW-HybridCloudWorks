@@ -3,21 +3,21 @@
  *
  * The rule that stops one address flooding the API lives only in Cloudflare
  * (the `http_ratelimit` rule phase), not in Terraform (#1903), so nothing else
- * would notice if it were deleted or switched off. Three places ask:
+ * would notice if it were deleted or switched off. Two places ask, and both
+ * get their answer from this file, so there is one rule and no copy:
  *
- *   - the Health page's `cloudflare-rate-limit` probe and the Cloudflare
- *     page's Overview, in the browser
+ *   - the Cloudflare page's phase route (rules-routes.js getPhase), which
+ *     adds this verdict as `rateLimit` to its answer for this phase; the
+ *     Health page's `cloudflare-rate-limit` probe and the Cloudflare page's
+ *     Overview show it as it is
  *     (frontend/src/components/admin/cloudflare/rateLimitCheck.js);
- *   - the daily `checkCloudflareRateLimit` timer, on the server
+ *   - the daily `checkCloudflareRateLimit` timer
  *     (lib/timers/cloudflare-rate-limit.js).
  *
- * This is the rule they share. It imports nothing, so the browser's mirror
- * test (frontend/src/components/admin/cloudflare/rateLimitMirror.test.js)
- * reads it directly and fails when the browser's copy gives any other answer,
- * the way the Pipeline's origin pages are held together (ORIGIN_PAGES).
- *
- *   on      at least one rule is switched on and limits   healthy
+ *   on      at least one rule is switched on and limits     healthy
  *   off     no rule set, or every rule off or only logging  degraded (amber)
+ *
+ * It imports nothing, so it can be read by any test without the app's setup.
  */
 
 export const RATE_LIMIT_PHASE = 'http_ratelimit';
@@ -43,6 +43,7 @@ const isVerb = (n) => (n === 1 ? 'is' : 'are');
 export const isLimitingRule = (rule) =>
   Boolean(rule) &&
   typeof rule === 'object' &&
+  !Array.isArray(rule) &&
   (rule.enabled === undefined || rule.enabled === true) &&
   String(rule.action ?? '').toLowerCase() !== 'log';
 
@@ -78,13 +79,13 @@ export const notCheckedVerdict = (message) => ({
 });
 
 /**
- * The server's verdict on a read that failed: red. The browser classifies its
- * own failures (a viewer's 403 from the site's route is not a Cloudflare
- * failure); the server reads Cloudflare directly, so any failure is real.
+ * The verdict on a read that failed. `status` is the caller's classification
+ * of the failure (offline when Cloudflare could not be reached, critical
+ * otherwise), the same words the browser's probe uses.
  */
-export const failedVerdict = (message) => ({
+export const failedVerdict = (message, status) => ({
   state: 'failed',
-  status: 'critical',
+  status,
   count: 0,
   sentence: `${READ_FAILED} ${message}`,
 });
