@@ -656,7 +656,8 @@ check "web_analytics_inputs" {
 # `count`, and `for_each` on one needs Terraform 1.7, hence the floor in
 # providers.tf). Once the site is in state, Terraform skips an import block
 # whose resource it already manages, so this can stay; delete it any time
-# after the first apply.
+# after the first apply. Skipped, it no longer reads the site tag, so the
+# site's postcondition below holds the variable to the site in state.
 import {
   for_each = local.web_analytics_managed ? { hcw = "${var.cloudflare_account_id}/${var.cloudflare_web_analytics_site_tag}" } : {}
   to       = cloudflare_web_analytics_site.hcw[0]
@@ -674,6 +675,17 @@ resource "cloudflare_web_analytics_site" "hcw" {
 
   lifecycle {
     prevent_destroy = true
+
+    # After the first apply the import block above is skipped, so a changed
+    # cloudflare_web_analytics_site_tag would otherwise be ignored while the
+    # Function App kept the old tag from state. As infra-lab/main.tf does for
+    # its adopted server, a variable that disagrees with what was adopted is
+    # an error, not a quiet second meaning. The tag is not printed: the
+    # message says where to read it. Changing sites is the let-go steps above.
+    postcondition {
+      condition     = self.site_tag == var.cloudflare_web_analytics_site_tag
+      error_message = "cloudflare_web_analytics_site_tag does not match the Web Analytics site Terraform already manages. Set the workspace variable back to that site's tag (Cloudflare dashboard, Analytics & Logs, Web Analytics, the site's Manage page), or to move to another site, follow the let-go steps in infra/frontend.tf first. Nothing has been changed."
+    }
   }
 }
 

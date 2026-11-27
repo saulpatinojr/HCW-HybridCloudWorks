@@ -20,6 +20,19 @@
  * declared AND each attribute it changes, just as any other update does. The
  * import's id is never part of a declaration or the report, because it holds
  * the owner's identifiers.
+ *
+ * Two kinds of value cannot be written in this public file, so an update's
+ * `after` may name one of them instead of a value (#1923):
+ *   `KNOWN_AFTER_APPLY`  a value the provider works out during the apply.
+ *                        It matches only a difference the plan marks unknown
+ *                        and not sensitive, and `before` is not compared: it
+ *                        is the provider's own value, read from the far end.
+ *   `OWNER_VALUE`        a value the owner sets in the workspace. It matches
+ *                        only a known, non-sensitive, non-empty string that
+ *                        differs from `before`, and `before` is compared
+ *                        exactly, as for any update.
+ * Neither prints a value: the report names the stand-in, not what it stands
+ * for. A sensitive difference still never matches anything.
  */
 import { isDeepStrictEqual } from 'node:util';
 
@@ -27,8 +40,21 @@ import { render } from './plan-report.mjs';
 
 /** One `DECLARED` entry, for the report. */
 export function describeDeclaration({ address, action, path, before, after, reason }) {
-  const change = action ? action : `${path}: ${render(before)} -> ${render(after)}`;
+  const change = action ? action : `${path}: ${describeValues(before, after)}`;
   return `${address} ${change}${reason ? ` (${reason})` : ''}`;
+}
+
+/** A provider-computed value, which the plan shows as unknown (#1923). */
+export const KNOWN_AFTER_APPLY = Symbol('known after apply');
+
+/** A value the owner sets in the workspace and this file never holds (#1923). */
+export const OWNER_VALUE = Symbol('owner value');
+
+/** The two values of an update declaration, as the report prints them. */
+function describeValues(before, after) {
+  if (after === KNOWN_AFTER_APPLY) return '(known after apply)';
+  const right = after === OWNER_VALUE ? "(the owner's value, not printed)" : render(after);
+  return `${render(before)} -> ${right}`;
 }
 
 /**
@@ -47,16 +73,41 @@ export function declarationLines({ declared = [], unused = [] }) {
   ];
 }
 
-/**
- * Whether one declaration covers one difference in an update. A sensitive or
- * unknown difference never matches: declaring it would mean writing its value
- * in a public file.
- */
-export function matchesDeclaration(declaration, address, difference) {
-  if (difference.sensitive || difference.unknown) return false;
-  if (declaration?.address !== address || declaration.path !== difference.path) return false;
+/** A declared value: exactly these values, and both known. */
+function matchesValues(declaration, difference) {
+  if (difference.unknown) return false;
   const sameBefore = isDeepStrictEqual(declaration.before, difference.before);
   return sameBefore && isDeepStrictEqual(declaration.after, difference.after);
+}
+
+/** `KNOWN_AFTER_APPLY`: unknown in the plan, whatever the provider held before. */
+function matchesComputed(_declaration, difference) {
+  return difference.unknown === true;
+}
+
+/** `OWNER_VALUE`: from exactly `before` to some other, non-empty string. */
+function matchesOwnerValue(declaration, difference) {
+  const { before, after, unknown } = difference;
+  if (unknown || !isDeepStrictEqual(declaration.before, before)) return false;
+  return typeof after === 'string' && after !== '' && after !== before;
+}
+
+const MATCHERS = new Map([
+  [KNOWN_AFTER_APPLY, matchesComputed],
+  [OWNER_VALUE, matchesOwnerValue],
+]);
+
+/**
+ * Whether one declaration covers one difference in an update. A sensitive
+ * difference never matches, and an unknown one matches only
+ * `KNOWN_AFTER_APPLY`: declaring either value would mean writing it in a
+ * public file.
+ */
+export function matchesDeclaration(declaration, address, difference) {
+  if (difference.sensitive) return false;
+  if (declaration?.address !== address || declaration.path !== difference.path) return false;
+  const matches = MATCHERS.get(declaration.after) ?? matchesValues;
+  return matches(declaration, difference);
 }
 
 /** The actions a `{ address, action, reason }` declaration may name. */

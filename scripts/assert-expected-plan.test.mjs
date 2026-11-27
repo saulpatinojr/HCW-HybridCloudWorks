@@ -32,8 +32,11 @@ import {
   CONDITIONAL_REPLACED,
   declarationLines,
   DECLARED,
+  describeDeclaration,
   EXPECTED,
   formatPath,
+  KNOWN_AFTER_APPLY,
+  OWNER_VALUE,
   OVERDUE_LAST_DUE,
   OVERDUE_LAST_DUE_BIN_AT,
   overdueQuery,
@@ -46,6 +49,7 @@ import {
 // The module-reading helper moved to its own file when a second check needed
 // it (terraform-role-definitions.test.mjs). Same eight lines, one copy.
 import { terraformSource } from './terraform-source.mjs';
+import { matchesDeclaration } from './lib/plan-declarations.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
@@ -783,6 +787,36 @@ describe('every change is read, not only the ones classify names (#719 review)',
     ]);
   });
 
+  it('matches KNOWN_AFTER_APPLY only to an unknown, non-sensitive difference at its exact path (#1923)', () => {
+    const declaration = { address: 'example_site.one', path: 'token', after: KNOWN_AFTER_APPLY, reason: 'test' };
+    const difference = (extra) => ({ path: 'token', before: 'old', after: undefined, sensitive: false, unknown: true, ...extra });
+    expect(matchesDeclaration(declaration, 'example_site.one', difference())).toBe(true);
+    // A known change is a value someone has to read, not a computed one.
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ after: 'new', unknown: false }))).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ sensitive: true }))).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.two', difference())).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ path: 'snippet' }))).toBe(false);
+    expect(describeDeclaration(declaration)).toBe('example_site.one token: (known after apply) (test)');
+  });
+
+  it('matches OWNER_VALUE only from exactly its before to another non-empty, known string (#1923)', () => {
+    const declaration = { address: 'example_app.one', path: 'app_settings.ID', before: '', after: OWNER_VALUE, reason: 'test' };
+    const difference = (extra) => ({ path: 'app_settings.ID', before: '', after: 'value', sensitive: false, unknown: false, ...extra });
+    expect(matchesDeclaration(declaration, 'example_app.one', difference())).toBe(true);
+    for (const [label, extra] of [
+      ['another before', { before: 'older' }],
+      ['emptied', { after: '' }],
+      ['removed', { after: undefined }],
+      ['not a string', { after: 42 }],
+      ['unknown', { after: undefined, unknown: true }],
+      ['sensitive', { sensitive: true }],
+      ['another path', { path: 'app_settings.OTHER' }],
+    ]) {
+      expect(matchesDeclaration(declaration, 'example_app.one', difference(extra)), label).toBe(false);
+    }
+    expect(describeDeclaration(declaration)).toBe(`example_app.one app_settings.ID: "" -> (the owner's value, not printed) (test)`);
+  });
+
   it('holds an imported resource’s update to its own declarations, separately from the import (#1923)', () => {
     const importDeclaration = { address: 'azurerm_key_vault.imported', action: 'import', reason: 'test' };
     const update = {
@@ -954,6 +988,10 @@ describe('DECLARED', () => {
         // A create, delete (#816) or import (#1923): no path, no values, nothing else.
         expect(['create', 'delete', 'import'], label).toContain(declaration.action);
         expect(Object.keys(declaration).sort(), label).toEqual(['action', 'address', 'reason']);
+      } else if (declaration.after === KNOWN_AFTER_APPLY) {
+        // A computed value (#1923): its before is the provider's own and is not
+        // compared, so an entry that wrote one would mislead the next reader.
+        expect(Object.keys(declaration).sort(), label).toEqual(['address', 'after', 'path', 'reason']);
       } else {
         expect(typeof declaration.path, label).toBe('string');
         expect(Object.hasOwn(declaration, 'before') && Object.hasOwn(declaration, 'after'), label).toBe(true);
@@ -1282,7 +1320,9 @@ describe('DECLARED', () => {
   it('prunes what applied by 2026-11-01 (Second Brain, Doc Vault, #1302, #1403, #1479), and keeps the arming plans', () => {
     const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
     const deletes = DECLARED.filter((entry) => entry.action === 'delete').map((entry) => entry.address);
-    const paths = DECLARED.map((entry) => entry.path);
+    // #1923 declares CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG again, as
+    // "" -> the owner's value; what was pruned is #1302's absent -> "".
+    const paths = DECLARED.filter((entry) => entry.after !== OWNER_VALUE).map((entry) => entry.path);
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
     }
@@ -1325,11 +1365,27 @@ describe('DECLARED', () => {
     for (const rule of RULES) expect(actionsAt(rule), rule).toEqual(['create']);
     // The import leaves enabled and lite null (the provider never reads them back), and the update sets them.
     const siteUpdates = DECLARED.filter((entry) => entry.address === SITE && entry.path)
+      .filter((entry) => entry.after !== KNOWN_AFTER_APPLY)
       .map(({ path, before, after }) => [path, before, after])
       .sort();
     expect(siteUpdates).toEqual([
       ['enabled', null, true],
       ['lite', null, true],
+    ]);
+    // The four computed values with no plan modifier in provider 5.29.0 go unknown on that update.
+    const computed = DECLARED.filter((entry) => entry.address === SITE && entry.after === KNOWN_AFTER_APPLY)
+      .map((entry) => entry.path)
+      .sort();
+    expect(computed).toEqual(['rules', 'ruleset', 'site_token', 'snippet']);
+    // The two app settings take the owner's values, from "" and with neither value written here.
+    const ownerValues = DECLARED.filter((entry) => entry.after === OWNER_VALUE).map(({ address, path, before }) => [
+      address,
+      path,
+      before,
+    ]);
+    expect(ownerValues).toEqual([
+      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_ACCOUNT_ID', ''],
+      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_WEB_ANALYTICS_SITE_TAG', ''],
     ]);
 
     const block = (header, label) => {
@@ -1371,6 +1427,9 @@ describe('DECLARED', () => {
     expect(site).not.toMatch(/^\s*host\s*=/m);
     // Unsetting the inputs once the site is in state must stop the plan, not delete Cloudflare's site.
     expect(site).toMatch(/^\s*prevent_destroy\s*=\s*true$/m);
+    // Once the import block is skipped, a changed tag must stop the plan, not be ignored
+    // (infra/tests/guards.tftest.hcl runs the mismatch).
+    expect(site).toMatch(/^\s*condition\s*=\s*self\.site_tag == var\.cloudflare_web_analytics_site_tag$/m);
     // Each rule excludes one proxied name that serves HTML, on the site's own ruleset.
     for (const [body, host] of [
       [notes, 'notes'],
@@ -1382,19 +1441,33 @@ describe('DECLARED', () => {
       expect(body).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
     }
 
-    // The owner's run, as the plan JSON will carry it: the import with its update, and the two creates.
-    // What is left is the site's computed values going unknown, read by hand, and never the import id.
+    // The owner's run, as the plan JSON will carry it: the import with its update, the two creates,
+    // and the Function App's two settings. Every value is a placeholder; none is printed.
     const importId = 'account-placeholder/site-placeholder';
+    const accountId = 'account-placeholder-0123456789abcdef';
+    const siteTag = 'site-tag-placeholder-0123456789ab';
     const plan = expectedPlan();
+    const app = plan.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change;
+    Object.assign(app.before.app_settings, { CF_ACCOUNT_ID: '', CF_WEB_ANALYTICS_SITE_TAG: '' });
+    Object.assign(app.after.app_settings, { CF_ACCOUNT_ID: accountId, CF_WEB_ANALYTICS_SITE_TAG: siteTag });
     plan.resource_changes.push(
       {
         address: SITE,
         change: {
           actions: ['update'],
           importing: { id: importId },
-          before: { enabled: null, lite: null, auto_install: true, site_token: 'token-before', rules: [] },
-          after: { enabled: true, lite: true, auto_install: true },
-          after_unknown: { site_token: true, rules: true },
+          before: {
+            enabled: null,
+            lite: null,
+            auto_install: true,
+            site_tag: siteTag,
+            site_token: 'token-before',
+            snippet: 'snippet-before',
+            rules: [],
+            ruleset: { id: 'ruleset-before', enabled: true },
+          },
+          after: { enabled: true, lite: true, auto_install: true, site_tag: siteTag },
+          after_unknown: { site_token: true, snippet: true, rules: true, ruleset: true },
           before_sensitive: {},
           after_sensitive: {},
         },
@@ -1402,14 +1475,39 @@ describe('DECLARED', () => {
       ...RULES.map((address) => ({ address, change: { actions: ['create'] } }))
     );
     const result = checkPlan(plan);
+    expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
     expect(result.declared.map((entry) => `${entry.address} ${entry.action ?? entry.path}`).sort()).toEqual(
-      [`${SITE} import`, `${SITE} enabled`, `${SITE} lite`, ...RULES.map((rule) => `${rule} create`)].sort()
+      [
+        `${SITE} import`,
+        `${SITE} enabled`,
+        `${SITE} lite`,
+        ...['rules', 'ruleset', 'site_token', 'snippet'].map((path) => `${SITE} ${path}`),
+        'azurerm_function_app_flex_consumption.hcw app_settings.CF_ACCOUNT_ID',
+        'azurerm_function_app_flex_consumption.hcw app_settings.CF_WEB_ANALYTICS_SITE_TAG',
+        ...RULES.map((rule) => `${rule} create`),
+      ].sort()
     );
-    expect(result.unexpected).toEqual([
-      `${SITE}: update rules: (a list of 0 items) -> (known after apply)`,
-      `${SITE}: update site_token: "token-before" -> (known after apply)`,
+    // The report names the stand-ins and never the values behind them.
+    const report = declarationLines(result).join('\n');
+    for (const value of [importId, accountId, siteTag, 'token-before', 'snippet-before', 'ruleset-before']) {
+      expect(report, value).not.toContain(value);
+    }
+    expect(report).toContain(`${SITE} site_token: (known after apply)`);
+    expect(report).toContain(`app_settings.CF_ACCOUNT_ID: "" -> (the owner's value, not printed)`);
+
+    // Anything else on that run is still named: a computed value nobody declared, or a setting
+    // that was not "" before (the owner's value replacing another is a change to read).
+    const created = structuredClone(plan);
+    const siteChange = created.resource_changes.find((change) => change.address === SITE).change;
+    siteChange.before.created = '2026-06-30T00:00:00Z';
+    siteChange.after_unknown.created = true;
+    expect(checkPlan(created).unexpected).toEqual([`${SITE}: update created: "2026-06-30T00:00:00Z" -> (known after apply)`]);
+    const replaced = structuredClone(plan);
+    replaced.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change.before.app_settings.CF_ACCOUNT_ID =
+      'an-older-value';
+    expect(checkPlan(replaced).unexpected).toEqual([
+      'azurerm_function_app_flex_consumption.hcw: update app_settings.CF_ACCOUNT_ID: (set) -> (set)',
     ]);
-    expect(result.unexpected.join('\n')).not.toContain(importId);
   });
 
   it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {

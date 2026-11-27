@@ -93,9 +93,15 @@
  * printed as a NOTE, not a failure. Usually its change has applied, and the
  * note is the prompt to delete the entry.
  *
- * A sensitive or unknown difference cannot be declared. Matching one would
- * mean writing its value here, so such an entry never matches, and the plan
- * waits for a person to read it.
+ * A sensitive difference cannot be declared. Matching one would mean writing
+ * its value here, so such an entry never matches, and the plan waits for a
+ * person to read it. Two values that cannot be written here can still be
+ * declared by a named stand-in in `after` (#1923): `KNOWN_AFTER_APPLY` for a
+ * value the provider works out during the apply (it matches only an unknown
+ * difference), and `OWNER_VALUE` for a value the owner sets in the workspace
+ * (it matches only a known, non-empty string that differs from the declared
+ * `before`). Both are scoped to one exact address and path, and the report
+ * prints the stand-in, never the value.
  *
  * `tfc-plan-check.yml` reads the declarations on the ref it was dispatched
  * from (normally `main`), not those at the commit the run was planned for.
@@ -138,7 +144,9 @@ import {
 import {
   declarationLines,
   findDeclaredAction,
+  KNOWN_AFTER_APPLY,
   matchesDeclaration,
+  OWNER_VALUE,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
@@ -150,6 +158,8 @@ export { classify } from "./lib/plan-actions.mjs";
 export {
   declarationLines,
   describeDeclaration,
+  KNOWN_AFTER_APPLY,
+  OWNER_VALUE,
 } from "./lib/plan-declarations.mjs";
 export { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 export { describeDifference, redact, secretsOf } from "./lib/plan-report.mjs";
@@ -503,7 +513,7 @@ export const DECLARED = [
   // its datatable. The second is the owner's, once cloudflare_account_id is
   // set: the site is created, CF_ACCOUNT_ID goes "" -> the id and
   // CF_WEB_ANALYTICS_SITE_TAG goes "" -> known after apply. That run is read
-  // by hand: the header says an unknown difference cannot be declared, and
+  // by hand: the header then said an unknown difference cannot be declared, and
   // the account id is the owner's value, not this file's to write. The
   // create matches by address alone, so it is declared now and reads as
   // "declared, not in this plan" until that run, like PROBE_AI_PROVIDERS
@@ -520,13 +530,17 @@ export const DECLARED = [
   //     never written here);
   //   - the same resource's in-place update, enabled and lite null -> true:
   //     the provider never reads either back, so the import leaves both null.
-  //     The update also plans the site's computed values (site_token,
-  //     snippet, rules, ruleset) as (known after apply), which cannot be
-  //     declared and are read by hand;
+  //     The update also plans the site's four computed values that carry no
+  //     plan modifier in provider 5.29.0 (site_token, snippet, rules,
+  //     ruleset) as (known after apply), declared with KNOWN_AFTER_APPLY.
+  //     site_tag, id and created keep their state value
+  //     (UseNonNullStateForUnknown), so they plan no change;
   //   - the two rules' creates;
   //   - CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
-  //     values, which this public file does not hold, read by hand too.
-  // Delete these five entries once the site is in state and both rules exist.
+  //     values, declared with OWNER_VALUE so neither is written here. The
+  //     site tag is known at plan time, for the same plan modifier.
+  // Delete these eleven entries once the site is in state and both rules
+  // exist.
   {
     address: "cloudflare_web_analytics_site.hcw[0]",
     action: "import",
@@ -549,6 +563,19 @@ export const DECLARED = [
     reason:
       "#1923: the lite option, set after the import (the provider never reads it back)",
   },
+  ...["site_token", "snippet", "rules", "ruleset"].map((path) => ({
+    address: "cloudflare_web_analytics_site.hcw[0]",
+    path,
+    after: KNOWN_AFTER_APPLY,
+    reason: `#1923: the site's ${path}, read again by the provider after its update`,
+  })),
+  ...["CF_ACCOUNT_ID", "CF_WEB_ANALYTICS_SITE_TAG"].map((name) => ({
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: `app_settings.${name}`,
+    before: "",
+    after: OWNER_VALUE,
+    reason: `#1923: ${name} set from the owner's workspace values`,
+  })),
   {
     address: "cloudflare_web_analytics_rule.notes_excluded[0]",
     action: "create",
