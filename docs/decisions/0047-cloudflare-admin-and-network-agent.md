@@ -275,7 +275,8 @@ resource manages a record in it.
   | --- | --- | --- |
   | The apex, for every record type | Yes (the site itself) | Yes: nothing lives there, and a record there (an MX or TXT) could receive mail for the domain or pass a check that the domain is ours |
   | `www` | Yes (the site itself) | No: nothing uses it |
-  | Any name starting `_acme-challenge` | Yes | Yes, with a reason naming Caddy and the lab host README |
+  | Any name starting `_acme-challenge` | Yes | Yes |
+  | Any other name starting `_` (`_dmarc`, `_domainkey`, `_atproto`, a provider's verification record) | No: the site's zone may need them | Yes: nothing but Caddy's certificate checks lives there, and outside services prove the domain is ours or set its mail policy with such names, so they are changed in the Cloudflare dashboard (the reason names Caddy and the lab host README) |
   | The records Terraform manages | Yes (`infra/`, `infra-lab/`) | None exist there |
   | `lab` and every name under it | Yes: `lab` and `*.lab` are listed (the lab host's records, `infra-lab/dns.tf`) | Yes: the subtree of the DNS-01 target `_acme-challenge.lab.hybridcloudinsights.com`, derived from `lab_acme_challenge_target` in `infra-lab/variables.tf` (`LAB_SUBTREE`) |
   | Wildcards | `*`, and `*.x` when x is protected or a protected name lies under x | Every wildcard |

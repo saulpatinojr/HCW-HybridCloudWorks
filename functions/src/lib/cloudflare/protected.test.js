@@ -255,9 +255,9 @@ describe('the managed zones (#1911)', () => {
 
   const lab = (name) => dnsNameProtection(name, LAB_ZONE);
 
-  it('protects the certificate checks Caddy writes in the lab zone, with Caddy’s reason', () => {
-    for (const name of ['_acme-challenge', '_acme-challenge.note', '_acme-challenge-x']) {
-      expect(lab(name), name).toMatch(/Caddy.*lab-host\/README\.md/);
+  it('protects every name starting _ in the lab zone, Caddy’s checks and verification names alike (R1)', () => {
+    for (const name of ['_acme-challenge', '_acme-challenge.note', '_acme-challenge-x', '_atproto', '_dmarc', '_domainkey', '_gh-example-o', '_foo.www', '_']) {
+      expect(lab(name), name).toMatch(/Caddy.*lab-host\/README\.md.*_dmarc/);
     }
   });
 
@@ -278,7 +278,13 @@ describe('the managed zones (#1911)', () => {
 
   it('protects the lab zone’s apex for every record type, and leaves www and other names open (F2)', () => {
     for (const name of ['@', LAB_ZONE, `${LAB_ZONE}.`]) expect(lab(name), name).toMatch(/receive mail for the domain/);
-    for (const name of ['www', 'note', 'labs', 'mylab', 'lab-two', `x.www.${LAB_ZONE}`]) expect(lab(name), name).toBeNull();
+    for (const name of ['www', 'note', 'labs', 'mylab', 'lab-two', `x.www.${LAB_ZONE}`, 'a_b', 'www._x']) expect(lab(name), name).toBeNull();
+  });
+
+  it('leaves the site zone’s _ names as they were: only _acme-challenge is refused there (R1)', () => {
+    expect(dnsNameProtection('_dmarc')).toBeNull();
+    expect(dnsNameProtection('_atproto')).toBeNull();
+    expect(dnsNameProtection('_acme-challenge.blog')).not.toBeNull();
   });
 
   it('keeps every site protection out of the lab zone, and the lab zone’s apex out of the site’s', () => {

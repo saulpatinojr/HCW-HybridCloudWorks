@@ -8,8 +8,10 @@
  * (`GET /zones?name=`), then kept for the instance's life. A lookup must
  * find exactly one active zone of exactly that name, or it is refused with
  * a sentence saying the token cannot reach it; a failed lookup is never
- * kept, and a kept id is forgotten as soon as Cloudflare answers 403 or 404
- * for a call under it (the zone was removed, or the token lost it).
+ * kept, and a kept id is forgotten when Cloudflare answers 403 or 404 for
+ * the zone itself (the zone was removed, or the token lost it). A 403 or
+ * 404 for something inside the zone (a record, a setting, a rule set) says
+ * nothing about the zone, so the id is kept.
  *
  * Every call goes through guardedFetch (https only, no redirects, a deadline
  * and a size cap), to a path built here from fixed pieces and ids the
@@ -157,13 +159,7 @@ async function call(conn, method, path, { query = null, body = undefined, allow4
   const status = response.status;
   if (status === 404 && allow404) return { status, body: null };
   if (isSuccess(status, parsed)) return { status, body: parsed };
-  throw refusedCall(conn, status, parsed);
-}
-
-/** The error for a refused call, after telling the connection when Cloudflare said 403 or 404. */
-function refusedCall(conn, status, parsed) {
-  if (status === 403 || status === 404) conn.onRefused?.();
-  return refusalError(status, parsed);
+  throw refusalError(status, parsed);
 }
 
 /** The `result` of a call. */
@@ -225,6 +221,23 @@ export function forgetZoneIds(name = null) {
 export const zoneUnreachableMessage = (name) =>
   `The admin token cannot reach the zone ${name}: add it to the token's Zone Resources in the Cloudflare dashboard (the Cloudflare admin runbook, part 2), then try again.`;
 
+/** The answers to a zone read that mean the zone is gone, or the token no longer reaches it. */
+const ZONE_GONE = Object.freeze([403, 404]);
+
+/**
+ * The zone itself (`GET /zones/{id}`). When the id was looked up by name and
+ * Cloudflare answers 403 or 404, the kept id is forgotten, so the next
+ * request looks the zone up again.
+ */
+async function readZone(conn, path, lookedUpName) {
+  try {
+    return await resultOf(conn, 'GET', path);
+  } catch (error) {
+    if (lookedUpName && ZONE_GONE.includes(error?.upstreamStatus)) forgetZoneIds(lookedUpName);
+    throw error;
+  }
+}
+
 /** The one active zone of exactly this name in a lookup's answer, or null (none, several, or not active). */
 function onlyActive(result, name) {
   const named = (Array.isArray(result) ? result : []).filter((zone) => String(zone?.name ?? '').toLowerCase() === name);
@@ -279,9 +292,7 @@ export function createCloudflareClient(options) {
   const { token, zoneId = null, zoneName = null } = options;
   if (zoneId !== null && !ZONE_ID_PATTERN.test(String(zoneId))) throw new Error('createCloudflareClient: zone id has the wrong shape');
   if (zoneId === null && !zoneName) throw new Error('createCloudflareClient: give a zone id or a zone name');
-  // A looked-up id is forgotten when Cloudflare answers 403 or 404 under it.
-  const onRefused = zoneId ? null : () => forgetZoneIds(zoneName);
-  const conn = { token, doubles: doublesOf(options), onRefused };
+  const conn = { token, doubles: doublesOf(options) };
   const base = zoneBaseOf(conn, zoneId, zoneName);
   const at = async (suffix = '') => `${await base()}${suffix}`;
   const setting = (id) => at(`/settings/${encodeURIComponent(id)}`);
@@ -291,7 +302,7 @@ export function createCloudflareClient(options) {
   return Object.freeze({
     zoneId,
     zoneName,
-    getZone: async () => resultOf(conn, 'GET', await at()),
+    getZone: async () => readZone(conn, await at(), zoneId ? null : zoneName),
     canRead: (family) => canRead(conn, at(READ_PROBES[family][0]), READ_PROBES[family][1]),
     listSettings: async () => resultOf(conn, 'GET', await at('/settings')),
     getSetting: async (settingId) => resultOf(conn, 'GET', await setting(settingId)),

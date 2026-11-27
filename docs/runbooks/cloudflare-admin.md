@@ -144,7 +144,8 @@ revoked alone.
      there is one token and one yearly replacement, not two. What narrows
      the lab zone is the site's own code: it refuses the lab zone's apex,
      its `lab` names (where the lab's certificate checks live), every name
-     starting `_acme-challenge` and every wildcard there, whoever asks (the
+     starting with an underscore (`_`) and every wildcard there, whoever
+     asks (the
      table under "What is refused, and why").
    - **Client IP Address Filtering:** leave empty. The Function App's
      outgoing addresses are not fixed, so a filter would block it.
@@ -356,9 +357,14 @@ Cache) shows and changes the lab zone only. The page's address gains
 directly, for example the
 [lab zone's DNS records](https://hybridcloudworks.com/admin/cloudflare?tab=dns&zone=hybridcloudinsights.com).
 Choose `hybridcloudworks.com` again to go back. What you should see: the
-Overview names the lab zone, says it is active on the Free plan, and lists
-only the certificate checks as locked. Between certificate renewals the DNS
-tab says the zone has no records yet; that is normal.
+Overview names the lab zone and says it is active on the Free plan. Under
+**What is locked, and why** it lists the zone's own address
+(`hybridcloudinsights.com`), `lab.hybridcloudinsights.com` and
+`*.lab.hybridcloudinsights.com` (everything under `lab`), the `_…` line
+(every name starting with an underscore) and a line saying that in this
+zone every wildcard is locked; under **Rule phases Terraform manages** it
+says there are none in this zone. Between certificate renewals the DNS tab
+says the zone has no records yet; that is normal.
 
 **For Claude Network Guy, or any call to the API.** Every route under
 `/api/cms/cloudflare/` takes `?zone=` with a zone's name, for example
@@ -373,7 +379,9 @@ certificates are proved (the DNS-01 check Caddy answers), so more of it is
 locked than its emptiness suggests: its apex (`hybridcloudinsights.com`
 itself, for every record type), `lab` and every name under it (the
 certificate check `_acme-challenge.lab` lives there), every name starting
-`_acme-challenge`, and every wildcard. `www` and other names are open,
+with an underscore (`_acme-challenge`, and verification or mail-policy names
+such as `_dmarc`, `_domainkey` or a provider's `_…-verification` record),
+and every wildcard. `www` and other names are open,
 because nothing uses them. The rule phases, the owner-only settings and
 every limit on an agent key are the same as in the site's zone. A name that
 ends with the other zone (`x.hybridcloudworks.com` sent with the lab zone
@@ -394,7 +402,7 @@ applies in both zones unless it names one.
 | The DNS records Terraform manages (`api-azure`, `docs`, `podcast`, `go`, `_cf-custom-hostname.go`, `notes`, `asuid.api-azure`) | An apply would put them back, and some are what Azure checks to keep the custom domain | [`infra/frontend.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/frontend.tf) |
 | The lab's records, and every name under `*.lab` and `*.coder.lab` | The lab's own Terraform and its certificate setup own them | [`infra-lab/dns.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra-lab/dns.tf) |
 | Any `_acme-challenge` name in `hybridcloudworks.com` | Certificate checks write these for a few minutes | Nothing to change by hand |
-| Any `_acme-challenge` name in the lab zone `hybridcloudinsights.com` | The lab host's Caddy writes these for a few minutes each time it renews the lab's certificates, and owns them ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope") | Nothing to change by hand |
+| In the lab zone `hybridcloudinsights.com`, any name starting with an underscore (`_acme-challenge`, `_dmarc`, `_domainkey`, `_atproto` and the like) | The only such names there are the certificate checks the lab host's Caddy writes for a few minutes at each renewal ([lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md), "The Cloudflare runtime token and its scope"), and outside services prove the domain is ours or set its mail policy with such names | The Cloudflare dashboard, by hand (Caddy's own names need nothing) |
 | In `hybridcloudworks.com`: `*` for the whole zone, and a wildcard over or above any name above (`*.www`, `*.api-azure`, `*.lab`) | A wildcard answers for names nobody listed, so it could stand in for a protected name | The Cloudflare dashboard |
 | In the lab zone: every wildcard (`*`, `*.lab`, `*.anything`) | Between Caddy's renewals a wildcard could answer the lab's certificate check and pass it for someone else | The Cloudflare dashboard |
 | A name that ends with the other managed zone (`x.hybridcloudworks.com` with the lab zone picked, and the other way round) | It would be made inside the wrong zone under a confusing name | Pick that zone and add it there |

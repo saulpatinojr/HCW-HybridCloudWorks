@@ -23,6 +23,7 @@ import {
   isEditablePhase,
   ownerOnlyReason,
   phaseLock,
+  otherManagedZone,
   protectedPhaseList,
   protectedPrefixList,
   resolveZone,
@@ -212,6 +213,12 @@ describe('the managed zones (#1911)', () => {
     'lab',
     'x.lab',
     'a.b.lab',
+    '_atproto',
+    '_dmarc',
+    '_domainkey',
+    '_foo.www',
+    'a_b',
+    'www.',
     `x.${server.LAB_ZONE}`,
   ];
   it.each(LAB_NAMES)('locks %s in the lab zone exactly as the server does', (name) => {
@@ -259,4 +266,37 @@ describe('a wildcard over a locked name, in the site’s zone too (#1911 review 
   ])('%s matches the server', (name) => {
     expect(dnsNameLock(name, { status: SERVER_STATUS })).toBe(server.dnsNameProtection(name));
   });
+});
+
+describe('trailing dots and names from the other zone match the server (#1911 review R4)', () => {
+  const SITE = server.SITE_ZONE;
+  const LAB = server.LAB_ZONE;
+  const NAMES = [
+    'www.',
+    'www..',
+    `${SITE}.`,
+    `${SITE}..`,
+    `x.${SITE}`,
+    `X.${SITE}...`,
+    LAB,
+    `${LAB}.`,
+    `_dmarc.${LAB}..`,
+    `x.${LAB}`,
+    `x${SITE}`,
+    'blog',
+    '@',
+  ];
+
+  it.each(NAMES)('%s: the other zone, in each zone', (name) => {
+    for (const zone of [SITE, LAB]) {
+      expect(otherManagedZone(name, zone), zone).toBe(server.otherManagedZone(name, zone));
+    }
+  });
+
+  it.each(NAMES.filter((name) => !name.includes(LAB)))(
+    '%s: the lock in the site’s zone',
+    (name) => {
+      expect(dnsNameLock(name, { status: SERVER_STATUS })).toBe(server.dnsNameProtection(name));
+    }
+  );
 });

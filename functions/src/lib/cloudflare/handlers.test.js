@@ -1374,21 +1374,32 @@ describe('the lab zone (#1911)', () => {
       expect(paths(again.api)).toEqual(['GET /client/v4/zones']);
     });
 
-    it.each([403, 404])('forgets a looked-up id when Cloudflare answers %i under it, and looks it up again next time (F5)', async (code) => {
-      const refused = reply(code, { success: false, errors: [{ code: 7003, message: 'gone' }] });
-      const first = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: refused }) });
-      expect(parse(await first.handlers.getSettings(request({ query: LAB }), { warn: vi.fn() })).status).not.toBe(200);
-      const second = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: ok([]) }) });
-      await second.handlers.getSettings(request({ query: LAB }), {});
-      expect(paths(second.api)).toEqual(['GET /client/v4/zones', 'GET <lab>/settings']);
+    const gone = (code) => reply(code, { success: false, errors: [{ code: 7003, message: 'gone' }] });
+    const settingsAgain = async () => {
+      const again = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: ok([]) }) });
+      await again.handlers.getSettings(request({ query: LAB }), {});
+      return paths(again.api);
+    };
+
+    it.each([403, 404])('forgets a looked-up id when Cloudflare answers %i for the zone itself, and looks it up again next time (F5, R2)', async (code) => {
+      const first = setup({ routes: { ...lookup(), [`GET ${LAB_PATH}`]: gone(code) } });
+      const res = parse(await first.handlers.purge(request({ query: LAB, body: { everything: true } }), { warn: vi.fn() }));
+      expect(res.status).not.toBe(200);
+      expect(WRITES(first.api)).toEqual([]);
+      expect(await settingsAgain()).toEqual(['GET /client/v4/zones', 'GET <lab>/settings']);
     });
 
-    it('keeps a looked-up id through any other refusal', async () => {
-      const first = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: reply(500, {}) }) });
-      await first.handlers.getSettings(request({ query: LAB }), { warn: vi.fn() });
-      const second = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: ok([]) }) });
-      await second.handlers.getSettings(request({ query: LAB }), {});
-      expect(paths(second.api)).toEqual(['GET <lab>/settings']);
+    it.each([
+      ['a 404 for a record', 'patchDns', request({ query: LAB, params: { recordId: RECORD_ID }, body: { proxied: true } }), { [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: gone(404) }],
+      ['a 403 for a setting', 'getSettings', request({ query: LAB }), { [`GET ${LAB_PATH}/settings`]: gone(403) }],
+      ['a 403 for a status probe', 'getStatus', request({ query: LAB }), { [`GET ${LAB_PATH}/dns_records`]: gone(403) }],
+      ['a 404 for a rule phase’s rule set list', 'listRulesets', request({ query: LAB }), { [`GET ${LAB_PATH}/rulesets`]: gone(404) }],
+      ['a 500 for anything', 'getSettings', request({ query: LAB }), { [`GET ${LAB_PATH}/settings`]: reply(500, {}) }],
+    ])('keeps a looked-up id through %s inside the zone (R2)', async (label, route, req, routes) => {
+      const first = setup({ routes: labRoutes(routes) });
+      await first.handlers[route](req, { warn: vi.fn() });
+      expect(paths(first.api)[0]).toBe('GET /client/v4/zones');
+      expect(await settingsAgain()).toEqual(['GET <lab>/settings']);
     });
 
     it('answers the status with the sentence when the lookup fails, looking up once', async () => {
@@ -1407,7 +1418,7 @@ describe('the lab zone (#1911)', () => {
       const res = parse(await handlers.getStatus(request({ query: LAB }), {}));
       expect(res.body.managed).toEqual({ name: LAB_ZONE, role: expect.stringMatching(/Caddy/) });
       expect(res.body.protected.dnsNames.map((item) => item.name)).toEqual([LAB_ZONE, `lab.${LAB_ZONE}`, `*.lab.${LAB_ZONE}`]);
-      expect(res.body.protected.dnsPrefixes).toEqual([{ prefix: '_acme-challenge', reason: expect.stringMatching(/Caddy.*lab-host\/README\.md/) }]);
+      expect(res.body.protected.dnsPrefixes).toEqual([{ prefix: '_', reason: expect.stringMatching(/Caddy.*lab-host\/README\.md.*_dmarc/) }]);
       expect(res.body.protected.wildcardReason).toMatch(/wildcard in the lab zone could answer the lab's certificate check/);
       expect(res.body.protected.phases).toEqual([]);
       expect(res.body.protected.editablePhases.map((item) => item.phase)).toEqual(EDITABLE_PHASES.map((item) => item.phase));
@@ -1432,6 +1443,10 @@ describe('the lab zone (#1911)', () => {
       ['TXT', '_acme-challenge'],
       ['MX', '@'],
       ['TXT', LAB_ZONE],
+      ['TXT', '_atproto'],
+      ['TXT', '_dmarc'],
+      ['TXT', '_domainkey'],
+      ['CNAME', '_gh-example-o'],
     ])('refuses to add a %s record at %s, before any call', async (type, name) => {
       const { handlers, api } = setup({ routes: labRoutes(created) });
       const res = parse(await handlers.createDns(request({ query: LAB, body: { type, name, content: 'x.example.net', priority: 10 } }), {}));
@@ -1448,6 +1463,13 @@ describe('the lab zone (#1911)', () => {
       expect(res.body.record).toMatchObject({ name: `www.${LAB_ZONE}`, locked: false });
     });
 
+    it('still lets the site zone take a _dmarc record: only the lab zone refuses every _ name (R1)', async () => {
+      const made = { [`POST ${ZONE_PATH}/dns_records`]: (url, init) => ok({ id: RECORD_ID, ...JSON.parse(init.body) }) };
+      const { handlers } = setup({ routes: made });
+      const res = parse(await handlers.createDns(request({ body: { type: 'TXT', name: '_dmarc', content: 'v=DMARC1; p=reject' } }), {}));
+      expect(res.status).toBe(201);
+    });
+
     it('still refuses the site’s own address in the site’s zone when it is named', async () => {
       const { handlers, api } = setup();
       const res = parse(await handlers.createDns(request({ query: `zone=${ZONE_APEX}`, body: { type: 'A', name: '@', content: '192.0.2.1' } }), {}));
@@ -1459,7 +1481,7 @@ describe('the lab zone (#1911)', () => {
     const current = (name) => ok({ id: RECORD_ID, type: 'TXT', name, content: 'x', proxied: false, ttl: 1 });
     const patch = { [`PATCH ${LAB_PATH}/dns_records/${RECORD_ID}`]: ok({}) };
 
-    it.each(['*.lab', 'x.lab', '_acme-challenge.lab', '*.foo', '@'])('refuses renaming an editable lab record to %s, before any call', async (name) => {
+    it.each(['*.lab', 'x.lab', '_acme-challenge.lab', '*.foo', '@', '_foo', '_dmarc'])('refuses renaming an editable lab record to %s, before any call', async (name) => {
       const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: current(`note.${LAB_ZONE}`), ...patch }) });
       const res = parse(await handlers.patchDns(request({ query: LAB, params: { recordId: RECORD_ID }, body: { name } }), {}));
       expect(res.status).toBe(409);

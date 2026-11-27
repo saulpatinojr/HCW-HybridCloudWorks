@@ -22,7 +22,9 @@
  *     A wildcard `*.x` is refused too when a protected name lies under x,
  *     because it would answer for that name whenever no exact record does.
  *     In the lab zone (#1911): its apex, the certificate checks Caddy writes,
- *     the whole `lab` subtree they live in (LAB_SUBTREE, from the delegation
+ *     every name starting `_` (Caddy's checks, and the verification and
+ *     mail-policy names outside services read), the whole `lab` subtree the
+ *     checks live in (LAB_SUBTREE, from the delegation
  *     target infra-lab/variables.tf points at), and every wildcard, because
  *     a wildcard there could answer the DNS-01 check for the lab's
  *     certificates between renewals. Its `www` and other names stay open.
@@ -124,12 +126,17 @@ const LAB_DNS_NAMES = Object.freeze(
 /** Why every wildcard in the lab zone is refused. */
 export const LAB_WILDCARD_REASON = `A wildcard in the lab zone could answer the lab's certificate check whenever Caddy's record is not there (${LAB_README}), so wildcards are changed in the Cloudflare dashboard.`;
 
-/** The lab zone's certificate checks: Caddy's, so they are never changed here. */
+/**
+ * Every lab-zone name whose first label starts with `_` (#1911 review R1):
+ * the only such names there are Caddy's certificate checks, and outside
+ * services prove a domain is ours or set its mail policy with them
+ * (`_dmarc`, `_domainkey`, a provider's `_verification` record), so none is
+ * made from here.
+ */
 const LAB_DNS_PREFIXES = Object.freeze([
   Object.freeze({
-    prefix: ACME,
-    reason:
-      "A certificate check the lab host's Caddy writes for a few minutes when it renews the lab's certificates (lab-host/README.md, \"The Cloudflare runtime token and its scope\"). Caddy owns these names, so they are never changed here.",
+    prefix: '_',
+    reason: `In the lab zone the only names starting with _ are the certificate checks the lab host's Caddy writes when it renews the lab's certificates (${LAB_README}), and outside services prove the domain is ours or set its mail policy with such names (_dmarc, _domainkey and the like), so they are changed in the Cloudflare dashboard.`,
   }),
 ]);
 

@@ -182,8 +182,8 @@ export function ownerOnlyReason(settingId, status = null) {
 
 /** A DNS name as Cloudflare spells it in full: lower case, no trailing dot, `@` read as the zone. */
 export function normalizeDnsName(name, zoneName = '') {
-  const zone = lower(zoneName).replace(/\.$/, '');
-  const value = lower(name).replace(/\.$/, '');
+  const zone = lower(zoneName).replace(/\.+$/, '');
+  const value = lower(name).replace(/\.+$/, '');
   if (!value) return '';
   if (value === '@') return zone;
   const inside = !zone || value === zone || value.endsWith(`.${zone}`);
@@ -247,8 +247,24 @@ function wildcardLock(full, status, zone) {
  * Why a DNS name is locked, or null: the same rule as the server's
  * dnsNameProtection, read against the status answer's lists.
  */
+/** The zone a status answer is about: the one it names, else the zone it read, else the site's. */
+export const statusZone = (status) =>
+  lower(status?.managed?.name || status?.zone?.name || DEFAULT_ZONE);
+
+/**
+ * The other managed zone a name typed for `zoneName` belongs to (it is that
+ * zone's apex or ends with it, and is not inside `zoneName`), or null: the
+ * server's otherManagedZone, so the form says so before sending.
+ */
+export function otherManagedZone(name, zoneName) {
+  const raw = lower(name).replace(/\.+$/, '');
+  const inside = (apex) => raw === apex || raw.endsWith(`.${apex}`);
+  if (inside(zoneName)) return null;
+  return MANAGED_ZONE_NAMES.find((zone) => zone !== zoneName && inside(zone)) ?? null;
+}
+
 export function dnsNameLock(name, { status = null, zoneName = '' } = {}) {
-  const zone = lower(zoneName || status?.managed?.name || status?.zone?.name || DEFAULT_ZONE);
+  const zone = lower(zoneName) || statusZone(status);
   const full = normalizeDnsName(name, zone);
   if (!full) return null;
   return (

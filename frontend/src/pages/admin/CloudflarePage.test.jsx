@@ -771,7 +771,7 @@ describe('the zone picker (#1911)', () => {
               { name: `lab.${LAB}`, reason: SUBTREE },
               { name: `*.lab.${LAB}`, reason: SUBTREE },
             ],
-            dnsPrefixes: [{ prefix: '_acme-challenge', reason: CADDY }],
+            dnsPrefixes: [{ prefix: '_', reason: CADDY }],
             wildcardReason: WILDCARDS,
             phases: [],
             ownerOnlySettings: STATUS.protected.ownerOnlySettings,
@@ -865,6 +865,7 @@ describe('the zone picker (#1911)', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${SUBTREE}`);
     for (const [name, reason] of [
       ['_acme-challenge', CADDY],
+      ['_dmarc', CADDY],
       ['x.lab', SUBTREE],
       ['@', APEX],
       ['*.foo', WILDCARDS],
@@ -872,6 +873,11 @@ describe('the zone picker (#1911)', () => {
       fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: name } });
       expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${reason}`);
     }
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: `x.${SITE}.` } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(
+      `That name ends with ${SITE}, which is its own zone: pick ${SITE} above and add it there.`
+    );
+    expect(within(dialog).getByRole('button', { name: /Add the record/ })).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'www' } });
     fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: '192.0.2.30' } });
     expect(within(dialog).queryByRole('alert')).toBeNull();
