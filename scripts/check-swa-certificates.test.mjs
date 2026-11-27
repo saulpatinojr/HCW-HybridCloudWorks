@@ -1,6 +1,7 @@
 /**
- * scripts/check-swa-certificates.mjs, the daily read of the Static Web App's
- * own certificates for the site's two names (#1929).
+ * scripts/check-swa-certificates.mjs and its two modules, lib/swa-cert-read.mjs
+ * and lib/swa-cert-report.mjs: the daily read of the Static Web App's own
+ * certificates for the site's two names (#1929).
  *
  * Every test here uses stand-in certificates and a stand-in TLS connection,
  * so nothing reaches the network. The real read is run by hand and by the
@@ -18,6 +19,7 @@ import {
   DEFAULT_HOST,
   GOING_BACK_URL,
   NAMES,
+  REASONS,
   RUNBOOK_URL,
   WARN_DAYS,
   altNames,
@@ -27,10 +29,12 @@ import {
   exitCode,
   judge,
   main,
+  nextSteps,
   parseArgs,
   quoted,
   readCertificate,
   readOnce,
+  refusalReason,
   renderMarkdown,
   run as runChecked,
   stateLine,
@@ -51,25 +55,24 @@ function cert(name, days, extra = {}) {
     subjectaltname: `DNS:${name}`,
     valid_from: 'Aug 23 00:00:00 2026 GMT',
     valid_to: end.toUTCString().replace(/^\w+, (\d+) (\w+) (\d+) ([\d:]+) GMT$/, '$2 $1 $4 $3 GMT'),
-    fingerprint256: 'AA:BB',
     ...extra,
   };
 }
 
-const good = (name, days = 88) => ({ cert: cert(name, days), authorized: true, authorizationError: null });
+const good = (name, days = 88) => ({ cert: cert(name, days) });
 
-describe('judging one certificate', () => {
-  it('passes one that covers the name and has more than 30 days left', () => {
+describe('judging one name', () => {
+  it('passes a certificate Node accepted with more than 30 days left', () => {
     const r = judge('hybridcloudworks.com', good('hybridcloudworks.com'), { now: NOW });
-    expect(r).toMatchObject({ status: 'ok', stage: 'ok', daysLeft: 88, problems: [] });
+    expect(r).toMatchObject({ status: 'ok', stage: 'ok', daysLeft: 88, reasons: [] });
     expect(r.issuer).toBe('DigiCert Inc, GeoTrust TLS RSA CA G1');
+    expect(r.altNames).toEqual(['hybridcloudworks.com']);
     expect(r.notAfter.slice(0, 10)).toBe('2027-02-23');
   });
 
   it('needs action at exactly 30 days, and warns until 14', () => {
     const r = judge('hybridcloudworks.com', good('hybridcloudworks.com', WARN_DAYS), { now: NOW });
-    expect(r).toMatchObject({ status: 'action', stage: 'warn' });
-    expect(r.problems).toEqual(['it ends in 30 day(s), within 30']);
+    expect(r).toMatchObject({ status: 'action', stage: 'warn', reasons: ['expiring'] });
     expect(judge('hybridcloudworks.com', good('hybridcloudworks.com', WARN_DAYS + 1), { now: NOW }).status).toBe('ok');
   });
 
@@ -78,61 +81,58 @@ describe('judging one certificate', () => {
     expect(judge('hybridcloudworks.com', good('hybridcloudworks.com', ACT_DAYS + 1), { now: NOW }).stage).toBe('warn');
   });
 
-  it('reports an expired one as expired', () => {
-    const r = judge('hybridcloudworks.com', good('hybridcloudworks.com', -2), { now: NOW });
-    expect(r).toMatchObject({ status: 'action', stage: 'act' });
-    expect(r.problems).toContain('it has expired');
+  it('calls a certificate past its end (a clock ahead of the server\'s) expired', () => {
+    expect(judge('hybridcloudworks.com', good('hybridcloudworks.com', -2), { now: NOW })).toMatchObject({ status: 'action', stage: 'act', reasons: ['expired'] });
   });
 
-  it('needs action, at once, for a certificate that does not cover the name (Azure\'s own default one)', () => {
-    const read = {
-      cert: cert('*.azurestaticapps.net', 88, { subjectaltname: 'DNS:*.azurestaticapps.net, DNS:*.7.azurestaticapps.net' }),
-      authorized: false,
-      authorizationError: 'ERR_TLS_CERT_ALTNAME_INVALID',
-    };
-    const r = judge('www.hybridcloudworks.com', read, { now: NOW });
-    expect(r).toMatchObject({ status: 'action', stage: 'act' });
-    expect(r.problems).toEqual(['it does not cover www.hybridcloudworks.com']);
+  it('honours a different warning window', () => {
+    expect(judge('hybridcloudworks.com', good('hybridcloudworks.com', 88), { now: NOW, warnDays: 100 }).reasons).toEqual(['expiring']);
   });
 
-  it('accepts a wildcard that covers the name, by Node\'s own name check', () => {
-    const read = { cert: cert('*.hybridcloudworks.com', 88, { subjectaltname: 'DNS:*.hybridcloudworks.com' }), authorized: true };
-    expect(judge('www.hybridcloudworks.com', read, { now: NOW }).status).toBe('ok');
-    expect(judge('hybridcloudworks.com', read, { now: NOW }).status).toBe('action');
-  });
-
-  it('needs action for an untrusted chain, which Full (strict) would refuse', () => {
-    const read = { cert: cert('hybridcloudworks.com', 88), authorized: false, authorizationError: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' };
-    const r = judge('hybridcloudworks.com', read, { now: NOW });
-    expect(r.status).toBe('action');
-    expect(r.problems).toEqual(['it is not trusted (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`)']);
-  });
-
-  it('needs action for a certificate that is not valid yet', () => {
-    const read = good('hybridcloudworks.com');
-    read.cert.valid_from = 'Jan 1 00:00:00 2030 GMT';
-    expect(judge('hybridcloudworks.com', read, { now: NOW }).problems).toContain('it is not valid yet');
+  it.each([['expired'], ['not-yet-valid'], ['name-mismatch'], ['untrusted']])('a certificate Node refused (%s) needs action at once', (reason) => {
+    expect(judge('hybridcloudworks.com', { refused: reason }, { now: NOW })).toEqual({ name: 'hybridcloudworks.com', status: 'action', stage: 'act', reasons: [reason] });
   });
 
   it('calls a certificate with an unreadable end date unreadable, never good', () => {
     const read = good('hybridcloudworks.com');
     read.cert.valid_to = 'whenever';
-    expect(judge('hybridcloudworks.com', read, { now: NOW }).status).toBe('unreadable');
+    expect(judge('hybridcloudworks.com', read, { now: NOW })).toMatchObject({ status: 'unreadable', reasons: ['bad-date'] });
   });
 
-  it('calls a failed read unreadable, with the reason', () => {
+  it('calls a failed read unreadable, keeping the reason for the report', () => {
     const r = judge('hybridcloudworks.com', { error: new Error('connect ECONNREFUSED') }, { now: NOW });
-    expect(r).toMatchObject({ status: 'unreadable', stage: 'unreadable' });
-    expect(r.problems).toEqual(['could not be read: `connect ECONNREFUSED`']);
-  });
-
-  it('honours a different warning window', () => {
-    expect(judge('hybridcloudworks.com', good('hybridcloudworks.com', 88), { now: NOW, warnDays: 100 }).status).toBe('action');
+    expect(r).toMatchObject({ status: 'unreadable', stage: 'unreadable', reasons: ['unreadable'], detail: 'connect ECONNREFUSED' });
   });
 
   it('reads the DNS names from subjectAltName', () => {
     expect(altNames({ subjectaltname: 'DNS:a.example, IP Address:1.2.3.4, DNS:b.example' })).toEqual(['a.example', 'b.example']);
     expect(altNames({})).toEqual([]);
+  });
+});
+
+describe('Node\'s refusal codes', () => {
+  it.each([
+    ['CERT_HAS_EXPIRED', 'expired'],
+    ['CERT_NOT_YET_VALID', 'not-yet-valid'],
+    ['ERR_TLS_CERT_ALTNAME_INVALID', 'name-mismatch'],
+    ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'untrusted'],
+    ['SELF_SIGNED_CERT_IN_CHAIN', 'untrusted'],
+    ['DEPTH_ZERO_SELF_SIGNED_CERT', 'untrusted'],
+    ['UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'untrusted'],
+  ])('%s is the fixed reason %s', (code, reason) => {
+    expect(refusalReason(code)).toBe(reason);
+  });
+
+  it('a network error, an unknown code and an inherited name are not refusals', () => {
+    for (const code of ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'SOMETHING_NEW', 'toString', undefined]) {
+      expect(refusalReason(code), String(code)).toBeNull();
+    }
+  });
+
+  it('every reason a refusal can give has words in the report', () => {
+    for (const code of ['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_UNTRUSTED']) {
+      expect(Object.keys(REASONS)).toContain(refusalReason(code));
+    }
   });
 });
 
@@ -145,8 +145,8 @@ describe('text from the certificate is made safe before it is written', () => {
   it('leaves nothing GitHub would turn into a link, an image, a mention or an issue reference', () => {
     const hostile = '@someone [click](https://evil.example) ![img](https://evil.example/i.png) #12 a\\]b';
     const cleaned = clean(hostile);
-    expect(cleaned).not.toMatch(/[@[\]()!#\\]/);
     expect(cleaned).toBe('someone click https://evil.example img https://evil.example/i.png 12 a b');
+    for (const ch of ['@', '[', ']', '(', ')', '!', '#', '\\']) expect(cleaned.includes(ch), ch).toBe(false);
     expect(quoted(hostile)).toBe(`\`${cleaned}\``);
     expect(quoted('')).toBe('—');
   });
@@ -162,26 +162,27 @@ describe('text from the certificate is made safe before it is written', () => {
     const cells = row.split('|').map((c) => c.trim());
     expect(cells[2]).toBe('`someone https://evil.example 12, x y`');
     expect(cells[3]).toBe('`hybridcloudworks.com, other`');
-    expect(row).not.toMatch(/[@[\]()!#]/);
+    for (const ch of ['@', '[', ']', '(', ')', '!', '#']) expect(row.includes(ch), ch).toBe(false);
   });
 
-  it('quotes far-end text inside a problem too', () => {
+  it('quotes a network error in the report too', () => {
     const r = judge('hybridcloudworks.com', { error: new Error('see https://evil.example @x') }, { now: NOW });
-    expect(r.problems).toEqual(['could not be read: `see https://evil.example x`']);
+    expect(consoleLine(r)).toBe('hybridcloudworks.com: COULD NOT READ (could not be read: `see https://evil.example x`)');
   });
 
   it('cannot plant a state line through the issuer', () => {
     const read = good('hybridcloudworks.com');
-    read.cert.issuer = { O: '\n<!-- swa-cert-check state: hybridcloudworks.com=ok:2099-01-01 -->\n', CN: 'x' };
+    read.cert.issuer = { O: '\n<!-- swa-cert-check state: hybridcloudworks.com=ok/none:2099-01-01 -->\n', CN: 'x' };
     const text = renderMarkdown([judge('hybridcloudworks.com', read, { now: NOW })], { host: DEFAULT_HOST, now: NOW });
     const stateLines = text.split('\n').filter((l) => l.startsWith('<!-- swa-cert-check state:'));
-    expect(stateLines).toEqual(['<!-- swa-cert-check state: hybridcloudworks.com=ok:2027-02-23 -->']);
+    expect(stateLines).toEqual(['<!-- swa-cert-check state: hybridcloudworks.com=ok/none:2027-02-23 -->']);
   });
 });
 
 describe('the verdict over both names', () => {
   const ok = judge('a.example', good('a.example'), { now: NOW });
   const action = judge('b.example', good('b.example', 10), { now: NOW });
+  const mismatch = judge('b.example', { refused: 'name-mismatch' }, { now: NOW });
   const unreadable = judge('c.example', { error: new Error('timeout') }, { now: NOW });
 
   it('exits 0 when all are good, 1 when one needs action, 2 when one could not be read', () => {
@@ -190,20 +191,26 @@ describe('the verdict over both names', () => {
     expect(exitCode([action, unreadable])).toBe(2);
   });
 
-  it('writes a state line of names, stages and end dates only', () => {
-    expect(stateLine([ok, action, unreadable])).toBe(
-      '<!-- swa-cert-check state: a.example=ok:2027-02-23 b.example=act:2026-12-07 c.example=unreadable -->'
+  it('writes a state line of names, stages, fixed reason codes and end dates only', () => {
+    expect(stateLine([ok, action, mismatch, unreadable])).toBe(
+      '<!-- swa-cert-check state: a.example=ok/none:2027-02-23 b.example=act/expiring:2026-12-07 b.example=act/name-mismatch c.example=unreadable/unreadable -->'
     );
   });
 
-  it('prints one console line per name with the issuer and the days left', () => {
+  it('a new reason at the same stage changes the state line, so it is posted', () => {
+    const untrusted = judge('b.example', { refused: 'untrusted' }, { now: NOW });
+    expect(stateLine([ok, mismatch])).not.toBe(stateLine([ok, untrusted]));
+  });
+
+  it('prints one console line per name', () => {
     expect(consoleLine(ok)).toBe('a.example: good, issuer DigiCert Inc, GeoTrust TLS RSA CA G1, ends 2027-02-23, 88 day(s) left');
+    expect(consoleLine(mismatch)).toBe('b.example: NEEDS ACTION (it does not cover b.example)');
     expect(consoleLine(unreadable)).toBe('c.example: COULD NOT READ (could not be read: `timeout`)');
   });
 
   it('a good report says there is nothing to do and names no step', () => {
     const text = renderMarkdown([ok, ok], { host: DEFAULT_HOST, now: NOW });
-    expect(text).toContain('Nothing to do.');
+    expect(text).toContain('Both certificates are good for more than 30 days. Nothing to do.');
     expect(text).not.toContain('### What to do');
     expect(text).toContain('| a.example | `DigiCert Inc, GeoTrust TLS RSA CA G1` | `a.example` | 2027-02-23 | 88 | good |');
   });
@@ -216,23 +223,43 @@ describe('the verdict over both names', () => {
     expect(text.trimEnd().split('\n').at(-1)).toBe(stateLine([ok, action]));
   });
 
+  it('gives one step per kind of problem, in a fixed order, each once', () => {
+    const untrusted = judge('d.example', { refused: 'untrusted' }, { now: NOW });
+    const steps = nextSteps([unreadable, mismatch, untrusted, action, action], { host: DEFAULT_HOST }).filter((l) => l.startsWith('- **'));
+    expect(steps.map((l) => l.slice(0, l.indexOf('.**') + 3))).toEqual([
+      '- **Ending within 30 days, or ended.**',
+      '- **Does not cover the name.**',
+      '- **Not trusted, or not valid yet.**',
+      '- **Could not read.**',
+    ]);
+  });
+
   it('an unreadable report says nothing was judged and how to fix the host', () => {
     const text = renderMarkdown([unreadable], { host: DEFAULT_HOST, now: NOW });
     expect(text).toContain('**Could not read.** Nothing was judged');
     expect(text).toContain('STATIC_WEB_APP_DEFAULT_HOSTNAME');
   });
+
+  it('uses the warning window it was given, everywhere, not the default', () => {
+    const wide = judge('a.example', good('a.example', 88), { now: NOW, warnDays: 100 });
+    const text = renderMarkdown([wide], { host: DEFAULT_HOST, now: NOW, warnDays: 100 });
+    expect(text).toContain('Action is needed at 100 days or less');
+    expect(text).toContain('NEEDS ACTION: it ends in 88 day(s), within 100');
+    expect(text).toContain('- **Ending within 100 days, or ended.**');
+    expect(text).not.toContain('30 days');
+    expect(nextSteps([ok], { host: DEFAULT_HOST, warnDays: 45 })).toEqual(['Both certificates are good for more than 45 days. Nothing to do.']);
+    expect(consoleLine(wide, 100)).toContain('within 100');
+  });
 });
 
 describe('reading over TLS', () => {
-  /** A stand-in for tls.connect that answers with `cert`, or fails with `error`. */
-  function fakeConnect({ cert: peer, error, silent = false, authorized = true } = {}) {
+  /** A stand-in for tls.connect that answers with `peer`, or fails with `error`. */
+  function fakeConnect({ peer, error, silent = false } = {}) {
     const calls = [];
     const connect = (options) => {
-      calls.push(options);
       const socket = new EventEmitter();
+      calls.push({ options, socket });
       socket.destroyed = false;
-      socket.authorized = authorized;
-      socket.authorizationError = authorized ? null : 'SELF_SIGNED_CERT_IN_CHAIN';
       socket.destroy = () => {
         socket.destroyed = true;
       };
@@ -241,34 +268,43 @@ describe('reading over TLS', () => {
       };
       socket.getPeerCertificate = () => peer ?? {};
       if (!silent) setImmediate(() => (error ? socket.emit('error', error) : socket.emit('secureConnect')));
-      calls.at(-1).socket = socket;
       return socket;
     };
     return { connect, calls };
   }
+  const refusal = (code) => Object.assign(new Error(`refused: ${code}`), { code });
 
-  it('asks the default host for the name by SNI, on 443, and reads the chain without refusing it', async () => {
-    const { connect, calls } = fakeConnect({ cert: cert('hybridcloudworks.com', 88) });
+  it('asks the default host for the name by SNI, on 443, with Node\'s certificate checks left on', async () => {
+    const { connect, calls } = fakeConnect({ peer: cert('hybridcloudworks.com', 88) });
     const got = await readOnce({ host: DEFAULT_HOST, servername: 'hybridcloudworks.com', connect });
-    expect(calls[0]).toMatchObject({ host: DEFAULT_HOST, port: 443, servername: 'hybridcloudworks.com', rejectUnauthorized: false });
-    expect(got).toMatchObject({ authorized: true, cert: { subject: { CN: 'hybridcloudworks.com' } } });
+    expect(calls[0].options).toEqual({ host: DEFAULT_HOST, port: 443, servername: 'hybridcloudworks.com', ALPNProtocols: ['http/1.1'] });
+    expect(Object.hasOwn(calls[0].options, 'rejectUnauthorized')).toBe(false);
+    expect(got.cert.subject.CN).toBe('hybridcloudworks.com');
     expect(calls[0].socket.destroyed).toBe(true);
   });
 
-  it('carries an untrusted chain through as authorized: false', async () => {
-    const { connect } = fakeConnect({ cert: cert('hybridcloudworks.com', 88), authorized: false });
-    const got = await readOnce({ host: DEFAULT_HOST, servername: 'hybridcloudworks.com', connect });
-    expect(got).toMatchObject({ authorized: false, authorizationError: 'SELF_SIGNED_CERT_IN_CHAIN' });
+  it.each([
+    ['CERT_HAS_EXPIRED', 'expired'],
+    ['ERR_TLS_CERT_ALTNAME_INVALID', 'name-mismatch'],
+    ['SELF_SIGNED_CERT_IN_CHAIN', 'untrusted'],
+    ['CERT_NOT_YET_VALID', 'not-yet-valid'],
+  ])('a handshake refused with %s answers { refused: %s }, and is not tried again', async (code, reason) => {
+    const { connect, calls } = fakeConnect({ error: refusal(code) });
+    const waits = [];
+    const got = await readCertificate({ host: DEFAULT_HOST, servername: 'x.example', connect, wait: async (ms) => waits.push(ms) });
+    expect(got).toEqual({ refused: reason });
+    expect(calls).toHaveLength(1);
+    expect(waits).toEqual([]);
   });
 
-  it('rejects on a connection error, an empty certificate and a timeout', async () => {
-    await expect(readOnce({ host: DEFAULT_HOST, servername: 'x.example', connect: fakeConnect({ error: new Error('ECONNRESET') }).connect })).rejects.toThrow('ECONNRESET');
+  it('rejects on a network error, an empty certificate and a timeout', async () => {
+    await expect(readOnce({ host: DEFAULT_HOST, servername: 'x.example', connect: fakeConnect({ error: refusal('ECONNRESET') }).connect })).rejects.toThrow('ECONNRESET');
     await expect(readOnce({ host: DEFAULT_HOST, servername: 'x.example', connect: fakeConnect({}).connect })).rejects.toThrow('no certificate');
     await expect(readOnce({ host: DEFAULT_HOST, servername: 'x.example', timeoutMs: 1000, connect: fakeConnect({ silent: true }).connect })).rejects.toThrow('within 1 seconds');
   });
 
-  it('tries three times, pausing between, before calling it unreadable', async () => {
-    const { connect, calls } = fakeConnect({ error: new Error('ECONNRESET') });
+  it('tries a network error three times, pausing between, before calling it unreadable', async () => {
+    const { connect, calls } = fakeConnect({ error: refusal('ECONNRESET') });
     const waits = [];
     await expect(readCertificate({ host: DEFAULT_HOST, servername: 'x.example', connect, wait: async (ms) => waits.push(ms) })).rejects.toThrow('ECONNRESET');
     expect(calls).toHaveLength(3);
@@ -279,7 +315,8 @@ describe('reading over TLS', () => {
     let n = 0;
     const flaky = (options) => {
       n += 1;
-      return n === 1 ? fakeConnect({ error: new Error('ECONNRESET') }).connect(options) : fakeConnect({ cert: cert('x.example', 88) }).connect(options);
+      const answer = n === 1 ? { error: refusal('ECONNRESET') } : { peer: cert('x.example', 88) };
+      return fakeConnect(answer).connect(options);
     };
     const got = await readCertificate({ host: DEFAULT_HOST, servername: 'x.example', connect: flaky, wait: async () => {} });
     expect(got.cert.subject.CN).toBe('x.example');
@@ -305,15 +342,15 @@ describe('arguments', () => {
   });
 
   it('refuses a host that is not a Static Web App default host, because it would read Cloudflare\'s certificate', () => {
-    expect(() => parseArgs(['--host', 'hybridcloudworks.com'])).toThrow(/azurestaticapps\.net/);
-    expect(() => parseArgs(['--host', 'evil.example/azurestaticapps.net'])).toThrow();
-    expect(() => parseArgs(['--host', 'x.azurestaticapps.net.evil.example'])).toThrow();
+    expect(() => parseArgs(['--host', 'hybridcloudworks.com'])).toThrow('--host must be a Static Web App default host ending in .azurestaticapps.net');
+    expect(() => parseArgs(['--host', 'evil.example/azurestaticapps.net'])).toThrow('--host must be');
+    expect(() => parseArgs(['--host', 'x.azurestaticapps.net.evil.example'])).toThrow('--host must be');
     expect(parseArgs(['--host', 'Other-App.2.azurestaticapps.net']).host).toBe('other-app.2.azurestaticapps.net');
   });
 
   it('takes --name more than once, replacing the defaults', () => {
     expect(parseArgs(['--name', 'a.example', '--name', 'b.example']).names).toEqual(['a.example', 'b.example']);
-    expect(() => parseArgs(['--name', 'not a name'])).toThrow();
+    expect(() => parseArgs(['--name', 'not a name'])).toThrow('is not a host name');
   });
 
   it('refuses an unknown flag, a missing value and a bad --warn-days', () => {
@@ -322,14 +359,19 @@ describe('arguments', () => {
     expect(() => parseArgs(['--warn-days', '0'])).toThrow('positive integer');
   });
 
-  it('main writes the summary and returns the exit code, from a stand-in read', async () => {
+  it('main writes the summary with the window it was given and returns the exit code, from a stand-in read', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'swa-cert-check-'));
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const file = join(dir, 'summary.md');
       const code = await main(['--summary', file, '--warn-days', '100'], { read: async ({ servername }) => good(servername, 88) });
       expect(code).toBe(1);
-      expect(readFileSync(file, 'utf8')).toContain('NEEDS ACTION');
+      const text = readFileSync(file, 'utf8');
+      // main reads the real clock, so the day count depends on the hour; the window does not.
+      expect(text).toContain('day(s), within 100');
+      expect(text).toContain('Action is needed at 100 days or less');
     } finally {
+      logs.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -339,16 +381,15 @@ describe('arguments', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      // A directory as the summary file: writeFileSync throws EISDIR (EPERM
-      // on some Windows builds), after the certificates were judged as
+      // A directory as the summary file: writeFileSync throws (EISDIR, or
+      // EPERM on some Windows builds) after the certificates were judged as
       // needing action, which would otherwise surface as exit 1.
       const code = await runChecked(['--summary', dir, '--warn-days', '100'], { read: async ({ servername }) => good(servername, 88) });
       expect(code).toBe(2);
       expect(errors).toHaveBeenCalledTimes(1);
       const line = errors.mock.calls[0][0];
       expect(line).toMatch(/^check-swa-certificates stopped on an unexpected error \([A-Z]+\); nothing was judged\.$/);
-      expect(line).not.toContain(dir);
-      expect(line).not.toContain('swa-cert-check-');
+      expect(line.includes(dir)).toBe(false);
     } finally {
       errors.mockRestore();
       logs.mockRestore();
@@ -389,7 +430,7 @@ describe('arguments', () => {
 });
 
 describe('run as a program', () => {
-  function run(args) {
+  function runProgram(args) {
     try {
       return { code: 0, stdout: execFileSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }), stderr: '' };
     } catch (error) {
@@ -398,25 +439,26 @@ describe('run as a program', () => {
   }
 
   it('prints usage for --help and exits 0, and exits 2 for an unknown flag or a public host, before any connection', () => {
-    const help = run(['--help']);
+    const help = runProgram(['--help']);
     expect(help.code).toBe(0);
     expect(help.stdout).toContain('Usage: node scripts/check-swa-certificates.mjs');
-    expect(run(['--bogus'])).toMatchObject({ code: 2 });
-    expect(run(['--host', 'www.hybridcloudworks.com']).stderr).toContain('would show Cloudflare');
+    expect(runProgram(['--bogus'])).toMatchObject({ code: 2 });
+    expect(runProgram(['--host', 'www.hybridcloudworks.com']).stderr).toContain('would show Cloudflare');
   });
 });
 
 describe('held to the rest of the repository', () => {
   it('uses the same default host as the frontend deploy\'s probe', () => {
     const deploy = readFileSync(join(REPO, '.github', 'workflows', 'deploy-azure-frontend.yml'), 'utf8');
-    const found = /DEFAULT_HOSTNAME: \$\{\{ vars\.STATIC_WEB_APP_DEFAULT_HOSTNAME \|\| '([^']+)' \}\}/.exec(deploy);
-    expect(found?.[1], 'the probe\'s default host in deploy-azure-frontend.yml').toBe(DEFAULT_HOST);
+    const line = deploy.split('\n').find((l) => l.trim().startsWith('DEFAULT_HOSTNAME: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME ||'));
+    expect(line, 'the probe\'s DEFAULT_HOSTNAME line in deploy-azure-frontend.yml').toBeDefined();
+    expect(line.trim()).toBe(`DEFAULT_HOSTNAME: \${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || '${DEFAULT_HOST}' }}`);
   });
 
-  it('links a "Going back" heading that the runbook really has', () => {
+  it('links a "Going back" heading that the runbook really has, and the runbook links the workflow', () => {
     const runbook = readFileSync(join(REPO, 'docs', 'runbooks', 'proxy-site-hosts.md'), 'utf8');
     expect(GOING_BACK_URL.endsWith('#going-back')).toBe(true);
-    expect(runbook).toMatch(/^## Going back$/m);
-    expect(runbook, 'Part 2 step 4 links the workflow').toContain('actions/workflows/check-swa-certificates.yml');
+    expect(runbook.split(/\r?\n/)).toContain('## Going back');
+    expect(runbook).toContain('actions/workflows/check-swa-certificates.yml');
   });
 });

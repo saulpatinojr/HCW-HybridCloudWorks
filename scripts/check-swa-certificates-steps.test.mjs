@@ -1,13 +1,20 @@
 /**
- * The issue step of check-swa-certificates.yml, run for real (#1929).
+ * check-swa-certificates.yml (#1929): its two jobs, and its issue step run
+ * for real.
  *
- * The step's shell is taken out of the workflow and run with `bash -e`, as a
- * runner does, against a stand-in `gh` that records each call, answers `issue
- * list` and the two `api` reads with what the test set, and applies the
- * step's own `--jq` with the real jq. The shape is check-drill-age.yml's
- * (label plus exact title, close on a clean run of `main` only), with one
- * addition: on an open issue it comments only when the report's state line
- * differs from the last one the workflow itself posted.
+ * The workflow is two jobs so that only a run of `main` ever holds a token
+ * that can write: `check` (contents: read) reads the certificates and hands
+ * the exit code and the report on; `issue` (issues: write) runs only for
+ * `refs/heads/main` and opens, comments on or closes the one issue. The
+ * shape tests hold that split.
+ *
+ * The issue step's shell is taken out of the workflow and run with `bash -e`,
+ * as a runner does, against a stand-in `gh` that records each call, answers
+ * `issue list` and the two `api` reads with what the test set, and applies
+ * the step's own `--jq` with the real jq. The shape is check-drill-age.yml's
+ * (label plus exact title, close on a clean run), with one addition: on an
+ * open issue it comments only when the report's state line differs from the
+ * last one the workflow itself posted.
  *
  * Needs bash and jq. Where either is missing the shell tests are skipped and
  * say so in their name; on GitHub Actions a test fails instead, so they
@@ -24,53 +31,94 @@ import { findBashTools, parseJobs } from './lib/workflow-text.mjs';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOW = join(REPO, '.github', 'workflows', 'check-swa-certificates.yml');
 const TEXT = readFileSync(WORKFLOW, 'utf8').replace(/\r\n/g, '\n');
-const JOB = parseJobs(TEXT).find((job) => job.key === 'check');
+const JOBS = parseJobs(TEXT);
+const CHECK = JOBS.find((job) => job.key === 'check');
+const ISSUE = JOBS.find((job) => job.key === 'issue');
 const READ_STEP = 'Read the two certificates';
-const ISSUE_STEP = 'Open, update or close the certificate issue';
 const FAIL_STEP = 'Fail the run while a certificate needs action or could not be read';
+const DECODE_STEP = 'Write the report to a file';
+const ISSUE_STEP = 'Open, update or close the certificate issue';
 const TITLE = 'Static Web App certificate needs attention: hybridcloudworks.com or www';
-const step = JOB?.steps.find((s) => s.name === ISSUE_STEP);
-const readStep = JOB?.steps.find((s) => s.name === READ_STEP);
+const readStep = CHECK?.steps.find((s) => s.name === READ_STEP);
+const decodeStep = ISSUE?.steps.find((s) => s.name === DECODE_STEP);
+const step = ISSUE?.steps.find((s) => s.name === ISSUE_STEP);
+
+/** A job's own top-level key (4 spaces in), e.g. `if` or `needs`, as written. */
+const jobKey = (job, key) => job.lines.find((l) => l.startsWith(`    ${key}:`))?.slice(`    ${key}:`.length).trim();
+
+/** The permission lines of a job, trimmed, comments kept. */
+function grants(job) {
+  const from = job.lines.indexOf('    permissions:');
+  const lines = [];
+  for (const line of job.lines.slice(from + 1)) {
+    if (!line.startsWith('      ')) break;
+    lines.push(line.trim());
+  }
+  return lines;
+}
 
 describe('check-swa-certificates.yml: its shape', () => {
-  it('reads, then reports, then fails the run, in that order', () => {
-    expect(JOB, 'no job named check').toBeDefined();
-    expect(JOB.steps.map((s) => s.name).slice(-3)).toEqual([READ_STEP, ISSUE_STEP, FAIL_STEP]);
+  it('has exactly two jobs, check then issue', () => {
+    expect(JOBS.map((j) => j.key)).toEqual(['check', 'issue']);
+    expect(CHECK.steps.map((s) => s.name).slice(-2)).toEqual([READ_STEP, FAIL_STEP]);
+    expect(ISSUE.steps.map((s) => s.name)).toEqual([DECODE_STEP, ISSUE_STEP]);
   });
 
-  it('runs daily and by hand, with a timeout', () => {
-    expect(TEXT).toMatch(/\n {4}- cron: '35 5 \* \* \*'\n/);
+  it('runs daily and by hand, with a timeout on each job', () => {
+    expect(TEXT.split('\n')).toContain("    - cron: '35 5 * * *'");
     expect(TEXT).toContain('\n  workflow_dispatch:\n');
-    expect(JOB.lines.join('\n')).toMatch(/\n {4}timeout-minutes: 5\n/);
+    expect(jobKey(CHECK, 'timeout-minutes')).toBe('5');
+    expect(jobKey(ISSUE, 'timeout-minutes')).toBe('5');
   });
 
-  it('grants issues: write to its one job, nothing at the top, and uses no secret or environment', () => {
-    expect(TEXT).toMatch(/\npermissions: \{\}\n/);
-    const grants = JOB.lines.filter((l) => /^\s+\w+:\s*write\b/.test(l)).map((l) => l.trim());
-    expect(grants).toEqual(['issues: write # open, comment on or close the one certificate issue']);
-    expect(TEXT).not.toContain('secrets.');
-    expect(JOB.lines.some((l) => /^ {4}environment:/.test(l))).toBe(false);
+  it("the check job can only read; the write token is the issue job's alone", () => {
+    expect(TEXT).toContain('\npermissions: {}\n');
+    expect(grants(CHECK)).toEqual(['contents: read # checkout only']);
+    expect(grants(ISSUE)).toEqual(['issues: write # open, comment on or close the one certificate issue']);
+    expect(TEXT.includes('secrets.')).toBe(false);
+    expect(JOBS.some((j) => j.lines.some((l) => l.startsWith('    environment:')))).toBe(false);
+  });
+
+  it('runs the issue job only for main, after check, even when check went red', () => {
+    expect(jobKey(ISSUE, 'needs')).toBe('check');
+    expect(jobKey(ISSUE, 'if')).toBe("${{ !cancelled() && github.ref == 'refs/heads/main' }}");
+  });
+
+  it('the issue job checks out nothing and runs no action, so no code from the branch runs with the token', () => {
+    expect(ISSUE.steps.every((s) => s.uses === undefined)).toBe(true);
+    expect(ISSUE.lines.join('\n').includes('node ')).toBe(false);
   });
 
   it('pins every action by full commit and keeps the checkout token out of the workspace', () => {
-    const uses = TEXT.split('\n').filter((l) => /^\s+uses:/.test(l));
+    const uses = TEXT.split('\n').filter((l) => l.trim().startsWith('uses:'));
     expect(uses.length).toBeGreaterThan(0);
-    for (const line of uses) expect(line).toMatch(/uses: [\w-]+\/[\w-]+@[0-9a-f]{40} # v\d/);
+    for (const line of uses) expect(line).toMatch(/^\s+uses: [\w-]+\/[\w-]+@[0-9a-f]{40} # v\d+$/);
     expect(TEXT).toContain('persist-credentials: false');
   });
 
-  it('reads the host from the same variable as the frontend deploy, passed through env', () => {
+  it('reads the host from the same variable as the frontend deploy, and hands the exit and the report on', () => {
     expect(readStep.env.ORIGIN_HOST).toBe('${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME }}');
     expect(readStep.run).toContain('node scripts/check-swa-certificates.mjs "${args[@]}" --summary "${RUNNER_TEMP}/swa-certs.md" || code=$?');
+    expect(readStep.run).toContain('echo "report=$(base64 -w0 "${RUNNER_TEMP}/swa-certs.md")" >> "$GITHUB_OUTPUT"');
+    expect(CHECK.lines).toContain('      exit: ${{ steps.certs.outputs.exit }}');
+    expect(CHECK.lines).toContain('      report: ${{ steps.certs.outputs.report }}');
+    expect(decodeStep.env.REPORT_B64).toBe('${{ needs.check.outputs.report }}');
   });
 
   it('runs the issue step on every exit, so a clean run can close the issue', () => {
     expect(step.if).toBeUndefined();
-    expect(step.env.CERTS_EXIT).toBe('${{ steps.certs.outputs.exit }}');
+    expect(step.env.CERTS_EXIT).toBe('${{ needs.check.outputs.exit }}');
+  });
+
+  it('the fail step names every failure condition', () => {
+    const fail = CHECK.steps.find((s) => s.name === FAIL_STEP);
+    for (const words of ['30 days or less', 'does not cover its name', 'untrusted chain', 'not valid yet', 'could not be read']) {
+      expect(fail.run, words).toContain(words);
+    }
   });
 
   it('takes every value through env:, never an expression in the shell', () => {
-    for (const s of JOB.steps.filter((x) => x.run)) {
+    for (const s of [...CHECK.steps, ...ISSUE.steps].filter((x) => x.run)) {
       expect(s.run.includes('${{'), `${s.name}: an expression inside run: is the template-injection shape`).toBe(false);
     }
   });
@@ -78,7 +126,7 @@ describe('check-swa-certificates.yml: its shape', () => {
   it('keys the issue on one fixed title and the Platform label, never on search', () => {
     expect(step.run).toContain(`title="${TITLE}"`);
     expect(step.run).toContain('label="Platform"');
-    expect(step.run).not.toContain('--search');
+    expect(step.run.includes('--search')).toBe(false);
   });
 });
 
@@ -86,7 +134,36 @@ const TOOLS = findBashTools();
 const JQ_READY = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
 const READY = TOOLS.ready && JQ_READY;
 const SKIPPED = READY ? '' : ` (SKIPPED here: ${TOOLS.ready ? 'jq is not on the path' : TOOLS.why}; they run on GitHub Actions)`;
+const BASH_SKIPPED = TOOLS.ready ? '' : ` (SKIPPED here: ${TOOLS.why}; they run on GitHub Actions)`;
 const forward = (path) => path.replace(/\\/g, '/');
+
+describe.skipIf(!TOOLS.ready)(`check-swa-certificates.yml report hand-off: run with bash -e${BASH_SKIPPED}`, () => {
+  function decode(b64) {
+    const dir = forward(mkdtempSync(join(tmpdir(), 'swa-cert-check-decode-')));
+    try {
+      const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', decodeStep.run], {
+        env: { ...process.env, RUNNER_TEMP: dir, REPORT_B64: b64, CHECK_RESULT: 'failure' },
+        encoding: 'utf8',
+      });
+      return { status: result.status, text: readFileSync(`${dir}/swa-certs.md`, 'utf8') };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('writes the report the check job encoded, byte for byte', () => {
+    const report = '## Static Web App certificates\n\n| a | b |\n\n<!-- swa-cert-check state: x=ok/none -->\n';
+    expect(decode(Buffer.from(report).toString('base64'))).toEqual({ status: 0, text: report });
+  });
+
+  it('an empty or broken report becomes a short one saying so, and the step still succeeds', () => {
+    for (const b64 of ['', '!!!not base64!!!']) {
+      const got = decode(b64);
+      expect(got.status, b64).toBe(0);
+      expect(got.text).toBe('## Static Web App certificates\n\nThe check job (failure) passed on no report; see its log.\n');
+    }
+  });
+});
 
 describe('check-swa-certificates.yml: bash and jq are there', () => {
   it.skipIf(process.env.GITHUB_ACTIONS !== 'true')('on GitHub Actions bash and jq are present, so the tests below run', () => {
@@ -98,8 +175,10 @@ describe('check-swa-certificates.yml: bash and jq are there', () => {
 describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with bash -e${SKIPPED}`, () => {
   const RUN_URL = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1';
   const OPEN = JSON.stringify([{ number: 12, title: TITLE }]);
-  const STATE_WARN = '<!-- swa-cert-check state: hybridcloudworks.com=warn:2027-02-23 www.hybridcloudworks.com=ok:2027-05-01 -->';
-  const STATE_ACT = '<!-- swa-cert-check state: hybridcloudworks.com=act:2027-02-23 www.hybridcloudworks.com=ok:2027-05-01 -->';
+  const STATE_WARN = '<!-- swa-cert-check state: hybridcloudworks.com=warn/expiring:2027-02-23 www.hybridcloudworks.com=ok/none:2027-05-01 -->';
+  const STATE_ACT = '<!-- swa-cert-check state: hybridcloudworks.com=act/expiring:2027-02-23 www.hybridcloudworks.com=ok/none:2027-05-01 -->';
+  const STATE_MISMATCH = '<!-- swa-cert-check state: hybridcloudworks.com=act/name-mismatch www.hybridcloudworks.com=ok/none:2027-05-01 -->';
+  const STATE_UNTRUSTED = '<!-- swa-cert-check state: hybridcloudworks.com=act/untrusted www.hybridcloudworks.com=ok/none:2027-05-01 -->';
   const report = (state) => `## Static Web App certificates\n\n| x | y |\n\n${state}\n`;
   const bot = (body) => ({ user: { login: 'github-actions[bot]' }, body });
   let work;
@@ -136,7 +215,7 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
   });
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-  function runIssue(exit, { list = '[]', ref = 'refs/heads/main', listFails = false, apiFails = false, summary = report(STATE_WARN), issue = bot('old'), comments = [] } = {}) {
+  function runIssue(exit, { list = '[]', listFails = false, apiFails = false, summary = report(STATE_WARN), issue = bot('old'), comments = [] } = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
     writeFileSync(`${dir}/swa-certs.md`, summary);
@@ -157,7 +236,6 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
         REPO: 'saulpatinojr/HCW-HybridCloudWorks',
         RUN_URL,
         CERTS_EXIT: String(exit),
-        GITHUB_REF: ref,
       },
       encoding: 'utf8',
     });
@@ -236,21 +314,15 @@ describe.skipIf(!READY)(`check-swa-certificates.yml certificate issue: run with 
     ]);
   });
 
-  it('good with none open writes nothing; good on another branch closes nothing', () => {
-    expect(runIssue(0).writes).toEqual([]);
-    const other = runIssue(0, { list: OPEN, ref: 'refs/heads/feature' });
-    expect(other.writes).toEqual([]);
-    expect(other.stdout).toContain('not main, so #12 is left open');
+  it('good with none open writes nothing', () => {
+    const got = runIssue(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).toContain('no certificate issue is open');
   });
 
-  it('needs action on another branch: writes nothing, open issue or not, and says the report is in the summary', () => {
-    const none = runIssue(1, { ref: 'refs/heads/feature' });
-    expect(none.status, none.stderr).toBe(0);
-    expect(none.writes).toEqual([]);
-    expect(none.stdout).toContain('not main, so no issue is opened or commented on');
-    const open = runIssue(2, { list: OPEN, ref: 'refs/heads/feature' });
-    expect(open.status, open.stderr).toBe(0);
-    expect(open.writes).toEqual([]);
+  it('a new reason at the same stage, with no end date to differ, is posted', () => {
+    const got = runIssue(1, { list: OPEN, summary: report(STATE_UNTRUSTED), comments: [bot(report(STATE_MISMATCH))] });
+    expect(got.writes).toEqual([`issue|comment|12|--repo|saulpatinojr/HCW-HybridCloudWorks|--body-file|${got.dir}/issue.md`]);
   });
 
   it('never touches an issue with a similar title', () => {

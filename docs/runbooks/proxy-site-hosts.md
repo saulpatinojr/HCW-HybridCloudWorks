@@ -225,13 +225,21 @@ reports that as unexpected for someone to read.
     does this read every day at 05:35 UTC. It asks Azure directly (the Static
     Web App's default name, so Cloudflare is not in the way) for the
     certificate of each name, and writes the name, issuer and days left in
-    the run's summary. When a certificate has 30 days or less, does not cover
-    its name, or cannot be read, the run fails and it opens one issue titled
-    "Static Web App certificate needs attention: hybridcloudworks.com or www"
-    (labelled `Platform` and `owner-gated`), naming the step under "Going
-    back" below. It comments again only when something changes, and closes
-    the issue by itself once both are good again. **Before the switch,** open
-    the workflow's page and check its latest run is green.
+    the run's summary. It uses the same certificate checks a browser makes,
+    and the run fails when either certificate:
+
+    - ends in 30 days or less, or has already ended;
+    - does not cover its name (a name mismatch);
+    - has a chain that does not lead to a trusted certificate authority;
+    - is not valid yet; or
+    - could not be read at all (no connection after three tries).
+
+    On a failure a run of `main` opens one issue titled "Static Web App
+    certificate needs attention: hybridcloudworks.com or www" (labelled
+    `Platform` and `owner-gated`), naming the step under "Going back" below.
+    It comments again only when something changes, and closes the issue by
+    itself once both are good again. **Before the switch,** open the
+    workflow's page and check its latest run is green.
 
     The same read by hand:
 

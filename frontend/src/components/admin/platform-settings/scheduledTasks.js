@@ -134,7 +134,7 @@ export const SCHEDULED_TASKS = Object.freeze([
     'check-swa-certificates.yml',
     'Check SWA certificates',
     ['35 5 * * *'],
-    'Reads, straight from Azure, the certificates the Static Web App holds for hybridcloudworks.com and www, and fails when one has 30 days or less left, does not cover its name, or cannot be read. Once Cloudflare proxies the two names, Azure may stop renewing them by itself.',
+    'Reads, straight from Azure, the certificates the Static Web App holds for hybridcloudworks.com and www, and fails when one ends in 30 days or less (or has ended), does not cover its name, has an untrusted chain, is not valid yet, or could not be read. Once Cloudflare proxies the two names, Azure may stop renewing them by itself.',
     'Opens an issue, comments on it when something changes, and closes it once both are good again.'
   ),
   workflow(
