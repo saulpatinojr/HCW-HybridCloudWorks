@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site and its notes rule) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1047,9 +1047,10 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
-# The Cloudflare ACCOUNT, not the zone: cloudflare_web_analytics_site in
-# frontend.tf is an account-level resource and the API takes the account id in
-# its path. An identifier, not a credential: the dashboard prints it on the
+# The Cloudflare ACCOUNT, not the zone: cloudflare_web_analytics_site and
+# cloudflare_web_analytics_rule in frontend.tf are account-level resources and
+# the API takes the account id in its path (the site also names the zone, by
+# cloudflare_zone_id, since #1923). An identifier, not a credential: the dashboard prints it on the
 # zone's Overview page under API, beside the zone id, and the GitHub
 # repository variable CLOUDFLARE_ACCOUNT_ID already holds the same value for
 # the daily DNS audit (docs/standards/required-inputs.md §4.2). Set it in the
@@ -1059,17 +1060,17 @@ variable "cloudflare_zone_id" {
 # like cloudflare_zone_id, because of what an unset value does to the plan.
 # The zone id is the address of every DNS record this estate serves on, so a
 # plan with no zone id has nothing to say and SHOULD fail. The account id
-# serves one resource that no visitor-facing path depends on, and a required
+# serves two resources that no visitor-facing path depends on, and a required
 # variable would fail every plan — the merge's queued run, the speculative
 # plans, tfc-plan-check's read — until the owner has typed the value into the
-# workspace. Null keeps the apply whole: the Web Analytics site and its two
-# app-setting readers are simply not created until the id is set, and the
-# outputs read null. Thirty-two lowercase hex characters, which is the shape
+# workspace. Null keeps the apply whole: the Web Analytics site, its notes
+# rule and its two app-setting readers are simply not created until the id is
+# set, and the outputs read null. Thirty-two lowercase hex characters, which is the shape
 # Cloudflare account ids take; a wrong value fails at plan time here rather
 # than at apply time as a 404 on /accounts/<id>/rum/site_info that names the
 # wrong thing.
 variable "cloudflare_account_id" {
-  description = "Cloudflare account id (32 hex characters) that owns the zone; null until set, which leaves cloudflare_web_analytics_site uncreated (#1302)"
+  description = "Cloudflare account id (32 hex characters) that owns the zone; null until set, which leaves the Web Analytics site and its rule uncreated (#1302, #1923)"
   type        = string
   default     = null
 
@@ -1114,15 +1115,21 @@ variable "cloudflare_account_id" {
 #
 # AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. cloudflare_web_analytics_site
 # (frontend.tf) is created through POST /accounts/{account_id}/rum/site_info,
-# which Cloudflare's API reference lists under the permission Account →
+# which Cloudflare's API schema lists under the permission Account →
 # Account Settings → Write. Add it to the same token
 # (hcp-terraform-cloudflare-dns in the dashboard) before the apply that
-# creates the site. The failure without it is the same shape as the ruleset's:
-# every record and the ruleset apply, and the one new resource errors — by
-# the documented pattern, "Authentication error (10000)", though that exact
-# code on this endpoint is inferred from the ruleset case rather than
-# observed. The widening is accepted for this resource only: a Web Analytics
-# site holds no secret and serves no visitor-facing path, so the trade the
+# creates the site. Since #1923 the same apply also creates
+# cloudflare_web_analytics_rule.notes_excluded, through POST
+# /accounts/{account_id}/rum/v2/{ruleset_id}/rule. That endpoint lists no
+# permission in the schema (read 2026-11-27); every site endpoint and the bulk
+# rules endpoint (POST .../rum/v2/{ruleset_id}/rules) list Account Settings
+# → Write, so no further permission is expected, but that is inferred and
+# the apply is the first proof. The failure without it is the same shape as
+# the ruleset's: every record and the ruleset apply, and the new resources
+# error — by the documented pattern, "Authentication error (10000)", though
+# that exact code on these endpoints is inferred from the ruleset case rather
+# than observed. The widening is accepted for Web Analytics only: a site and
+# its rules hold no secret and serve no visitor-facing path, so the trade the
 # Turnstile note in frontend.tf refused still stands for anything that does.
 variable "cloudflare_origin_secret" {
   description = "Shared secret Cloudflare injects as x-hcw-origin-secret; MUST equal the CF-ORIGIN-SECRET value in Key Vault"

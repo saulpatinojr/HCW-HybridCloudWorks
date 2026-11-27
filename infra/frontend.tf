@@ -510,34 +510,69 @@ resource "cloudflare_ruleset" "origin_secret" {
 }
 
 # =============================================================================
-# Cloudflare Web Analytics — the monthly audience figure (#1302)
+# Cloudflare Web Analytics — the monthly audience figure (#1302, #1923)
 #
 # Owner decision 2026-10-20: the site must be able to state a monthly audience
-# figure, for the Docker Captain Thought Leader track and the Microsoft MVP
-# metrics. Nothing from this resource is shown to visitors. The beacon reports
+# figure. Nothing from these resources is shown to visitors. The beacon reports
 # page views to Cloudflare; the ambassadorAudienceMonthly timer reads the
 # month's totals back through the Cloudflare API (functionapp.tf, the
 # CLOUDFLARE_ANALYTICS_TOKEN reference) and records one number.
 #
-# `host` AND THE SNIPPET, NOT AUTOMATIC INJECTION. Automatic injection
-# rewrites HTML as it passes through the proxy, so it only works on an
-# orange-clouded hostname. The apex and www are DNS-only (gray-clouded)
-# records that resolve straight to the Static Web App — the "Nothing caches
-# in front of that 100 GB" note above — and the proxied hostnames in this zone
-# are the API origin, which serves JSON, and `notes`, which is Obsidian's page
-# and not ours to inject into. So `auto_install = false`,
-# written out rather than left unset: the schema has no default for it, the
-# API echoes the value back on every read, and an attribute that is null in
-# the configuration against false in state would plan `false -> null` on
-# every run, which tfc-plan-check would report as UNEXPECTED on every main
-# plan. The beacon is served by the page itself: the frontend builds the
-# snippet in from `site_token`, which is the reason that value is an output
-# below rather than a dashboard copy.
+# AUTOMATIC SETUP ON THE ZONE, BECAUSE CLOUDFLARE REFUSED ANYTHING ELSE
+# (#1923). The site was first written as a manual site (`host = var.domain`,
+# `auto_install = false`). On 2026-11-27 the apply that created it failed:
+#
+#   POST /client/v4/accounts/<account>/rum/site_info: 400 Bad Request
+#   code 10029, "web_analytics.configuration.api.autoInstallRequired"
+#
+# Cloudflare's docs do not list that error. Our reading: hybridcloudworks.com
+# is a zone in the same account, and the API will not make a manual
+# (host-only) site for a domain that is a zone on the account. So the site is
+# made on the zone (`zone_tag`) with `auto_install = true`, the shape the
+# provider's own acceptance test uses for a zone site.
+#
+# `host` IS LEFT OUT. The provider (5.29.0) documents it as "the hostname to
+# use for gray-clouded sites", which this zone site is not, and it is the
+# argument the refused request was built on. Leaving it out does not plan a
+# change on every run: the provider never reads `host`, `zone_tag`, `lite` or
+# `enabled` back from the API (they are `no_refresh` in its model), so what is
+# written here is what state keeps.
+#
+# `auto_install = true` IS WRITTEN OUT, and must stay written out. Unlike the
+# four above, the provider does read it back, so leaving it unset would plan
+# `true -> null` on every run, which tfc-plan-check would report as
+# UNEXPECTED.
+#
+# `enabled = true` turns measurement on. The provider documents it as
+# "Enables or disables RUM. This option can be used only when auto_install
+# is set to true", which it now is. Written out rather than trusting a
+# default the docs do not state.
+#
+# WHAT AUTOMATIC SETUP REACHES. Cloudflare injects its beacon into HTML that
+# passes through its proxy, so only orange-clouded (proxied) names in the zone
+# are touched. Read on 2026-11-27, those are two:
+#   - api-azure, the API origin. It serves JSON, so nothing is injected.
+#   - notes, Obsidian Publish's pages. These ARE HTML, are not ours, and are
+#     not part of the figure, so the rule below takes them out of measurement.
+# A new proxied record that serves HTML would be measured from its first
+# request; add a rule for it beside the one below if it should not be.
+#
+# THE HAND-PLACED BEACON STILL DOES THE COUNTING. The apex and www are
+# DNS-only (gray-clouded) records that resolve straight to the Static Web App
+# (the "Nothing caches in front of that 100 GB" note above), so automatic
+# setup never sees the site's own pages. They carry the beacon themselves:
+# the frontend build puts `site_token` into every page
+# (frontend/scripts/cf-web-analytics.mjs, fed by the CF_WEB_ANALYTICS_TOKEN
+# repository variable, which the owner copies from the
+# web_analytics_site_token output). Cloudflare matches a beacon's hostname to
+# the site by suffix (its Web Analytics FAQ: a site for example.com accepts
+# www.example.com), so the apex and www count under this zone site. That is
+# read from the docs, not yet seen on a live page view.
 #
 # `lite = true` asks Cloudflare not to measure visitors in the EU. Cloudflare
 # documents it for the proxy-injected snippet ("the JavaScript snippet will
-# not be injected for visitors from the EU"), and whether it applies to a
-# hand-placed one is unverified until the owner confirms the option on the
+# not be injected for visitors from the EU"); whether it also applies to the
+# hand-placed beacon is unverified until the owner confirms the option on the
 # site's Manage page in the Web Analytics dashboard. The figure this exists
 # for is a count, not a profile, and a count that leaves EU visitors out is
 # still a count; the alternative is a consent prompt on a site that has none.
@@ -548,30 +583,60 @@ resource "cloudflare_ruleset" "origin_secret" {
 # site's identifier in the API path. Neither grants anything: the Cloudflare
 # API authenticates with an API token, and these are not one. Marking them
 # sensitive would hide a public value from the plan and the Outputs tab and
-# protect nothing — the no-key-outputs rule in outputs.tf is about
+# protect nothing; the no-key-outputs rule in outputs.tf is about
 # credentials, and this is not one.
 #
-# COUNTED ON THE ACCOUNT ID. This is the one account-level resource in the
-# configuration, and cloudflare_account_id is null until the owner sets it
+# COUNTED ON THE ACCOUNT ID. These are the configuration's account-level
+# resources, and cloudflare_account_id is null until the owner sets it
 # (variables.tf says why it is not required). With count 0 the outputs read
 # null and CF_WEB_ANALYTICS_SITE_TAG is written empty, which the timer reads
 # as "not configured" and skips. The same guard shape as
 # cloudflare_ruleset.origin_secret above: a value that is not there yet is
 # an absent resource, never a resource created wrong.
 #
-# THE TOKEN NEEDS Account → Account Settings → Write for the create (the
-# permission Cloudflare's API reference lists for POST
-# /accounts/{account_id}/rum/site_info). The permission paragraph beside
-# cloudflare_origin_secret in variables.tf carries the full list.
-#
-# `enabled` is left unset: the schema says it can be used only when
-# auto_install is true, and it is false.
+# THE TOKEN NEEDS Account → Account Settings → Write. Cloudflare's API schema
+# lists it for every site endpoint (POST /accounts/{account_id}/rum/site_info
+# among them) and for the bulk rules endpoint. The single-rule endpoint the
+# provider uses for the rule below lists no permission at all, so that the
+# same permission covers it is inferred, not documented. The permission
+# paragraph beside cloudflare_origin_secret in variables.tf carries the full
+# list.
 # =============================================================================
 resource "cloudflare_web_analytics_site" "hcw" {
   count = var.cloudflare_account_id == null ? 0 : 1
 
   account_id   = var.cloudflare_account_id
-  host         = var.domain
-  auto_install = false
+  zone_tag     = var.cloudflare_zone_id
+  auto_install = true
+  enabled      = true
   lite         = true
+}
+
+# notes.hybridcloudworks.com left out of measurement (#1923). With automatic
+# setup on, Cloudflare would inject its beacon into Obsidian Publish's pages,
+# which have no script of ours today and are not part of the figure. A rule
+# with `inclusive = false` excludes a host and its paths from measurement;
+# Cloudflare documents rules as "only available for sites proxied through
+# Cloudflare", which notes is. The site starts with one rule Cloudflare makes
+# itself (measure the zone); this one sits beside it, and Cloudflare's docs
+# do not say how the two are ordered, so check after the apply that a notes
+# page carries no beacon.
+#
+# Two things the provider (5.29.0) does differently for this resource:
+#   - It never reads the rule back from Cloudflare (its Read does nothing)
+#     and cannot import one. A change made to the rule in the dashboard is
+#     not seen by any plan; make changes here.
+#   - `ruleset_id` forces a new rule when it changes, and the site's
+#     `ruleset` is computed, so any planned update to the site above also
+#     plans this rule's replacement (a delete and a create of the same
+#     exclusion). That is expected, not drift.
+resource "cloudflare_web_analytics_rule" "notes_excluded" {
+  count = var.cloudflare_account_id == null ? 0 : 1
+
+  account_id = var.cloudflare_account_id
+  ruleset_id = cloudflare_web_analytics_site.hcw[0].ruleset.id
+  host       = "notes.${var.domain}"
+  paths      = ["*"]
+  inclusive  = false
+  is_paused  = false
 }

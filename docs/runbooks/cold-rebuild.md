@@ -169,9 +169,9 @@ Set category `Terraform`:
 - `subscription_conn` = `<SUBSCRIPTION_CONN_ID>` (sensitive)
 - `entra_tenant_id` = `<ENTRA_TENANT_ID>` (sensitive)
 - `entra_api_audience` = `api://<HCWSite-Client-ID>`
-- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and, for the Web Analytics site, Account → Account Settings → Write)
+- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and, for the Web Analytics site and its notes rule, Account → Account Settings → Write)
 - `cloudflare_zone_id` = `<CLOUDFLARE_ZONE_ID>`
-- `cloudflare_account_id` = `<CLOUDFLARE_ACCOUNT_ID>` (optional, #1302, the same value as the repository variable of that name; while unset the Web Analytics site is not created and its outputs read null)
+- `cloudflare_account_id` = `<CLOUDFLARE_ACCOUNT_ID>` (optional, #1302, the same value as the repository variable of that name; while unset the Web Analytics site and its rule are not created and the site's outputs read null)
 - `cloudflare_origin_secret` = `<CF_ORIGIN_SECRET>` (sensitive; from Bitwarden)
 - `budget_alert_email` = `admin@hybridcloudworks.com`
 
@@ -189,7 +189,7 @@ Set category `Terraform`:
    - Static Web App: `swa-site-prod-cus-01`.
    - Observability: `log-plat-prod-cus-01`, Application Insights `appi-site-prod-cus-01`, alerting fabric.
    - Cloudflare Ruleset: `cloudflare_ruleset.origin_secret` stamping `x-hcw-origin-secret`.
-   - Cloudflare Web Analytics site: `cloudflare_web_analytics_site.hcw[0]` for `hybridcloudworks.com` with the lite option, only when `cloudflare_account_id` is set (#1302).
+   - Cloudflare Web Analytics site: `cloudflare_web_analytics_site.hcw[0]` on the `hybridcloudworks.com` zone with automatic setup and the lite option, and `cloudflare_web_analytics_rule.notes_excluded[0]`, which leaves `notes.hybridcloudworks.com` out of measurement; both only when `cloudflare_account_id` is set (#1302, [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)).
 3. Confirm and apply the run.
 4. Record all Terraform outputs.
 
@@ -307,7 +307,8 @@ nowhere else; the steps are in the
    - Enable Bot Fight Mode.
    - Deploy Edge Availability Probe Worker per [Availability probe runbook](availability-probe.md).
 5. **Web Analytics** (#1302):
-   - No dashboard step to create the site: the Phase 4 apply creates `cloudflare_web_analytics_site.hcw[0]` once `cloudflare_account_id` is set (Phase 3.2), and the beacon is built into the pages from `CF_WEB_ANALYTICS_TOKEN` (Phase 5).
+   - No dashboard step to create the site: the Phase 4 apply creates `cloudflare_web_analytics_site.hcw[0]` and its notes rule once `cloudflare_account_id` is set (Phase 3.2). The site uses automatic setup on the zone, because Cloudflare refuses a manual site for a domain that is a zone in the same account ([#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)); automatic setup only reaches proxied names, and the site's own apex and `www` are DNS-only, so the beacon is still built into the pages from `CF_WEB_ANALYTICS_TOKEN` (Phase 5).
+   - Check the notes rule took: open any `https://notes.hybridcloudworks.com/` page, view its source, and search for `cloudflareinsights`. Nothing found means the rule works. A `static.cloudflareinsights.com/beacon` script found means Cloudflare is still injecting into the notes pages: open the site's Manage page (link below) and check its rules list for the `notes.hybridcloudworks.com` exclusion. Terraform does not read this rule back, so a change made in the dashboard is invisible to the plan.
    - One dashboard step to confirm it: the site is created with Cloudflare's lite option, which asks Cloudflare not to measure visitors in the EU. That is documented for the snippet Cloudflare's proxy injects and unverified for the hand-placed one this site carries, so open the site's Manage page in the Web Analytics dashboard at `https://dash.cloudflare.com/?to=/:account/web-analytics`, check that the EU option shows as applied, and record the date in the `cloudflare_account_id` row of [Required inputs §4.1](../standards/required-inputs.md#41-hcp-terraform-workspace-hcwhcw-azure-project-site). Until that date is recorded, the privacy policy says only that we have asked Cloudflare to exclude EU visitors.
    - Mint the read-only token for `CLOUDFLARE-ANALYTICS-TOKEN` (Phase 6) at `https://dash.cloudflare.com/profile/api-tokens`: Custom token, Account → Account Analytics → Read only, the HybridCloudWorks account only, an end date at most a year out, named `azure-functions-cloudflare-analytics-account`.
    - Arm the read by adding `AMBASSADOR_AUDIENCE_MONTHLY` to `enabled_timers` ([Required inputs §4.1](../standards/required-inputs.md#41-hcp-terraform-workspace-hcwhcw-azure-project-site)).

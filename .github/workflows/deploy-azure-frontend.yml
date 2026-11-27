@@ -321,8 +321,10 @@ jobs:
           # page-view count behind the monthly audience figure the Ambassador
           # hub records. Public by nature — it ships in every page — so a
           # repository variable, never a secret, like the Turnstile site key
-          # above. The owner copies it from the `cloudflare_web_analytics_site`
-          # output after the TFC apply. Unset, the build serves no beacon tag
+          # above. The owner copies it from the `web_analytics_site_token`
+          # output after the TFC apply. Still needed since the site moved to
+          # automatic setup (#1923): the apex and www are DNS-only, so
+          # Cloudflare injects nothing into these pages. Unset, the build serves no beacon tag
           # at all; a value that is not token-shaped fails the build
           # (frontend/scripts/cf-web-analytics.mjs).
           VITE_CF_WEB_ANALYTICS_TOKEN: ${{ vars.CF_WEB_ANALYTICS_TOKEN }}

@@ -50,7 +50,12 @@ The same picture in words:
   visitors in the EU — documented for the snippet Cloudflare's proxy injects,
   unverified for the hand-placed one this site carries until the owner has
   confirmed it on the site's Manage page in the Web Analytics dashboard — so
-  the figure is aggregate page views, read as a floor. Nothing is shown to
+  the figure is aggregate page views, read as a floor. Since
+  [#1923](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1923)
+  the Web Analytics site is set up on the zone with Cloudflare's automatic
+  setup, which only reaches proxied names; the site's own pages are DNS-only
+  and keep the hand-placed beacon, and a rule keeps the proxied `notes` pages
+  out of the count. Nothing is shown to
   visitors: once a day the `ambassadorAudienceMonthly` timer reads the
   previous month's total back from Cloudflare's GraphQL Analytics API with a
   read-only token, adds the show's downloads from Podbean, and records one

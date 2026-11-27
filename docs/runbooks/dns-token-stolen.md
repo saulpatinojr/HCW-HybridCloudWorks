@@ -61,7 +61,8 @@ Issue a replacement token strictly restricted to needed permissions:
      - `Zone` -> `Zone` -> `Read`
      - `Zone` -> `Transform Rules` -> `Edit` (the origin secret rule)
      - `Account` -> `Account Rulesets` -> `Read`
-     - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site;
+     - `Account` -> `Account Settings` -> `Edit` (the Web Analytics site
+       and its notes rule, #1923;
        the dashboard's `Edit` is the permission the API reference and
        `infra/variables.tf` call `Write`)
    - **Zone Resources:**

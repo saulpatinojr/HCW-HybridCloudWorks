@@ -501,11 +501,25 @@ export const DECLARED = [
   // above; delete it once the site exists. Should the owner set the variable
   // before the first apply, the two runs are one, the undefined -> ""
   // entries match nothing, and the plan is read by hand the same way.
+  //
+  // #1923: the owner set cloudflare_account_id on 2026-11-27 and Cloudflare
+  // refused the site's create (400, code 10029, autoInstallRequired), so
+  // nothing was created and the entry stays. The site is now made on the
+  // zone with automatic setup, and the same run also creates the rule that
+  // leaves notes.hybridcloudworks.com out of measurement. Both are creates
+  // at fixed addresses and match by address alone; delete both once the site
+  // and the rule exist.
   {
     address: "cloudflare_web_analytics_site.hcw[0]",
     action: "create",
     reason:
-      "#1302: the Web Analytics site, created once cloudflare_account_id is set",
+      "#1302/#1923: the Web Analytics site on the zone, created once cloudflare_account_id is set",
+  },
+  {
+    address: "cloudflare_web_analytics_rule.notes_excluded[0]",
+    action: "create",
+    reason:
+      "#1923: the rule that leaves notes.hybridcloudworks.com out of Web Analytics, created with the site",
   },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
@@ -591,8 +605,8 @@ export const DECLARED = [
   // Kept, because "not in this plan" cannot tell them from applied: the three
   // arming plans (PROBE_AI_PROVIDERS, AMBASSADOR_AUDIENCE_MONTHLY,
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
-  // (lab_ssh_loopback_only) and #1302's Web Analytics site create
-  // (cloudflare_account_id). Each is a value the owner sets in the workspace.
+  // (lab_ssh_loopback_only) and #1302's Web Analytics site create, with
+  // #1923's notes rule beside it since (cloudflare_account_id). Each is a value the owner sets in the workspace.
   //
   //
   // #1530's four declared changes (the Cosmos request-log filter moved into a

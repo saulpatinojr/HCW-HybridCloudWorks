@@ -1249,6 +1249,47 @@ describe('DECLARED', () => {
     expect(creates).toContain('cloudflare_web_analytics_site.hcw[0]');
   });
 
+  it('declares the Web Analytics site and its notes rule as creates, made the way Cloudflare accepts (#1923)', () => {
+    // Delete this test with the two declarations, once the site and the rule exist.
+    const SITE = 'cloudflare_web_analytics_site.hcw[0]';
+    const RULE = 'cloudflare_web_analytics_rule.notes_excluded[0]';
+    for (const address of [SITE, RULE]) {
+      expect(DECLARED.filter((entry) => entry.address === address).map((entry) => entry.action), address).toEqual(['create']);
+    }
+    const block = (type, name) => {
+      const match = new RegExp(`resource "${type}" "${name}" \\{\\n([\\s\\S]*?)\\n\\}`).exec(infraSource);
+      expect(match, `${type}.${name} not found`).not.toBeNull();
+      return match[1];
+    };
+    const site = block('cloudflare_web_analytics_site', 'hcw');
+    const rule = block('cloudflare_web_analytics_rule', 'notes_excluded');
+    // Both counted on the account id, so the [0] addresses are the only ones a plan can hold.
+    for (const body of [site, rule]) {
+      expect(body).toMatch(/^\s*count\s*=\s*var\.cloudflare_account_id == null \? 0 : 1$/m);
+    }
+    // Cloudflare refused a host-only manual site for a domain that is a zone in
+    // the account (code 10029, autoInstallRequired): the site is made on the zone,
+    // with automatic setup written out (the provider reads it back) and no host.
+    expect(site).toMatch(/^\s*zone_tag\s*=\s*var\.cloudflare_zone_id$/m);
+    expect(site).toMatch(/^\s*auto_install\s*=\s*true$/m);
+    expect(site).toMatch(/^\s*enabled\s*=\s*true$/m);
+    expect(site).not.toMatch(/^\s*host\s*=/m);
+    // The rule excludes the one proxied name that serves HTML, on the site's own ruleset.
+    expect(rule).toMatch(/^\s*ruleset_id\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]\.ruleset\.id$/m);
+    expect(rule).toMatch(/^\s*host\s*=\s*"notes\.\$\{var\.domain\}"$/m);
+    expect(rule).toMatch(/^\s*inclusive\s*=\s*false$/m);
+    expect(rule).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
+    // The plan the owner's run will hold: both creates beside the permanent diff pass the shipped list.
+    const plan = expectedPlan();
+    plan.resource_changes.push(
+      { address: SITE, change: { actions: ['create'] } },
+      { address: RULE, change: { actions: ['create'] } }
+    );
+    const result = checkPlan(plan);
+    expect(result.unexpected).toEqual([]);
+    expect(result.declared.map((entry) => entry.address)).toEqual(expect.arrayContaining([SITE, RULE]));
+  });
+
   it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {
     // Delete this test with the declaration, once the create has applied.
     const address = 'azurerm_cosmosdb_sql_container.hcw["developer_events"]';

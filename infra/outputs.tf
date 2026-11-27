@@ -211,6 +211,10 @@ output "workspace_id" {
 # put it there. `site_tag` is the site's identifier in the Cloudflare API
 # path. The API authenticates with an API token, and these are not one.
 #
+# Since #1923 the site is made on the zone with automatic setup, but the
+# token's job is unchanged: the site's own pages are DNS-only, so the beacon
+# the frontend build places with this token is still what counts them.
+#
 # `one()` over the splat, because the resource is counted on
 # cloudflare_account_id (frontend.tf): until the owner sets that variable
 # both outputs read null, and a consumer that gets null has its answer — the
