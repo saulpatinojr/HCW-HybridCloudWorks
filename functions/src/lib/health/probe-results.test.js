@@ -345,6 +345,22 @@ describe('presenting', () => {
     expect(presentResult(null)).toBeNull();
   });
 
+  it('says the pulse or a scheduled timer by name (#1918), and nothing else', () => {
+    for (const checker of ['pulse', 'timer']) {
+      expect(presentResult({ probeId: 'x', status: 'healthy', checkedBy: checker }).checkedBy).toBe(checker);
+    }
+    expect(presentResult({ probeId: 'x', status: 'healthy', checkedBy: 'checkCloudflareRateLimit' }).checkedBy).toBe('admin');
+  });
+
+  it('records an admin PUT as admin, whatever checkedBy the body claims', async () => {
+    const store = memStore();
+    const res = await handlers(store).putProbeResult(
+      request({ probeId: 'cloudflare-rate-limit', status: 'healthy', summary: 'On.', checkedBy: 'timer' }),
+      context
+    );
+    expect(bodyOf(res).result.checkedBy).toBe('admin');
+  });
+
   it('says a pulse that never beat is no pulse', () => {
     expect(presentPulse(null)).toBeNull();
     expect(presentPulse({ lastBeatAt: 'never' })).toBeNull();

@@ -148,6 +148,14 @@ locals {
     # UNEXPECTED. Removing the name later is the way to pause the timer
     # without switching Second Brain off.
     BRAIN_INDEX_RECONCILE = "brainIndexReconcile — every 15 minutes, resumes an unfinished rebuild of the Second Brain search index and starts a full rebuild once a day (#1772); does nothing unless BRAIN_ENABLED is true"
+    # #1918: the API rate limit rule lives only in Cloudflare (#1903). Reads
+    # the site zone's http_ratelimit phase once a day with the admin token
+    # (read only), records the answer on the Health page's Cloudflare API rate
+    # limit card, and says on Telegram once when the rule goes off or cannot
+    # be read, and once when it is on again. Writes two admin_config
+    # documents. Stays off until the owner adds CHECK_CLOUDFLARE_RATE_LIMIT to
+    # enabled_timers (docs/runbooks/cloudflare-admin.md, part 4).
+    CHECK_CLOUDFLARE_RATE_LIMIT = "checkCloudflareRateLimit — daily 12:40 UTC, reads whether the Cloudflare API rate limit rule is on, records it on the Health page and tells Telegram when that changes (#1918)"
   }
 
   timer_flags = {

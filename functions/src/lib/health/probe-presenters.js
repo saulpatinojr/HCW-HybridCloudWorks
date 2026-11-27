@@ -16,6 +16,13 @@ const isoOrNull = (value) =>
 const finiteOrNull = (value) => (Number.isFinite(value) ? value : null);
 
 /**
+ * Who checked, as the page may say it: the pulse, a scheduled timer (the daily
+ * rate limit check, #1918), or else an admin. Never a person's name.
+ */
+const CHECKERS = Object.freeze(['pulse', 'timer']);
+const checkerOf = (value) => (CHECKERS.includes(value) ? value : 'admin');
+
+/**
  * One stored result as the page reads it, field by field — never a spread of
  * the document, so a field a future writer adds cannot reach the page
  * unreviewed, and `recordedBy` never does.
@@ -29,7 +36,7 @@ export function presentResult(doc) {
     summary: typeof doc.summary === 'string' ? doc.summary : '',
     detail: typeof doc.detail === 'string' && doc.detail ? doc.detail : null,
     checkedAt: isoOrNull(doc.checkedAt),
-    checkedBy: doc.checkedBy === 'pulse' ? 'pulse' : 'admin',
+    checkedBy: checkerOf(doc.checkedBy),
     durationMs: finiteOrNull(doc.durationMs),
     statusSince: isoOrNull(doc.statusSince),
     previousStatus: normalizeStatus(doc.previousStatus),

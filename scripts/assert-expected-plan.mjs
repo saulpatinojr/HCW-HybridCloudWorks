@@ -304,12 +304,16 @@ export const SSH_LOGIN_ALERT_DESCRIPTION =
   "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
 
 /**
- * `local.timer_schedules` as applied: the 29 rows the live alert-timer-overdue
+ * `local.timer_schedules` as applied: the 30 rows the live alert-timer-overdue
  * carries. 26 of them are what #964 read back on 2026-10-15; the other three
  * (ambassadorAudienceMonthly, brainIndexReconcile, sweepVisitorSessions) were
  * declared by #1302, the Second Brain and #1403 and folded in on 2026-11-01,
  * when the plan check on the run for 1ccc72a (actions run 41200891363) showed
- * no diff on the rule, whose query infra/ renders unconditionally. Pinned
+ * no diff on the rule, whose query infra/ renders unconditionally. The 30th,
+ * syncSearchConsole, was declared by #1612 and folded in on 2026-11-26 (#1918):
+ * the plan check on the run for 442a24b (actions run 42728440587, 2026-11-10)
+ * printed that declaration as "declared, not in this plan", so it had applied.
+ * Pinned
  * rather than read from the tree, as #1009 did, so a timer added while a
  * declaration of this rule waits below makes assert-expected-plan.test.mjs
  * fail instead of moving `before` to a query Azure never held; with nothing
@@ -344,6 +348,7 @@ export const TIMER_SCHEDULES_APPLIED = [
   ["sendReminders", "1d", "2026-01-01 13:00"],
   ["sweepVisitorSessions", "2m", "2026-01-01 00:00"],
   ["syncRssFeeds", "2h", "2026-01-01 00:00"],
+  ["syncSearchConsole", "12h", "2026-01-01 00:10"],
   ["syncSocialCalendarScheduled", "5m", "2026-01-01 00:00"],
 ];
 
@@ -746,33 +751,17 @@ export const DECLARED = [
     reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
   },
 
-  // #1612: the admin Search Console page. The plan after the merge adds the
-  // syncSearchConsole timer's flag, disarmed; the four GSC_* settings at
-  // their defaults (three empty, the property's name); and one row to
-  // alert-timer-overdue's datatable. Delete these six once that run has
-  // applied, and fold the row into TIMER_SCHEDULES_APPLIED above. The
-  // arming plan (false -> true) stays until the owner adds
-  // SYNC_SEARCH_CONSOLE to enabled_timers, like the other arming plans. The
-  // owner's own values for the three empty settings ("" -> a value) are
-  // workspace edits and deliberately not declared: they show as UNEXPECTED
-  // and are read by hand, since this file holds no real identifier.
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
-    path: "criteria[0].query",
-    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
-    after: overdueQuery([
-      ...TIMER_SCHEDULES_APPLIED,
-      ["syncSearchConsole", "12h", "2026-01-01 00:10"],
-    ]),
-    reason: "#1612: alert-timer-overdue watches syncSearchConsole (00:10 and 12:10 UTC)",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
-    before: undefined,
-    after: "false",
-    reason: "#1612: the Search Console timer catalogued, disarmed",
-  },
+  // #1612: the admin Search Console page. Its catalogue plan (the timer's
+  // flag "false", the four GSC_* settings at their defaults, and its row on
+  // alert-timer-overdue) applied by 2026-11-10: the plan check on the run for
+  // 442a24b (actions run 42728440587) printed each of them as "declared, not
+  // in this plan". #1918 deleted those entries and folded the row into
+  // TIMER_SCHEDULES_APPLIED. The arming plan (false -> true) stays until the
+  // owner adds SYNC_SEARCH_CONSOLE to enabled_timers and that run has
+  // applied, like the other arming plans. The owner's own values for the
+  // three empty GSC_* settings ("" -> a value) are workspace edits and
+  // deliberately not declared: they show as UNEXPECTED and are read by hand,
+  // since this file holds no real identifier.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
@@ -780,19 +769,37 @@ export const DECLARED = [
     after: "true",
     reason: "#1612: SYNC_SEARCH_CONSOLE added to enabled_timers, arming the twice-daily run",
   },
-  ...["GSC_WIF_AUDIENCE", "GSC_ENTRA_APP_ID_URI", "GSC_SERVICE_ACCOUNT_EMAIL"].map((name) => ({
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: `app_settings.${name}`,
-    before: undefined,
-    after: "",
-    reason: `#1612: ${name} declared empty until the owner sets up Google's side`,
-  })),
+
+  // #1918: the daily check that the Cloudflare API rate limit rule is on
+  // (functions/src/lib/timers/cloudflare-rate-limit.js). The plan after the
+  // merge adds the checkCloudflareRateLimit timer's flag, disarmed, and one
+  // row to alert-timer-overdue's datatable. Delete those two once that run
+  // has applied, and fold the row into TIMER_SCHEDULES_APPLIED above. The
+  // arming plan (false -> true) stays until the owner adds
+  // CHECK_CLOUDFLARE_RATE_LIMIT to enabled_timers and that run has applied.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
+    path: "criteria[0].query",
+    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
+    after: overdueQuery([
+      ...TIMER_SCHEDULES_APPLIED,
+      ["checkCloudflareRateLimit", "1d", "2026-01-01 12:40"],
+    ]),
+    reason: "#1918: alert-timer-overdue watches checkCloudflareRateLimit (daily 12:40 UTC)",
+  },
   {
     address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.GSC_SITE_URL",
+    path: "app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT",
     before: undefined,
-    after: "sc-domain:hybridcloudworks.com",
-    reason: "#1612: the Search Console property the page reads",
+    after: "false",
+    reason: "#1918: the daily Cloudflare rate limit check catalogued, disarmed",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT",
+    before: "false",
+    after: "true",
+    reason: "#1918: CHECK_CLOUDFLARE_RATE_LIMIT added to enabled_timers, arming the daily check",
   },
 
   // #1822: the Second Brain index timer, brainIndexReconcile, gets its own

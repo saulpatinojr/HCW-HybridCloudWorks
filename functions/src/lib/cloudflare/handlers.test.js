@@ -19,6 +19,7 @@ import {
   REDACTED_VALUE,
   WRITE_ROLE,
   notConfiguredMessage,
+  siteZoneClient,
 } from './handlers.js';
 import { CLOUDFLARE_API_BASE, DNS_PAGE_SIZE, forgetZoneIds, zoneUnreachableMessage } from './client.js';
 import { MAX_DNS_PAGE } from './dns-routes.js';
@@ -789,6 +790,25 @@ describe('rules', () => {
     expect(res.body.rulesets[1].version).toBe('2');
     for (const ruleset of res.body.rulesets) expect(ruleset.rules).toBeUndefined();
     expect(JSON.stringify(res.body)).not.toContain(ORIGIN_SECRET);
+  });
+
+  it('adds the server’s rate limit verdict to the rate limiting phase only (#1918)', async () => {
+    const limit = { id: 'l1', expression: 'true', action: 'block', ratelimit: { period: 10 } };
+    const on = setup({ routes: entrypoint('http_ratelimit', { id: 'rl', version: '2', rules: [limit, { ...limit, id: 'l2', enabled: false }] }) });
+    const read = parse(await on.handlers.getPhase(request({ params: { phase: 'http_ratelimit' } }), {}));
+    expect(read.body.rateLimit).toEqual({ state: 'on', status: 'healthy', count: 1, sentence: '1 of 2 API rate limit rules is on.' });
+
+    // No entry point at all (Cloudflare answers 404): amber, not an error.
+    const none = setup();
+    const empty = parse(await none.handlers.getPhase(request({ params: { phase: 'http_ratelimit' } }), {}));
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({ ruleset: null, rateLimit: { state: 'off', status: 'degraded', count: 0 } });
+    expect(empty.body.rateLimit.sentence).toMatch(/^No API rate limit rule is on\. .*has no rules/);
+
+    // Any other phase answers no verdict.
+    const other = setup({ routes: entrypoint(REDIRECT, { id: 'r2', phase: REDIRECT, version: '3', rules: [] }) });
+    const redirect = parse(await other.handlers.getPhase(request({ params: { phase: REDIRECT } }), {}));
+    expect(Object.hasOwn(redirect.body, 'rateLimit')).toBe(false);
   });
 
   it('reads a phase that may not be replaced as a summary of each rule only, never its parameters', async () => {
@@ -1682,5 +1702,39 @@ describe('the lab zone (#1911)', () => {
       expect(switched).toMatchObject({ status: 403, body: { error: AGENT_DISABLE_MESSAGE } });
       expect([...WRITES(removal.api), ...WRITES(off.api)]).toEqual([]);
     });
+  });
+});
+
+describe('the site zone client outside a request (the daily rate limit check, #1918)', () => {
+  const doubles = (fetch) => ({
+    fetch,
+    resolve: async () => ({ address: '93.184.216.34' }),
+    dispatcherFor: () => ({ close: async () => {} }),
+  });
+
+  it('names what is missing, as the routes do', () => {
+    expect(siteZoneClient({ env: {} })).toEqual({ client: null, missing: ['token', 'zoneId'] });
+    expect(siteZoneClient({ env: { CLOUDFLARE_ADMIN_TOKEN: TOKEN, CF_ZONE_ID: 'not-a-zone' } })).toEqual({
+      client: null,
+      missing: ['zoneId'],
+    });
+  });
+
+  it('reads the site zone’s rate limit phase with the token in the header only', async () => {
+    const api = cloudflare({
+      [`GET ${PHASES}/http_ratelimit/entrypoint`]: ok({ id: 'rs', rules: [{ id: 'r1', action: 'block', expression: 'true' }] }),
+    });
+    const { client, missing } = siteZoneClient({ env: ENV, doubles: doubles(api.fetch) });
+    expect(missing).toEqual([]);
+    expect(await client.getPhase('http_ratelimit')).toMatchObject({ rules: [{ id: 'r1' }] });
+    expect(methods(api)).toEqual(['GET /rulesets/phases/http_ratelimit/entrypoint']);
+    expect(api.calls[0].url).not.toContain(TOKEN);
+    expect(api.calls[0].headers.Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('answers null for a phase Cloudflare has no entry point for (no rule set)', async () => {
+    const api = cloudflare();
+    const { client } = siteZoneClient({ env: ENV, doubles: doubles(api.fetch) });
+    expect(await client.getPhase('http_ratelimit')).toBeNull();
   });
 });

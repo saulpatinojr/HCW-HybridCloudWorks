@@ -1,6 +1,6 @@
 /**
- * The API rate limit check (#1909): the one verdict the Health probe and the
- * Cloudflare Overview share, for each state.
+ * The API rate limit check (#1909, #1918): the server's verdict, which the Health probe
+ * and the Cloudflare Overview both show, and the browser-only failures.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,51 +11,68 @@ vi.mock('@/lib/api', () => ({
   sendJSON: vi.fn(),
 }));
 
-const { NO_RULE_ON, checkRateLimit, rateLimitFailure, rateLimitVerdict } =
+const { NOT_UPDATED, checkRateLimit, rateLimitFailure, rateLimitVerdict } =
   await import('./rateLimitCheck');
 
 const PHASE_ROUTE = 'cms/cloudflare/rulesets/phases/http_ratelimit';
-const rule = (extra = {}) => ({ id: 'r1', expression: 'true', action: 'block', ...extra });
 const refusal = (message, status, code) => Object.assign(new Error(message), { status, code });
+/** The server's verdict, as the phase route answers it (#1918). */
+const ON = { state: 'on', status: 'healthy', count: 1, sentence: '1 API rate limit rule is on.' };
+const OFF = {
+  state: 'off',
+  status: 'degraded',
+  count: 0,
+  sentence:
+    'No API rate limit rule is on. The rate limiting phase (http_ratelimit) has no rules, so one address can send the API as many requests as it likes.',
+};
+const GREY = { state: 'not-updated', status: 'unknown', count: 0, sentence: NOT_UPDATED };
 
 beforeEach(() => getJSON.mockReset());
 
 describe('the rate limit verdict', () => {
-  it('is healthy when a rule is on, naming how many', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: { rules: [rule({ enabled: true })] } });
-    expect(await checkRateLimit()).toEqual({
-      state: 'on',
-      status: 'healthy',
-      count: 1,
-      sentence: '1 API rate limit rule is on.',
-    });
+  it('shows the server’s verdict when a rule is on', async () => {
+    getJSON.mockResolvedValueOnce({ ruleset: { rules: [] }, rateLimit: ON });
+    expect(await checkRateLimit()).toEqual(ON);
     expect(getJSON).toHaveBeenCalledWith(PHASE_ROUTE);
   });
 
-  it('counts a rule with no enabled flag as on, and says when only some are', () => {
-    const answer = { ruleset: { rules: [rule(), rule({ enabled: false }), rule({ id: 'r3' })] } };
-    expect(rateLimitVerdict(answer)).toMatchObject({
-      status: 'healthy',
-      count: 2,
-      sentence: '2 of 3 API rate limit rules are on.',
-    });
+  it('shows the server’s amber verdict when no rule is on', async () => {
+    getJSON.mockResolvedValueOnce({ ruleset: null, version: null, rateLimit: OFF });
+    expect(await checkRateLimit()).toEqual(OFF);
   });
 
-  it('is amber when the phase has no rule set', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: null, version: null });
-    const check = await checkRateLimit();
-    expect(check).toMatchObject({ state: 'off', status: 'degraded', count: 0 });
-    expect(check.sentence).toBe(
-      `${NO_RULE_ON} The rate limiting phase (http_ratelimit) has no rules, so one address can send the API as many requests as it likes.`
-    );
+  it('never judges the rules itself: an answer without a verdict is grey, whatever its rules say', async () => {
+    // A back end older than this page answers the rules and no verdict.
+    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', action: 'block' }] } });
+    expect(await checkRateLimit()).toEqual(GREY);
+    expect(rateLimitVerdict({ ruleset: null })).toEqual(GREY);
+    expect(rateLimitVerdict(undefined)).toEqual(GREY);
+    expect(GREY.sentence).toBe('Not checked: the server has not been updated yet.');
   });
 
-  it('is amber when every rule is switched off, or the rule list is empty', () => {
-    const off = rateLimitVerdict({ ruleset: { rules: [rule({ enabled: false })] } });
-    expect(off).toMatchObject({ state: 'off', status: 'degraded' });
-    expect(off.sentence).toContain('holds one rule, switched off or only logging');
-    expect(rateLimitVerdict({ ruleset: { rules: [] } }).sentence).toContain('has no rules');
-    expect(rateLimitVerdict(undefined).state).toBe('off');
+  it('accepts only known state and status words, paired as the server pairs them', () => {
+    for (const rateLimit of [
+      { ...ON, state: 'maybe' },
+      { ...ON, status: 'critical' },
+      { ...OFF, status: 'healthy' },
+      { ...ON, state: 'constructor' },
+      { ...ON, state: '__proto__' },
+      { ...ON, count: -1 },
+      { ...ON, count: 1.5 },
+      { ...ON, count: '1' },
+      { ...ON, sentence: '' },
+      { ...ON, sentence: 42 },
+      'on',
+      null,
+    ]) {
+      expect(rateLimitVerdict({ rateLimit }), JSON.stringify(rateLimit)).toEqual(GREY);
+    }
+  });
+
+  it('shows the verdict field by field, nothing else it carries, and caps the sentence', () => {
+    const shown = rateLimitVerdict({ rateLimit: { ...ON, extra: 'x', sentence: 'y'.repeat(900) } });
+    expect(Object.keys(shown).sort()).toEqual(['count', 'sentence', 'state', 'status']);
+    expect(shown.sentence).toHaveLength(500);
   });
 
   it('is not checked, with the server’s sentence, while Cloudflare is not set up', async () => {
@@ -106,25 +123,5 @@ describe('the rate limit verdict', () => {
     expect(expired.state).toBe('failed');
     expect(expired.status).not.toBe('unknown');
     expect(expired.sentence).toContain('Your session has expired.');
-  });
-
-  it('counts as on only a rule with no enabled flag or enabled true, as the server guard does', () => {
-    for (const enabled of [null, 0, 'false', 'true', 1]) {
-      expect(rateLimitVerdict({ ruleset: { rules: [rule({ enabled })] } })).toMatchObject({
-        state: 'off',
-        status: 'degraded',
-      });
-    }
-    expect(rateLimitVerdict({ ruleset: { rules: [rule({ enabled: true })] } }).state).toBe('on');
-    expect(rateLimitVerdict({ ruleset: { rules: [rule()] } }).state).toBe('on');
-  });
-
-  it('does not count a rule that only logs, since it limits nothing', () => {
-    const logging = rateLimitVerdict({ ruleset: { rules: [rule({ action: 'log' })] } });
-    expect(logging).toMatchObject({ state: 'off', status: 'degraded' });
-    expect(logging.sentence).toContain('switched off or only logging');
-    expect(
-      rateLimitVerdict({ ruleset: { rules: [rule({ action: 'log' }), rule({ id: 'r2' })] } })
-    ).toMatchObject({ state: 'on', count: 1 });
   });
 });

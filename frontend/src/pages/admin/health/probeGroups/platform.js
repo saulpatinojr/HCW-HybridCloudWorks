@@ -27,6 +27,9 @@ import {
 } from '../probeEvaluators';
 import { runBlob, runUnresolvedSecrets } from '../probeRunners';
 
+/** The daily rate limit check's result stays evidence until two hours after the next run is due (#1918). */
+export const RATE_LIMIT_FRESH_MS = 26 * 60 * 60 * 1000;
+
 /**
  * A probe of this session's identity; its Test re-runs the page's identity
  * check. Its result is evidence for as long as the token it read: about
@@ -137,13 +140,18 @@ export const PLATFORM_PROBES = [
     action: 'Paste a new admin token on Keys, or check it is still limited to the right zone.',
   }),
   // #1909: the API rate limit rule lives only in Cloudflare, so this is what
-  // notices it going. Same verdict as the Cloudflare page's Overview.
+  // notices it going. Same verdict as the Cloudflare page's Overview, and as
+  // the daily checkCloudflareRateLimit timer (#1918), which records its
+  // answer here. A day and two hours of freshness, so the daily answer does
+  // not turn stale minutes before the next run lands; a run missed by more
+  // than that does.
   liveProbe({
     id: 'cloudflare-rate-limit',
     label: 'Cloudflare API rate limit',
     hub: 'platform',
+    freshForMs: RATE_LIMIT_FRESH_MS,
     covers:
-      'Whether the zone’s rate limiting phase (http_ratelimit) has a rule switched on, read through the Cloudflare page’s own route. It changes nothing.',
+      'Whether the zone’s rate limiting phase (http_ratelimit) has a rule switched on, read through the Cloudflare page’s own route and, once the daily check is switched on, by the server every day. It changes nothing.',
     impact:
       'With no rule on, one address can send the API as many requests as it likes. The site keeps running.',
     action:

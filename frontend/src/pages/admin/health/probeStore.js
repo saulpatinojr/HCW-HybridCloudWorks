@@ -16,6 +16,9 @@ import { toSystemStatus } from '@/lib/status';
 export const PROBE_RESULTS_ROUTE = 'cms/health/probe-results';
 export const RESULTS_CACHE_KEY = 'contentforge.health.results.v2';
 
+/** Who checked, as the server presents it: the pulse, a scheduled timer, or else an admin. */
+const CHECKERS = Object.freeze(['pulse', 'timer']);
+
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 const isoOrNull = (value) =>
   typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
@@ -29,7 +32,7 @@ export function normalizeStored(probeId, record) {
     summary: typeof record.summary === 'string' ? record.summary : '',
     detail: typeof record.detail === 'string' && record.detail ? record.detail : undefined,
     checkedAt: isoOrNull(record.checkedAt),
-    checkedBy: record.checkedBy === 'pulse' ? 'pulse' : 'admin',
+    checkedBy: CHECKERS.includes(record.checkedBy) ? record.checkedBy : 'admin',
     durationMs: Number.isFinite(record.durationMs) ? record.durationMs : null,
     statusSince: isoOrNull(record.statusSince),
     previousStatus: record.previousStatus ? toSystemStatus(record.previousStatus).id : null,

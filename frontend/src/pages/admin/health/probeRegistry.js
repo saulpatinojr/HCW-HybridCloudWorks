@@ -117,6 +117,7 @@ export function resolveProbe(probe, ctx, liveResults = {}, stored = {}, now = Da
 /** Who a result came from, as a reader says it. */
 export const checkedByLabel = (r) => {
   if (r?.checkedBy === 'pulse') return 'the pulse';
+  if (r?.checkedBy === 'timer') return 'the scheduled check';
   if (r?.stored) return 'an admin';
   return 'this session';
 };

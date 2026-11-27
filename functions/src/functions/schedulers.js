@@ -357,6 +357,27 @@ timer('labCanary', 'LAB_CANARY', '0 20 */1 * * *', async (context) => {
   return createLabCanary({ store, log: context }).run();
 });
 
+// The API rate limit rule (#1918) lives only in Cloudflare (#1903), so once a
+// day this reads it with the Cloudflare page's own client, records the answer
+// on the Health page's "Cloudflare API rate limit" card, and says on Telegram
+// only when it goes off or unreadable, and once when it is on again
+// (lib/timers/cloudflare-rate-limit.js). 12:40 UTC is 06:40 Central Standard
+// Time (07:40 in summer), so a rule lost overnight is heard of in the morning;
+// forty past keeps clear of the 12:10 Search Console run. Read only on
+// Cloudflare's side. Off until CHECK_CLOUDFLARE_RATE_LIMIT is in enabled_timers.
+timer('checkCloudflareRateLimit', 'CHECK_CLOUDFLARE_RATE_LIMIT', '0 40 12 * * *', async (context) => {
+  const [{ createRateLimitWatch }, { siteZoneClient }] = await Promise.all([
+    import('../lib/timers/cloudflare-rate-limit.js'),
+    import('../lib/cloudflare/handlers.js'),
+  ]);
+  return createRateLimitWatch({
+    store,
+    connect: () => siteZoneClient(),
+    notifier: createNotifier({ store, log: context }),
+    log: context,
+  }).run();
+});
+
 // The admin Search Console page (#1612): what Google knows about each public
 // page, the site's search traffic and the sitemaps, refreshed twice a day.
 // Runs at 00:10 and 12:10 UTC, which is 18:10 and 06:10 Central Standard

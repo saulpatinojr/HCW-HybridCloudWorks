@@ -783,8 +783,11 @@ describe("non-HTTP triggers", () => {
     // BRAIN_ENABLED) is sweepVisitorSessions (visitor-session-sweep.js,
     // #1403), behind FEATURE_FLAG_SWEEP_VISITOR_SESSIONS; the thirtieth is
     // syncSearchConsole (schedulers.js, #1612), behind
-    // FEATURE_FLAG_SYNC_SEARCH_CONSOLE.
-    expect(timerRegistrations.size).toBe(30);
+    // FEATURE_FLAG_SYNC_SEARCH_CONSOLE; the thirty-first is
+    // checkCloudflareRateLimit (schedulers.js, #1918), behind
+    // FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT.
+    expect(timerRegistrations.size).toBe(31);
+    expect(timerRegistrations.has("checkCloudflareRateLimit")).toBe(true);
     expect(timerRegistrations.has("syncSearchConsole")).toBe(true);
     expect(timerRegistrations.has("sweepVisitorSessions")).toBe(true);
     expect(timerRegistrations.has("brainIndexReconcile")).toBe(true);

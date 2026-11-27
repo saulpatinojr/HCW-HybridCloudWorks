@@ -365,7 +365,7 @@ const KEY_VAULT_METADATA = Object.freeze({
   "CLOUDFLARE-ADMIN-TOKEN": {
     issuer: "Cloudflare account API tokens",
     consumer:
-      "The Cloudflare page and Claude Network Guy: read and change the settings, DNS records, rules and cache of the site's zone and the lab zone",
+      "The Cloudflare page and Claude Network Guy: read and change the settings, DNS records, rules and cache of the site's zone and the lab zone; and the daily rate limit check (checkCloudflareRateLimit, #1918), which only reads the site zone's rate limiting rules",
     lifetimeDays: CLOUDFLARE_ADMIN_TOKEN_DAYS,
     rotate:
       "Make a new account-owned token for the site's zone and the lab zone (Manage Account → API Tokens in the Cloudflare dashboard, same permissions and the same two zones, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",

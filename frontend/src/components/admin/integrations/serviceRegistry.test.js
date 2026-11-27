@@ -103,7 +103,7 @@ describe('the service registry', () => {
       ['TURNSTILE-SECRET-KEY'],
     ]);
     expect(card.keyGroups[0].title).toBe(
-      'Admin token (the Cloudflare page and Claude Network Guy use it)'
+      'Admin token (the Cloudflare page, Claude Network Guy and the daily rate limit check use it)'
     );
     expect(card.testedSecrets).toEqual(['CLOUDFLARE-ADMIN-TOKEN']);
     expect(typeof card.test).toBe('function');

@@ -1798,6 +1798,7 @@ locals {
     ambassadorAudienceMonthly   = { period = "1d", anchor = "2026-01-01 06:45" }  # 0 45 6 * * *
     buildWeeklyNewsletter       = { period = "7d", anchor = "2026-01-05 13:00" }  # 0 0 13 * * 1
     checkAgentHealth            = { period = "5m", anchor = "2026-01-01 00:00" }  # 0 */5 * * * *
+    checkCloudflareRateLimit    = { period = "1d", anchor = "2026-01-01 12:40" }  # 0 40 12 * * *
     checkLiveLinks              = { period = "7d", anchor = "2026-01-05 06:00" }  # 0 0 6 * * 1
     cleanupRejectedContent      = { period = "1d", anchor = "2026-01-01 04:00" }  # 0 0 4 * * *
     cleanupSoftDeletedContent   = { period = "4h", anchor = "2026-01-01 00:00" }  # 0 0 */4 * * *

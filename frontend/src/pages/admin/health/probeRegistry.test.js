@@ -42,7 +42,9 @@ import {
   runNewsletterBuild,
   runUnresolvedSecrets,
   safeProbes,
+  checkedByLabel,
 } from './probeRegistry';
+import { normalizeStored } from './probeStore';
 
 const byId = (id) => PROBES.find((probe) => probe.id === id);
 
@@ -582,7 +584,15 @@ describe('the Cloudflare API rate limit probe (#1909)', () => {
   });
 
   it('is healthy when a rule is on, naming how many', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: true }] } });
+    getJSON.mockResolvedValueOnce({
+      ruleset: { rules: [{ id: 'r1', enabled: true }] },
+      rateLimit: {
+        state: 'on',
+        status: 'healthy',
+        count: 1,
+        sentence: '1 API rate limit rule is on.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'healthy',
       summary: '1 API rate limit rule is on.',
@@ -591,12 +601,30 @@ describe('the Cloudflare API rate limit probe (#1909)', () => {
   });
 
   it('is degraded (amber) when no rule is set, or none is on', async () => {
-    getJSON.mockResolvedValueOnce({ ruleset: null });
+    getJSON.mockResolvedValueOnce({
+      ruleset: null,
+      rateLimit: {
+        state: 'off',
+        status: 'degraded',
+        count: 0,
+        sentence:
+          'No API rate limit rule is on. The rate limiting phase (http_ratelimit) has no rules, so one address can send the API as many requests as it likes.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'degraded',
       summary: expect.stringMatching(/^No API rate limit rule is on\. .*has no rules/),
     });
-    getJSON.mockResolvedValueOnce({ ruleset: { rules: [{ id: 'r1', enabled: false }] } });
+    getJSON.mockResolvedValueOnce({
+      ruleset: { rules: [{ id: 'r1', enabled: false }] },
+      rateLimit: {
+        state: 'off',
+        status: 'degraded',
+        count: 0,
+        sentence:
+          'No API rate limit rule is on. The rate limiting phase (http_ratelimit) holds one rule, switched off or only logging, so one address can send the API as many requests as it likes.',
+      },
+    });
     expect(await probe().run()).toMatchObject({
       status: 'degraded',
       summary: expect.stringContaining('switched off'),
@@ -626,5 +654,47 @@ describe('the Cloudflare API rate limit probe (#1909)', () => {
     });
     getJSON.mockRejectedValueOnce(new Error('Failed to fetch'));
     expect((await probe().run()).status).toBe('offline');
+  });
+  it('shows the daily check’s stored answer as the scheduled check’s, fresh until two hours past the next run (#1918)', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const checkedAt = '2026-11-27T12:40:00.000Z';
+    const stored = normalizeStored('cloudflare-rate-limit', {
+      status: 'degraded',
+      summary: 'No API rate limit rule is on.',
+      checkedAt,
+      checkedBy: 'timer',
+      statusSince: '2026-11-26T12:40:00.000Z',
+    });
+    expect(stored.checkedBy).toBe('timer');
+    expect(checkedByLabel(stored)).toBe('the scheduled check');
+    const at = (ms) => Date.parse(checkedAt) + ms;
+    const ctx = {};
+    const justBeforeNextRun = resolveProbe(
+      probe(),
+      ctx,
+      {},
+      { 'cloudflare-rate-limit': stored },
+      at(DAY + 60_000)
+    );
+    expect(justBeforeNextRun).toMatchObject({
+      status: 'degraded',
+      statusSince: '2026-11-26T12:40:00.000Z',
+    });
+    expect(justBeforeNextRun.stale).toBeFalsy();
+    const missedRun = resolveProbe(
+      probe(),
+      ctx,
+      {},
+      { 'cloudflare-rate-limit': stored },
+      at(DAY + 3 * 60 * 60 * 1000)
+    );
+    expect(missedRun).toMatchObject({ status: 'unknown', stale: true });
+  });
+
+  it('never shows a stored checker it does not know by its own name', () => {
+    expect(
+      normalizeStored('x', { status: 'healthy', checkedBy: 'someone@example.com' }).checkedBy
+    ).toBe('admin');
+    expect(checkedByLabel({ checkedBy: 'admin', stored: true })).toBe('an admin');
   });
 });

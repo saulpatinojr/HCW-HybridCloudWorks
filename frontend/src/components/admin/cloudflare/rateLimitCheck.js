@@ -1,5 +1,5 @@
 /**
- * Is the API rate limit rule on? (#1909)
+ * Is the API rate limit rule on? (#1909, #1918)
  *
  * The rule that stops one address flooding the API lives only in Cloudflare
  * (the `http_ratelimit` rule phase), not in Terraform, so nothing else would
@@ -7,13 +7,20 @@
  * `cloudflare-rate-limit` probe and the Cloudflare page's Overview both ask
  * this module, so the two always give the same answer.
  *
- * It reads the phase through the Cloudflare page's own route (editor role,
- * changes nothing) and turns the answer into one of four states, each with a
- * status from lib/status.js and a sentence:
+ * The browser does not judge the rules. The server does, with the one rule
+ * the daily checkCloudflareRateLimit timer also uses
+ * (functions/src/lib/cloudflare/rate-limit.js), and the phase route adds its
+ * verdict to the answer as `rateLimit`. This module shows that verdict, after
+ * checking that its words are ones the page knows. An answer without it comes
+ * from a back end older than this page (the functions are deployed by hand,
+ * after the site), so the probe says so and stays grey: it never works the
+ * answer out itself, or there would be two rules again.
  *
  *   on              at least one rule is switched on          healthy
  *   off             no rule set, or every rule switched off   degraded (amber)
+ *   not-updated     the server's answer has no verdict yet    unknown (not checked)
  *   not-configured  the token or zone id is not set yet       unknown (not checked)
+ *   not-allowed     a viewer: reading the rules needs editor  unknown (not checked)
  *   failed          the read itself failed                    critical or offline
  */
 import { NOT_CONFIGURED, readCloudflarePhase } from '@/lib/cloudflare';
@@ -25,45 +32,42 @@ export const RATE_LIMIT_PHASE = 'http_ratelimit';
 export const RATE_LIMIT_RUNBOOK_URL =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md#part-4-making-the-api-rate-limit-rule';
 
-export const NO_RULE_ON = 'No API rate limit rule is on.';
+export const NOT_UPDATED = 'Not checked: the server has not been updated yet.';
 
-const rulesWord = (n) => `${n} API rate limit rule${n === 1 ? '' : 's'}`;
-const isVerb = (n) => (n === 1 ? 'is' : 'are');
+/** The states the server may answer, each with the one status it goes with. */
+const KNOWN = Object.freeze({ on: 'healthy', off: 'degraded' });
 
-/**
- * A rule that limits. On means what the server's agent guard means
- * (rules-guards.js): no `enabled` flag (Cloudflare's default) or `true`; any
- * other value (false, null, 0, the text 'false') counts as off, so an odd
- * answer fails safe. A rule whose action is `log` (paid plans only) records
- * requests without limiting any, so it does not count either.
- */
-const isOn = (rule) =>
-  Boolean(rule) &&
-  typeof rule === 'object' &&
-  (rule.enabled === undefined || rule.enabled === true) &&
-  String(rule.action ?? '').toLowerCase() !== 'log';
+const MAX_SENTENCE = 500;
 
-function onSentence(on, total) {
-  if (on === total) return `${rulesWord(on)} ${isVerb(on)} on.`;
-  return `${on} of ${rulesWord(total)} ${isVerb(on)} on.`;
-}
+/** Not checked, grey: the answer has no verdict this page can show. */
+const notUpdated = () => ({
+  state: 'not-updated',
+  status: 'unknown',
+  count: 0,
+  sentence: NOT_UPDATED,
+});
 
-function offSentence(total) {
-  const why =
-    total === 0
-      ? `The rate limiting phase (${RATE_LIMIT_PHASE}) has no rules`
-      : `The rate limiting phase (${RATE_LIMIT_PHASE}) holds ${total === 1 ? 'one rule' : `${total} rules`}, switched off or only logging`;
-  return `${NO_RULE_ON} ${why}, so one address can send the API as many requests as it likes.`;
-}
+/** A verdict the page can show as it is: a known state with its status, a count and a sentence. */
+const SHOWABLE_CHECKS = [
+  (verdict) => Object.hasOwn(KNOWN, verdict.state) && KNOWN[verdict.state] === verdict.status,
+  (verdict) => Number.isSafeInteger(verdict.count) && verdict.count >= 0,
+  (verdict) => typeof verdict.sentence === 'string' && verdict.sentence.trim() !== '',
+];
+const isShowable = (verdict) =>
+  Boolean(verdict) &&
+  typeof verdict === 'object' &&
+  SHOWABLE_CHECKS.every((check) => check(verdict));
 
-/** The verdict on a phase read that answered: `{ ruleset }` from GET …/phases/http_ratelimit. */
+/** The verdict on a phase read that answered: the server's `rateLimit`, field by field, or "not updated". */
 export function rateLimitVerdict(answer) {
-  const rules = Array.isArray(answer?.ruleset?.rules) ? answer.ruleset.rules : [];
-  const on = rules.filter(isOn).length;
-  if (on > 0) {
-    return { state: 'on', status: 'healthy', count: on, sentence: onSentence(on, rules.length) };
-  }
-  return { state: 'off', status: 'degraded', count: 0, sentence: offSentence(rules.length) };
+  const verdict = answer?.rateLimit;
+  if (!isShowable(verdict)) return notUpdated();
+  return {
+    state: verdict.state,
+    status: verdict.status,
+    count: verdict.count,
+    sentence: verdict.sentence.slice(0, MAX_SENTENCE),
+  };
 }
 
 /** The verdict on a phase read that failed: not set up yet, or a real failure. */

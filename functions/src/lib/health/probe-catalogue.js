@@ -93,7 +93,8 @@ export const HEALTH_PROBES = Object.freeze({
   // #1905: the Cloudflare admin token reads the zone (connection-probe.js `cloudflare`).
   cloudflare: probe("live", "editor"),
   // #1909: the API rate limit rule is on, read in a browser through the
-  // Cloudflare page's own phase route (editor), which changes nothing.
+  // Cloudflare page's own phase route (editor), which changes nothing; and
+  // daily by the checkCloudflareRateLimit timer (#1918), which records here.
   "cloudflare-rate-limit": probe("live", "editor"),
   "cloud-pricing": probe("live", "viewer"),
   "identity-token": probe("session", "viewer"),

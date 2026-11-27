@@ -295,6 +295,12 @@ describe('the Overview’s API rate limit line (#1909)', () => {
   it('is green when a rule is on, naming how many, and links the Rules tab', async () => {
     api.readCloudflarePhase.mockResolvedValue({
       ruleset: { rules: [{ id: 'r1', enabled: true }] },
+      rateLimit: {
+        state: 'on',
+        status: 'healthy',
+        count: 1,
+        sentence: '1 API rate limit rule is on.',
+      },
     });
     const line = await rateLimitLine();
     expect(api.readCloudflarePhase).toHaveBeenCalledWith('http_ratelimit');
@@ -308,7 +314,17 @@ describe('the Overview’s API rate limit line (#1909)', () => {
   });
 
   it('is amber when no rule is on, and links Part 4 of the runbook', async () => {
-    api.readCloudflarePhase.mockResolvedValue({ ruleset: null, version: null });
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: null,
+      version: null,
+      rateLimit: {
+        state: 'off',
+        status: 'degraded',
+        count: 0,
+        sentence:
+          'No API rate limit rule is on. The rate limiting phase (http_ratelimit) has no rules.',
+      },
+    });
     const line = await rateLimitLine();
     expect(line).toHaveTextContent('No API rate limit rule is on.');
     expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'degraded');
@@ -318,6 +334,16 @@ describe('the Overview’s API rate limit line (#1909)', () => {
       'href',
       'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md#part-4-making-the-api-rate-limit-rule'
     );
+  });
+
+  it('is grey, never worked out in the browser, when the server answers no verdict (#1918)', async () => {
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { rules: [{ id: 'r1', enabled: true }] },
+    });
+    const line = await rateLimitLine();
+    expect(line).toHaveTextContent('Not checked: the server has not been updated yet.');
+    expect(line.querySelector('[data-status]')).toHaveAttribute('data-status', 'unknown');
+    expect(within(line).queryByRole('link', { name: /Part 4/ })).toBeNull();
   });
 
   it('says it was not checked, with the server’s sentence, when the phase read is not set up', async () => {

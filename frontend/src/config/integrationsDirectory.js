@@ -258,7 +258,7 @@ export const DIRECTORY = Object.freeze([
     summary:
       'The network in front of the site: its DNS, its cache, its rules, and a human check for forms.',
     powers:
-      'Every visit to the site and its addresses; the Cloudflare page and Claude Network Guy, which administer the zone; the origin check on public forms; the human check on the lab; and the monthly page-view count.',
+      'Every visit to the site and its addresses; the Cloudflare page and Claude Network Guy, which administer the zone; the daily check that the API rate limit rule is on; the origin check on public forms; the human check on the lab; and the monthly page-view count.',
     docsUrl: 'https://developers.cloudflare.com/api/',
   },
   {

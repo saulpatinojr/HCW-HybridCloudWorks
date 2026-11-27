@@ -88,6 +88,7 @@ export const SOURCE_DISPLAY_NAMES = Object.freeze({
   content_archive_late: 'the yearly content archive',
   content_archive_waiting: 'the yearly content archive',
   content_archive_blocked: 'the yearly content archive',
+  'cloudflare-rate-limit': 'the daily Cloudflare rate limit check',
 });
 
 export function formatTelegramText({ title, message, severity, source }) {

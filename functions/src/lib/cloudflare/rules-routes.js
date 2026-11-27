@@ -44,6 +44,7 @@
  * time.
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
+import { RATE_LIMIT_PHASE, rateLimitVerdict } from './rate-limit.js';
 import { recordChange, requireOurZone } from './record.js';
 import {
   AGENT_DISABLE_MESSAGE,
@@ -128,6 +129,15 @@ function phaseOf(request) {
 }
 
 /** GET cms/cloudflare/rulesets/phases/{phase}. */
+/**
+ * For the rate limiting phase only, the verdict on it (#1918): whether a rule
+ * is on, in the words the Health card and the Overview show. It is worked out
+ * here, from the rules as Cloudflare answered them, by the same rule the daily
+ * check uses (rate-limit.js), so the browser never judges the rules itself.
+ */
+const verdictOf = (phase, ruleset) =>
+  phase === RATE_LIMIT_PHASE ? { rateLimit: rateLimitVerdict({ ruleset }) } : {};
+
 export async function getPhase({ request, client, zone }) {
   const phase = phaseOf(request);
   const ruleset = await client.getPhase(phase);
@@ -139,6 +149,7 @@ export async function getPhase({ request, client, zone }) {
     editable: isEditablePhase(phase),
     locked: lockedReason !== null,
     lockedReason,
+    ...verdictOf(phase, ruleset),
   });
 }
 
