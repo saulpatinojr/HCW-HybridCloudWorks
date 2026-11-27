@@ -103,6 +103,20 @@
  * `before`). Both are scoped to one exact address and path, and the report
  * prints the stand-in, never the value.
  *
+ * Declarations that make up one run's change can share a `step` (#1929),
+ * such as `"#1929 step 1"` on www's proxied, ttl and modified_on. They then
+ * stand or fall together: a plan that carries some of a step's changes and
+ * not the others is UNEXPECTED, naming each one it lacks, where without
+ * `step` the missing one would only be a NOTE. A step is in the plan only
+ * when one of its declared values matched: a `KNOWN_AFTER_APPLY` entry
+ * matches any unknown value at its path, so it never counts on its own, and
+ * two steps on one record (forward and back) can both be declared. A step
+ * that is not in the plan prints as NOTEs, as it does once it has applied.
+ * Every declaration that covers a difference is credited, not only the first.
+ * A `KNOWN_AFTER_APPLY` entry with a `step` covers its difference only while
+ * its step is in the plan: a lone unknown `modified_on` is UNEXPECTED, as it
+ * is with nothing declared. One without a `step` covers it as before.
+ *
  * `tfc-plan-check.yml` reads the declarations on the ref it was dispatched
  * from (normally `main`), not those at the commit the run was planned for.
  *
@@ -142,9 +156,11 @@ import {
   sideEffects,
 } from "./lib/plan-actions.mjs";
 import {
+  coverDifference,
   declarationLines,
   findDeclaredAction,
-  matchesDeclaration,
+  KNOWN_AFTER_APPLY,
+  settleSteps,
 } from "./lib/plan-declarations.mjs";
 import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
 import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
@@ -542,7 +558,83 @@ export const DECLARED = [
   // were deleted here with the lookup and the import blocks in
   // infra/frontend.tf (#1937). A plan that changes either record now, a
   // proxied or ttl change before the owner sets site_proxied_hosts above
-  // all, is UNEXPECTED and is read.
+  // all, is UNEXPECTED and is read, except www's two steps declared just below.
+  //
+  // #1929 step 1 (Part 3, step 1 of docs/runbooks/proxy-site-hosts.md): the
+  // owner sets site_proxied_hosts from "none" to "www", and the run changes
+  // cloudflare_dns_record.site_www in place and nothing else:
+  //   - proxied false -> true (local.site_www_proxied in infra/frontend.tf);
+  //   - ttl 60 -> 1, because ttl follows the switch (`site_www_proxied ? 1 :
+  //     60`), and a proxied record takes only 1, "automatic";
+  //   - modified_on known after apply. Read from the provider's source
+  //     (5.29.0, internal/services/dns_record/custom.go, ModifyPlan): a
+  //     changed proxied or ttl leaves modified_on unknown. created_on and id
+  //     keep their state values (plan modifiers in schema.go), so do
+  //     proxiable, meta, settings and tags (ModifyPlan copies them),
+  //     comment_modified_on keeps its own because the comment does not
+  //     change, and tags_modified_on is set to null because there are no
+  //     tags, as it already is in state.
+  // "#1929 step 1 back" is the same run the other way (www back to "none":
+  // Part 3, step 2's test, or any rollback of www): proxied true -> false,
+  // ttl 1 -> 60 and modified_on, read from the same source.
+  // The apex is declared nothing: neither value proxies it, and its ttl is 1
+  // either way, so any apex change in either run is UNEXPECTED.
+  // Each step's three share a `step`, so a plan that proxies www and leaves
+  // its ttl at 60 (or changes ttl alone) names the missing one instead of
+  // passing. modified_on alone never counts as either step, because any
+  // change to the record leaves it unknown.
+  // Both steps stay here, so either direction checks clean, for as long as
+  // www is proxied: a rollback, or the certificate procedure in the
+  // runbook's "Going back", may set www back to "none" at any time, step 4
+  // included. The pull request for step 4 (www to "both", the apex) adds the
+  // apex's two steps beside these. These two are deleted only when the site
+  // goes back to "none" for good. The runbook's table says the same.
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "proxied",
+    step: "#1929 step 1",
+    before: false,
+    after: true,
+    reason: "#1929 step 1: site_proxied_hosts none -> www puts www behind Cloudflare's proxy",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "ttl",
+    step: "#1929 step 1",
+    before: 60,
+    after: 1,
+    reason: "#1929 step 1: a proxied record's ttl is 1 (automatic), from the switch in infra/frontend.tf",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "modified_on",
+    step: "#1929 step 1",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 1: the record's modified_on, set by Cloudflare when proxied and ttl change",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "proxied",
+    step: "#1929 step 1 back",
+    before: true,
+    after: false,
+    reason: "#1929 step 1 back: site_proxied_hosts www -> none takes www off Cloudflare's proxy again",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "ttl",
+    step: "#1929 step 1 back",
+    before: 1,
+    after: 60,
+    reason: "#1929 step 1 back: a DNS-only www goes back to ttl 60, from the switch in infra/frontend.tf",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "modified_on",
+    step: "#1929 step 1 back",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 1 back: the record's modified_on, set by Cloudflare when proxied and ttl change",
+  },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
   // because this file cannot read what has applied. Live "false" on
@@ -703,7 +795,7 @@ function toleratedPaths() {
  * The UNEXPECTED lines for one update (#719): every difference that is
  * neither tolerated nor declared.
  */
-function checkUpdate(change, { tolerated, declared, matched, secrets }) {
+function checkUpdate(change, { tolerated, declared, matched, pending, secrets }) {
   const address = change.address;
   const absent = MARKERS.filter((key) => !Object.hasOwn(change.change, key));
   if (absent.length > 0) {
@@ -724,14 +816,10 @@ function checkUpdate(change, { tolerated, declared, matched, secrets }) {
   const lines = [];
   for (const difference of differences) {
     if (tolerated.get(address)?.has(difference.path)) continue;
-    const declaration = declared.find((d) =>
-      matchesDeclaration(d, address, difference),
-    );
-    if (declaration) matched.add(declaration);
-    else
-      lines.push(
-        `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`,
-      );
+    // Which declarations cover it, and whether that can be told yet, is
+    // lib/plan-declarations.mjs's (#1929); an uncovered difference is named.
+    const line = `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`;
+    if (!coverDifference({ declared, matched, pending }, address, difference, line)) lines.push(line);
   }
   return lines;
 }
@@ -802,6 +890,7 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
     tolerated: toleratedPaths(),
     declared,
     matched,
+    pending: [],
     secrets: secretsOf(plan),
   };
 
@@ -830,12 +919,17 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   // stands between the app and a connection string it must not have (T-511).
   const missing = [...expectedReplaced].filter((address) => !seen.has(address));
 
+  // A step's declarations stand or fall together (#1929); settleSteps in
+  // lib/plan-declarations.mjs says what that adds to the report.
+  const steps = settleSteps(declared, matched, context.pending);
+  unexpected.push(...steps.unexpected);
+
   return {
     ok: unexpected.length === 0 && missing.length === 0,
     unexpected,
     missing,
-    declared: declared.filter((d) => matched.has(d)),
-    unused: declared.filter((d) => !matched.has(d)),
+    declared: steps.credited,
+    unused: steps.unused,
   };
 }
 
