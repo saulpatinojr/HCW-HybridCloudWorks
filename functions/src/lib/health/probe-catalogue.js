@@ -92,6 +92,10 @@ export const HEALTH_PROBES = Object.freeze({
   qlty: probe("live", "editor"),
   // #1905: the Cloudflare admin token reads the zone (connection-probe.js `cloudflare`).
   cloudflare: probe("live", "editor"),
+  // #1909: the site zone's API rate limit rule is there and switched on, read
+  // from the Cloudflare page's status route (cloudflare/rate-limit.js), which
+  // needs editor.
+  "cloudflare-rate-limit": probe("live", "editor"),
   "cloud-pricing": probe("live", "viewer"),
   "identity-token": probe("session", "viewer"),
   "admin-registry": probe("session", "viewer"),

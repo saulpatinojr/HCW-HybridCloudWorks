@@ -19,7 +19,9 @@ import {
   evaluateRuntimeConfig,
   evaluateStorage,
 } from '../probeEvaluators';
-import { runBlob, runUnresolvedSecrets } from '../probeRunners';
+import { runBlob, runCloudflareRateLimit, runUnresolvedSecrets } from '../probeRunners';
+import { tabHref } from '@/components/admin/cloudflare/tabs';
+import { navItemById } from '@/config/adminNav';
 
 /**
  * A probe of this session's identity; its Test re-runs the page's identity
@@ -129,6 +131,22 @@ export const PLATFORM_PROBES = [
     impact:
       'The Cloudflare page and Claude Network Guy cannot read or change the zone. The site itself keeps running: visitors do not go through this token.',
     action: 'Paste a new admin token on Keys, or check it is still limited to the right zone.',
+  }),
+  // The API rate limit rule (#1909): since #1903 it lives only in Cloudflare,
+  // so no Terraform plan shows it missing. A read of one rule phase through
+  // the Cloudflare page's status route, which changes nothing and costs nothing.
+  liveProbe({
+    id: 'cloudflare-rate-limit',
+    label: 'API rate limit',
+    hub: 'platform',
+    covers:
+      'Whether the site zone’s http_ratelimit phase in Cloudflare holds at least one rule that is switched on. Only the state and the count are read here, never the rule.',
+    impact:
+      'Without the rule, one address can send the site’s API as many requests as it likes, and nothing else notices.',
+    action:
+      'Make the rule, or switch it back on, on the Rules tab of the Cloudflare page (or ask Claude Network Guy), with the values in part 4 of the Cloudflare admin runbook.',
+    href: { to: tabHref('rules'), label: navItemById('cloudflare').label },
+    run: runCloudflareRateLimit,
   }),
   fromService('cloud-pricing', {
     hub: 'platform',

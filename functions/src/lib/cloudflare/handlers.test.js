@@ -24,6 +24,7 @@ import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES, forgetZoneIds, zoneUnreachableMessa
 import { EDITABLE_PHASES, LAB_ZONE, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE, wrongZoneMessage } from './record.js';
 import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE, concurrentWriteNote } from './rules-routes.js';
+import { RATE_LIMIT_PHASE, RATE_LIMIT_STATES } from './rate-limit.js';
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
@@ -218,6 +219,71 @@ describe('the status route', () => {
     expect(res.body.zoneError).toMatch(/refused the token .*HTTP 403.*9109/);
     expect(JSON.stringify(res.body)).not.toMatch(/far-end words/);
     expect(JSON.stringify(res.body)).not.toContain(TOKEN);
+  });
+});
+
+describe('the API rate limit on the status route (#1909)', () => {
+  const RATE_PATH = `${PHASES}/${RATE_LIMIT_PHASE}/entrypoint`;
+  const LIMIT = { id: 'r1', expression: '(http.request.uri.path contains "/api/")', action: 'block', ratelimit: { period: 10, requests_per_period: 200 } };
+  const phaseWith = (rules) => ({ [`GET ${RATE_PATH}`]: ok({ id: 'rs1', phase: RATE_LIMIT_PHASE, version: '3', rules }) });
+  const statusWith = async (routes) => {
+    const { handlers, api, context } = setup({ routes });
+    const res = parse(await handlers.getStatus(request(), context));
+    return { res, api, context };
+  };
+
+  it.each([
+    ['one rule with no enabled field (Cloudflare counts it on)', phaseWith([LIMIT]), { state: 'on', enabled: 1, total: 1 }, /is on: 1 rule switched on/],
+    ['two rules, one switched on', phaseWith([LIMIT, { ...LIMIT, id: 'r2', enabled: false }]), { state: 'on', enabled: 1, total: 2 }, /is on: 1 rule switched on/],
+    ['a phase with no entry point yet (404)', {}, { state: 'empty', enabled: 0, total: 0 }, /missing: .*holds no rule.*part 4 of the Cloudflare admin runbook/],
+    ['an entry point with no rules', phaseWith([]), { state: 'empty', enabled: 0, total: 0 }, /missing: .*part 4/],
+    ['every rule switched off', phaseWith([{ ...LIMIT, enabled: false }]), { state: 'off', enabled: 0, total: 1 }, /switched off: .*holds 1 rule and none is switched on.*part 4/],
+  ])('says %s', async (label, routes, counts, sentence) => {
+    const { res, api } = await statusWith(routes);
+    expect(res.status).toBe(200);
+    expect(res.body.rateLimit).toMatchObject(counts);
+    expect(res.body.rateLimit.message).toMatch(sentence);
+    expect(methods(api)).toContain(`GET /rulesets/phases/${RATE_LIMIT_PHASE}/entrypoint`);
+    // The state and the counts only: never the rule, its expression or its limits.
+    expect(Object.keys(res.body.rateLimit).sort()).toEqual(['enabled', 'message', 'state', 'total']);
+    expect(JSON.stringify(res.body)).not.toMatch(/uri\.path|requests_per_period|"r1"/);
+  });
+
+  it.each([
+    ['refused', reply(403, { success: false, errors: [{ code: 10000, message: `far-end words ${TOKEN}` }] }), /refused the admin token .*Zone WAF/],
+    ['refused', reply(401, { success: false, errors: [] }), /refused the admin token/],
+    ['unreachable', reply(500, { success: false, errors: [{ code: 10001, message: 'far-end words' }] }), /did not answer .*Try again in a minute/],
+    ['unreachable', reply(429, {}), /did not answer/],
+  ])('says %s, in its own words, when Cloudflare answers that', async (state, answer, sentence) => {
+    const { res, context } = await statusWith({ [`GET ${RATE_PATH}`]: answer });
+    expect(res.status).toBe(200);
+    expect(res.body.rateLimit).toEqual({ state, enabled: null, total: null, message: expect.stringMatching(sentence) });
+    expect(JSON.stringify(res.body)).not.toMatch(/far-end words/);
+    expect(JSON.stringify(res.body)).not.toContain(TOKEN);
+    expect(logs(context)).not.toContain(TOKEN);
+  });
+
+  it('says unreachable when Cloudflare cannot be reached at all', async () => {
+    const { res } = await statusWith({
+      [`GET ${RATE_PATH}`]: () => {
+        throw new Error(`socket hang up at ${CLOUDFLARE_API_BASE}`);
+      },
+    });
+    expect(res.body.rateLimit.state).toBe('unreachable');
+    expect(JSON.stringify(res.body)).not.toMatch(/socket hang up/);
+  });
+
+  it('is null, with nothing read, while the token or the zone id is not set', async () => {
+    for (const env of [{}, { CF_ZONE_ID: ZONE }, { CLOUDFLARE_ADMIN_TOKEN: TOKEN }]) {
+      const { handlers, api } = setup({ env });
+      const res = parse(await handlers.getStatus(request(), {}));
+      expect(res.body).toMatchObject({ configured: false, rateLimit: null });
+      expect(api.fetch).not.toHaveBeenCalled();
+    }
+  });
+
+  it('has one sentence for every state it can answer', () => {
+    expect(RATE_LIMIT_STATES).toEqual(['on', 'empty', 'off', 'refused', 'unreachable']);
   });
 });
 

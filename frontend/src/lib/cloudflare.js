@@ -5,8 +5,10 @@
  * delete: the API has no delete route.
  *
  *   readCloudflareStatus()               GET   whether it is set up, the zone,
- *                                              what the token can read, and
- *                                              what is locked              editor
+ *                                              what the token can read,
+ *                                              whether the API rate limit
+ *                                              is on (#1909), and what is
+ *                                              locked                      editor
  *   readCloudflareSettings()             GET   every zone setting          editor
  *   saveCloudflareSetting(id, value)     PATCH one zone setting           super_admin
  *   purgeCloudflareCache(request)        POST  everything, or 1–30 URLs   super_admin

@@ -95,7 +95,8 @@ const FUNCTION_TIMEOUT_MS = {
   'cms/community-days/refresh': 60000,
   // The Cloudflare page (#1905). Each call the server makes to Cloudflare
   // may take up to 15 s (functions/src/lib/cloudflare/client.js). The status
-  // reads the zone and then four reads side by side (about 30 s at worst);
+  // reads the zone and then five reads side by side, the rate limit phase
+  // among them (#1909; about 30 s at worst);
   // a purge reads the zone and then purges. Adding a DNS record shares its
   // route with the list, which reads the zone's records a page at a time.
   // None of these is retried: a write sent twice would change twice.

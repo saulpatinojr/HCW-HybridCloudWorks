@@ -13,7 +13,7 @@
  * An agent key reaches these routes only through its own Cloudflare switches
  * (agent-content/admin-access.js, POLICY). There is no delete route at all.
  *
- *   GET   cms/cloudflare/status                  is it set up; the zone and its role; what the token can read; what is protected
+ *   GET   cms/cloudflare/status                  is it set up; the zone and its role; what the token can read; whether the API rate limit is on; what is protected
  *   GET   cms/cloudflare/settings                every zone setting
  *   PATCH cms/cloudflare/settings/{settingId}    { value }
  *   POST  cms/cloudflare/purge                   { everything: true } or { files: [url, ...] }

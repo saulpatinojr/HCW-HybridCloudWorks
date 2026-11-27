@@ -274,6 +274,64 @@ describe('the Cloudflare page', () => {
     expect(screen.getByText(/No DNS record or ruleset can be deleted/)).toBeInTheDocument();
   });
 
+  describe('the API rate limit line (#1909)', () => {
+    const ON = 'The API rate limit is on: 1 rule switched on in the http_ratelimit phase.';
+    const OFF =
+      'The API rate limit is switched off: the http_ratelimit phase holds 1 rule and none is switched on.';
+
+    it('says the rule is on, with no fix to make', async () => {
+      api.readCloudflareStatus.mockResolvedValue({
+        ...STATUS,
+        rateLimit: { state: 'on', enabled: 1, total: 1, message: ON },
+      });
+      renderAt();
+      expect(await screen.findByTestId('rate-limit')).toHaveTextContent(ON);
+      expect(screen.queryByTestId('rate-limit-fix')).toBeNull();
+    });
+
+    it('says the rule is off, and links the Rules tab and the runbook part that makes it', async () => {
+      api.readCloudflareStatus.mockResolvedValue({
+        ...STATUS,
+        rateLimit: { state: 'off', enabled: 0, total: 1, message: OFF },
+      });
+      renderAt();
+      expect(await screen.findByTestId('rate-limit')).toHaveTextContent(OFF);
+      const fix = screen.getByTestId('rate-limit-fix');
+      expect(within(fix).getByRole('link', { name: 'Rules tab' })).toHaveAttribute(
+        'href',
+        '/admin/cloudflare?tab=rules'
+      );
+      expect(
+        within(fix).getByRole('link', { name: /part 4 of the Cloudflare admin runbook/ })
+      ).toHaveAttribute(
+        'href',
+        expect.stringMatching(/cloudflare-admin\.md#part-4-making-the-api-rate-limit-rule$/)
+      );
+    });
+
+    it('says "not checked" while Cloudflare is not set up', async () => {
+      api.readCloudflareStatus.mockResolvedValue({
+        configured: false,
+        missing: ['token'],
+        message: 'Cloudflare is not set up yet: the token is missing.',
+        zone: null,
+        families: [],
+        rateLimit: null,
+        protected: { dnsNames: [], phases: [] },
+      });
+      renderAt();
+      expect(await screen.findByTestId('rate-limit')).toHaveTextContent(
+        'Not checked. Cloudflare is not set up yet: the token is missing.'
+      );
+    });
+
+    it('shows no line when the answer carries none', async () => {
+      renderAt();
+      await screen.findByText('Free Website');
+      expect(screen.queryByTestId('rate-limit')).toBeNull();
+    });
+  });
+
   it('lands an old word on its tab', async () => {
     renderAt('/admin/cloudflare?tab=records');
     expect(await screen.findByRole('tab', { selected: true })).toHaveTextContent('DNS');

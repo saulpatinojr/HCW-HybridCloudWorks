@@ -210,6 +210,45 @@ export function familyRows(status) {
   });
 }
 
+// ── The API rate limit (#1909) ───────────────────────────────────────────────
+
+/**
+ * The status tone (lib/status.js) for each state the server reports in the
+ * status answer's `rateLimit` (functions/src/lib/cloudflare/rate-limit.js
+ * RATE_LIMIT_STATES; the mirror test fails when a state has no tone here).
+ * The sentence is the server's, so only the tone lives here: green when a
+ * rule is on, amber when the phase is empty or every rule is off, red when
+ * Cloudflare refused the token, offline when it did not answer.
+ */
+export const RATE_LIMIT_TONES = Object.freeze({
+  on: 'healthy',
+  empty: 'degraded',
+  off: 'degraded',
+  refused: 'critical',
+  unreachable: 'offline',
+});
+
+/**
+ * The rate limit line for a status answer: `{ state, tone, message }`, or
+ * null when the answer carries none (the lab zone, which has no API to
+ * protect, or an older server). While the token or the zone id is not set,
+ * nothing was checked in the site's zone, and the line says so with the
+ * server's own "not set up" sentence.
+ */
+export function rateLimitLine(status) {
+  const siteZone = (status?.managed?.name ?? DEFAULT_ZONE) === DEFAULT_ZONE;
+  if (status?.configured === false && siteZone) {
+    const why = status.message || 'Cloudflare is not set up yet.';
+    return { state: 'not-configured', tone: 'unknown', message: `Not checked. ${why}` };
+  }
+  const found = status?.rateLimit;
+  if (!found || !Object.hasOwn(RATE_LIMIT_TONES, found.state)) return null;
+  return { state: found.state, tone: RATE_LIMIT_TONES[found.state], message: found.message };
+}
+
+/** Whether the line asks the owner to make or switch on the rule (runbook part 4). */
+export const rateLimitNeedsRule = (line) => line?.tone === 'degraded';
+
 // ── Rules ────────────────────────────────────────────────────────────────────
 
 /** Fields Cloudflare writes itself on each rule; the editor leaves them out. */

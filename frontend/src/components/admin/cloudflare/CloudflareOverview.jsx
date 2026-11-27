@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { Link } from 'react-router';
-import { CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Globe, HelpCircle, Lock, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { agentKeyTab } from '@/components/admin/ai-engine/agentKeys';
 import { agentKeyTabHref } from '@/components/admin/agents/tabs';
@@ -19,8 +19,11 @@ import {
   protectedDnsList,
   protectedPhaseList,
   protectedPrefixList,
+  rateLimitLine,
+  rateLimitNeedsRule,
   READ_ONLY_PHASE_REASON,
 } from './cloudflareView';
+import { tabHref } from './tabs';
 import { OWNER_ONLY_SETTINGS } from './cloudflareLocks';
 
 const NETWORK_AGENT = agentKeyTab('claude-network');
@@ -28,6 +31,9 @@ const NETWORK_AGENT = agentKeyTab('claude-network');
 /** The runbook for this page: the token, Claude Network Guy's key, and what is refused. */
 export const CLOUDFLARE_RUNBOOK_URL =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/cloudflare-admin.md';
+
+/** The runbook part that makes the API rate limit rule, and switches it back on. */
+export const RATE_LIMIT_RUNBOOK_URL = `${CLOUDFLARE_RUNBOOK_URL}#part-4-making-the-api-rate-limit-rule`;
 
 /** The runbook for the one Cloudflare value that must change on both sides at once. */
 export const ORIGIN_SECRET_RUNBOOK_URL =
@@ -93,6 +99,60 @@ function NoZone({ zoneError }) {
       <ExternalLink href={CLOUDFLARE_DOCS.permissions}>Cloudflare’s permission list</ExternalLink>
       ).
     </p>
+  );
+}
+
+const RATE_LIMIT_ICONS = {
+  healthy: <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />,
+  degraded: <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />,
+  critical: <XCircle className="h-4 w-4 shrink-0 text-rose-600" aria-hidden="true" />,
+};
+const RateLimitIcon = ({ tone }) =>
+  RATE_LIMIT_ICONS[tone] ?? (
+    <HelpCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+  );
+
+/**
+ * Whether the site zone's API rate limit rule is on (#1909): the server's
+ * sentence, and, when the rule is missing or off, where to make it. Shown
+ * only when the status carries the line (the site's zone).
+ */
+function RateLimitCard({ status }) {
+  const line = rateLimitLine(status);
+  if (!line) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">The API rate limit</CardTitle>
+        <CardDescription>
+          One rule in the <code>http_ratelimit</code> phase stops a single address from flooding the
+          site’s API. Terraform no longer holds it, so this line is what notices if it is deleted or
+          switched off. The Health page shows the same check.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="flex items-start gap-2 text-sm" data-testid="rate-limit">
+          <RateLimitIcon tone={line.tone} />
+          <span>{line.message}</span>
+        </p>
+        {rateLimitNeedsRule(line) && (
+          <p className="mt-2 text-sm text-muted-foreground" data-testid="rate-limit-fix">
+            Make or switch it on from the{' '}
+            <Link
+              to={tabHref('rules')}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Rules tab
+            </Link>{' '}
+            with the values in{' '}
+            <ExternalLink href={RATE_LIMIT_RUNBOOK_URL}>
+              part 4 of the Cloudflare admin runbook
+            </ExternalLink>
+            .
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -292,12 +352,14 @@ export default function CloudflareOverview({ statusRead }) {
       {statusRead.data?.configured === false ? (
         <div className="space-y-6">
           <NotConfigured missing={statusRead.data.missing} message={statusRead.data.message} />
+          <RateLimitCard status={statusRead.data} />
           <LockedCard status={statusRead.data} />
           <WhereCard />
         </div>
       ) : (
         <div className="space-y-6">
           <ZoneCard status={statusRead.data ?? {}} />
+          <RateLimitCard status={statusRead.data ?? {}} />
           <FamiliesCard status={statusRead.data ?? {}} />
           <LockedCard status={statusRead.data ?? {}} />
           <WhereCard />

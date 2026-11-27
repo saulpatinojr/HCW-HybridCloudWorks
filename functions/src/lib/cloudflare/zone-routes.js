@@ -17,6 +17,7 @@ import { Refusal, bad, bodyOf, json, paramOf, refuseUnknownFields } from './inpu
 import { recordChange, requireOurZone } from './record.js';
 import { notConfiguredMessage } from './prerequisites.js';
 import { EDITABLE_PHASES, MANAGED_ZONES, OWNER_ONLY_SETTINGS, SITE_ZONE, managedZone, ownerOnlySettingReason } from './protected.js';
+import { RATE_LIMIT_PHASE, rateLimitFromRuleset, rateLimitUnread } from './rate-limit.js';
 
 export { PREREQUISITES, notConfiguredMessage } from './prerequisites.js';
 
@@ -66,20 +67,40 @@ async function zoneSummary(client) {
 }
 
 /**
+ * Whether the API rate limit rule is in place (#1909), for the site's zone
+ * only (the lab zone has no API to protect, so it answers null). A refusal
+ * or a Cloudflare outage is its own state, with this module's sentence.
+ */
+async function rateLimitSummary(client, managed) {
+  if (managed.name !== SITE_ZONE) return null;
+  try {
+    return rateLimitFromRuleset(await client.getPhase(RATE_LIMIT_PHASE));
+  } catch (error) {
+    if (!(error instanceof CloudflareError)) throw error;
+    return rateLimitUnread(error.upstreamStatus);
+  }
+}
+
+/**
  * GET cms/cloudflare/status[?zone=]. One zone's status: 200 even when not
  * set up, with `missing` naming `token` and/or `zoneId` and a sentence
  * saying where each comes from. `managed` names the zone the answer is
- * about and its role; `managedZones` every zone the page may pick. Never
- * holds a rule, a record or a value.
+ * about and its role; `managedZones` every zone the page may pick.
+ * `rateLimit` says whether the site zone's API rate limit rule is on
+ * (rate-limit.js: a state, two counts and a sentence). Never holds a rule,
+ * a record or a value.
  */
 export async function getStatus({ client, missing = [], zone: managed }) {
   const views = { ...zoneViews(managed), protected: protectedView(managed) };
   if (!client) {
     const message = notConfiguredMessage(missing);
-    return json(200, { ok: true, configured: false, missing, message, zone: null, families: [], ...views });
+    return json(200, { ok: true, configured: false, missing, message, zone: null, families: [], rateLimit: null, ...views });
   }
   const { zone, zoneError } = await zoneSummary(client);
-  const readable = await Promise.all(FAMILIES.map((family) => client.canRead(family.id)));
+  const [rateLimit, ...readable] = await Promise.all([
+    rateLimitSummary(client, managed),
+    ...FAMILIES.map((family) => client.canRead(family.id)),
+  ]);
   return json(200, {
     ok: true,
     configured: true,
@@ -87,6 +108,7 @@ export async function getStatus({ client, missing = [], zone: managed }) {
     zone,
     zoneError,
     families: FAMILIES.map((family, index) => ({ ...family, readable: readable[index] })),
+    rateLimit,
     ...views,
   });
 }

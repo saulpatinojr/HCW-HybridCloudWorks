@@ -11,6 +11,8 @@
  * every five minutes; statusParity.test.js holds the two to one opinion.
  */
 import { getJSON, postJSON } from '@/lib/api';
+import { readCloudflareStatus } from '@/lib/cloudflare';
+import { rateLimitLine } from '@/components/admin/cloudflare/cloudflareView';
 import { ago, classifyFailure, plural, result } from './probeKit';
 import { alsoExpected, expectedPhrase, unresolvedSplit } from './probeEvaluators';
 import { attempt, listOf } from './probeAttempt';
@@ -295,4 +297,23 @@ function someUnresolvedVerdict(count, readiness) {
     'critical',
     `${plural(count, 'Key Vault reference')} did not resolve${known.length ? `: ${known.join(', ')}` : ''}.`
   );
+}
+
+// ── The API rate limit (#1909) ───────────────────────────────────────────────
+
+/**
+ * Whether the site zone's API rate limit rule is there and switched on, from
+ * the Cloudflare page's status answer (the site's zone: no zone is named).
+ * The verdict and its sentence are the Overview line's (cloudflareView.js
+ * rateLimitLine), so the two pages cannot disagree. A status read that fails
+ * is judged like any other read.
+ */
+export async function runCloudflareRateLimit() {
+  const read = await attempt('The Cloudflare page’s status could not be read', () =>
+    readCloudflareStatus()
+  );
+  if (read.failure) return read.failure;
+  const line = rateLimitLine(read.value);
+  if (!line) return result('unknown', 'The server did not report the API rate limit.');
+  return result(line.tone, line.message);
 }

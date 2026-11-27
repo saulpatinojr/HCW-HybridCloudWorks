@@ -21,6 +21,11 @@ vi.mock('@/lib/publicApi', () => ({ fetchCloudPricing: vi.fn() }));
 import { SERVICES } from '@/components/admin/integrations/serviceRegistry';
 import { SYSTEM_STATUS } from '@/lib/status';
 import {
+  rateLimitFromRuleset,
+  rateLimitUnread,
+} from '../../../../../functions/src/lib/cloudflare/rate-limit.js';
+import { notConfiguredMessage } from '../../../../../functions/src/lib/cloudflare/prerequisites.js';
+import {
   HUBS,
   PROBES,
   PROBE_IDS,
@@ -35,6 +40,7 @@ import {
   probesByHub,
   resolveProbe,
   runAiProviders,
+  runCloudflareRateLimit,
   runLabAgents,
   runLabCheck,
   runMcpServers,
@@ -559,5 +565,66 @@ describe('the heartbeat and sync runners', () => {
         .status
     ).toBe('offline');
     expect(mcpServersVerdict([]).status).toBe('unknown');
+  });
+});
+
+describe('the API rate limit probe (#1909)', () => {
+  beforeEach(() => getJSON.mockReset());
+  const status = (rateLimit) => ({ ok: true, configured: true, rateLimit });
+
+  it('is a live, Test-all-safe Platform probe that links the Cloudflare Rules tab', () => {
+    expect(byId('cloudflare-rate-limit')).toMatchObject({
+      hub: 'platform',
+      kind: 'live',
+      safe: true,
+      href: { to: '/admin/cloudflare?tab=rules' },
+    });
+  });
+
+  it('reads the site zone’s status, naming no zone', async () => {
+    getJSON.mockResolvedValueOnce(status(rateLimitFromRuleset({ rules: [{ id: 'r1' }] })));
+    await runCloudflareRateLimit();
+    expect(getJSON).toHaveBeenCalledWith('cms/cloudflare/status');
+  });
+
+  it.each([
+    ['healthy with a rule switched on', rateLimitFromRuleset({ rules: [{}] }), 'healthy', /is on/],
+    ['degraded when the phase is empty', rateLimitFromRuleset(null), 'degraded', /missing.*part 4/],
+    [
+      'degraded when every rule is off',
+      rateLimitFromRuleset({ rules: [{ enabled: false }] }),
+      'degraded',
+      /switched off.*part 4/,
+    ],
+    ['critical when Cloudflare refused the token', rateLimitUnread(403), 'critical', /refused/],
+    ['offline when Cloudflare did not answer', rateLimitUnread(502), 'offline', /did not answer/],
+  ])('is %s', async (label, rateLimit, expected, sentence) => {
+    getJSON.mockResolvedValueOnce(status(rateLimit));
+    const out = await runCloudflareRateLimit();
+    expect(out.status).toBe(expected);
+    expect(out.summary).toMatch(sentence);
+    expect(out.checkedAt).toEqual(expect.any(String));
+  });
+
+  it('is not checked while the token or the zone id is not set', async () => {
+    const message = notConfiguredMessage(['token', 'zoneId']);
+    getJSON.mockResolvedValueOnce({
+      ok: true,
+      configured: false,
+      missing: ['token', 'zoneId'],
+      message,
+      rateLimit: null,
+    });
+    const out = await runCloudflareRateLimit();
+    expect(out).toMatchObject({ status: 'unknown', summary: `Not checked. ${message}` });
+  });
+
+  it('is unknown when the server sends no rate limit, and judges a failed read by its kind', async () => {
+    getJSON.mockResolvedValueOnce({ ok: true, configured: true });
+    expect((await runCloudflareRateLimit()).status).toBe('unknown');
+    getJSON.mockRejectedValueOnce(new Error('Failed to fetch'));
+    expect((await runCloudflareRateLimit()).status).toBe('offline');
+    getJSON.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
+    expect((await runCloudflareRateLimit()).status).toBe('critical');
   });
 });

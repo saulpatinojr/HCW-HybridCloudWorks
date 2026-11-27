@@ -5,10 +5,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import * as server from '../../../../../functions/src/lib/cloudflare/prerequisites.js';
+import * as rateLimit from '../../../../../functions/src/lib/cloudflare/rate-limit.js';
 import {
   APEX_WILDCARD_REASON,
   FAMILY_STATES,
   PREREQUISITE_NOTES,
+  RATE_LIMIT_TONES,
   changeWarning,
   missingPrerequisites,
   notConfiguredHeadline,
@@ -29,6 +31,8 @@ import {
   parseSettingDraft,
   phaseLock,
   protectedPhaseList,
+  rateLimitLine,
+  rateLimitNeedsRule,
   settingControl,
   settingDraft,
   settingLabel,
@@ -289,6 +293,70 @@ describe('the purge list', () => {
     expect(parsePurgeList(many, { zoneName: ZONE, max: 30 }).problems).toEqual([
       'At most 30 addresses at once; there are 31.',
     ]);
+  });
+});
+
+describe('the API rate limit line (#1909)', () => {
+  it('has a tone for every state the server can report, and no other', () => {
+    expect(Object.keys(RATE_LIMIT_TONES)).toEqual([...rateLimit.RATE_LIMIT_STATES]);
+  });
+
+  it('is green with a rule on, amber when the phase is empty or every rule is off', () => {
+    const on = rateLimitLine({
+      configured: true,
+      rateLimit: rateLimit.rateLimitFromRuleset({ rules: [{}] }),
+    });
+    expect(on).toMatchObject({ state: 'on', tone: 'healthy' });
+    expect(rateLimitNeedsRule(on)).toBe(false);
+    for (const ruleset of [null, { rules: [] }, { rules: [{ enabled: false }] }]) {
+      const line = rateLimitLine({
+        configured: true,
+        rateLimit: rateLimit.rateLimitFromRuleset(ruleset),
+      });
+      expect(line.tone, JSON.stringify(ruleset)).toBe('degraded');
+      expect(line.message).toMatch(/part 4 of the Cloudflare admin runbook/);
+      expect(rateLimitNeedsRule(line)).toBe(true);
+    }
+  });
+
+  it('gives a refusal and an outage their own tones, with the server’s sentence', () => {
+    expect(
+      rateLimitLine({ configured: true, rateLimit: rateLimit.rateLimitUnread(403) })
+    ).toMatchObject({
+      state: 'refused',
+      tone: 'critical',
+      message: expect.stringMatching(/refused the admin token/),
+    });
+    expect(
+      rateLimitLine({ configured: true, rateLimit: rateLimit.rateLimitUnread(null) })
+    ).toMatchObject({
+      state: 'unreachable',
+      tone: 'offline',
+    });
+  });
+
+  it('says "not checked" with the server’s sentence while the token or the zone id is not set', () => {
+    const message = server.notConfiguredMessage(['token']);
+    expect(
+      rateLimitLine({ configured: false, missing: ['token'], message, rateLimit: null })
+    ).toEqual({
+      state: 'not-configured',
+      tone: 'unknown',
+      message: `Not checked. ${message}`,
+    });
+  });
+
+  it('says nothing about the lab zone, set up or not', () => {
+    const lab = { name: 'hybridcloudinsights.com' };
+    expect(rateLimitLine({ configured: false, managed: lab, message: 'x' })).toBeNull();
+    expect(rateLimitLine({ configured: true, managed: lab, rateLimit: null })).toBeNull();
+  });
+
+  it('is null when the answer carries no rate limit (the lab zone) or a state it does not know', () => {
+    expect(rateLimitLine({ configured: true, rateLimit: null })).toBeNull();
+    expect(rateLimitLine({ configured: true })).toBeNull();
+    expect(rateLimitLine({ configured: true, rateLimit: { state: 'constructor' } })).toBeNull();
+    expect(rateLimitLine(null)).toBeNull();
   });
 });
 
