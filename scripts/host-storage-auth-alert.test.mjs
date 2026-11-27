@@ -192,13 +192,5 @@ describe('the plan declaration, pruned once applied (2026-11-27)', () => {
     expect(named).toContain(`${SEV1}: update description`);
     expect(named).toContain(`${SEV2}: create`);
   });
-
-  it('refuses a wider filter or a moved threshold arriving in the same plan', () => {
-    const wider = checkPlan(plan({ query: 'exceptions | where not(isempty(operation_Name))' }));
-    expect(wider.ok).toBe(false);
-    expect(wider.unexpected.join('\n')).toContain('criteria[0].query');
-    const quieter = checkPlan(plan({ threshold: 50 }));
-    expect(quieter.ok).toBe(false);
-    expect(quieter.unexpected.join('\n')).toContain('criteria[0].threshold');
-  });
+  // With nothing declared on these rules any change to them fails; if a declaration is added again, bring back a test that a wider filter or a moved threshold beside it is still refused.
 });

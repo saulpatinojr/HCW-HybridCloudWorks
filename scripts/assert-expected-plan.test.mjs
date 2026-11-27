@@ -1035,6 +1035,32 @@ describe('DECLARED', () => {
     }
   });
 
+  /**
+   * One variable's block in the tree, its braces excluded. A block ends at
+   * the first `}` in column 0, so a search inside it cannot run on into the
+   * next variable's default.
+   */
+  const variableBlock = (name) => {
+    const match = new RegExp(`^variable "${name}" \\{\\n([\\s\\S]*?)\\n\\}`, 'm').exec(infraSource);
+    expect(match, `variable "${name}" not found`).not.toBeNull();
+    return match[1];
+  };
+
+  /** `[name, period, anchor]` rows as sorted, comparable keys. */
+  const rowKeys = (rows) => rows.map((row) => row.join(' | ')).sort();
+
+  /** The datatable rows of an alert-timer-overdue query, commas ignored, as `rowKeys` gives them. */
+  const queryRows = (query) =>
+    rowKeys(
+      [...query.matchAll(/^ {2}"(\w+)", (\S+), datetime\(([^)]+)\),?$/gm)].map((match) => [match[1], match[2], match[3]])
+    );
+
+  /** The rows `after` has that `before` does not. */
+  const rowsAdded = (before, after) => {
+    const had = new Set(queryRows(before));
+    return queryRows(after).filter((key) => !had.has(key));
+  };
+
   /** `local.timer_schedules` in the tree, as `[name, period, anchor]` rows. */
   const treeTimerRows = () => {
     const block = /^\s*timer_schedules\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
@@ -1088,16 +1114,24 @@ describe('DECLARED', () => {
     const applied = new Set(TIMER_SCHEDULES_APPLIED.map(([name]) => name));
     const pending = rows.filter(([name]) => !applied.has(name));
     expect(pending.length, 'a declared row change with no row the tree adds').toBeGreaterThan(0);
-    const before = declaration.before.split('\n');
-    const added = declaration.after
-      .split('\n')
-      .filter((line) => !before.includes(line))
-      .map((line) => line.replace(/,$/, ''));
-    expect(added.sort()).toEqual(
-      pending.map(([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`).sort()
-    );
+    expect(rowsAdded(declaration.before, declaration.after)).toEqual(rowKeys(pending));
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
+  });
+
+  it('finds the rows a query adds whether the new row sorts first, in the middle or last', () => {
+    // The last datatable row carries no trailing comma, so a row that sorts
+    // last gives the old last row a comma. Comparing the rows, not the lines,
+    // keeps that from reading as a changed row.
+    const base = TIMER_SCHEDULES_APPLIED;
+    for (const row of [
+      ['aaaFirstTimer', '1d', '2026-01-01 01:00'],
+      ['moreTimer', '1d', '2026-01-01 01:00'],
+      ['zzzLastTimer', '1d', '2026-01-01 01:00'],
+    ]) {
+      expect(rowsAdded(overdueQuery(base), overdueQuery([...base, row])), row[0]).toEqual(rowKeys([row]));
+    }
+    expect(rowsAdded(overdueQuery(base), overdueQuery(base))).toEqual([]);
   });
 
   it('holds alert-timer-overdue’s applied rows equal to the tree’s while no change to the rule is declared (2026-11-01)', () => {
@@ -1398,10 +1432,10 @@ describe('DECLARED', () => {
   });
 
   it('keeps the imported Web Analytics site with no declaration left, no Web Analytics rule, and nothing that would recreate it (#1923, applied 2026-11-27)', () => {
-    // The owner's apply on 2026-11-27 imported the site and set enabled, lite and the two app settings, and
-    // the nine declarations were deleted (the plan check on run-su7kVbxufZn3LPdW printed each as "declared,
-    // not in this plan"). Nothing about the site or those settings is declared now, so the same run again
-    // would be read by hand.
+    // The plan check on run-su7kVbxufZn3LPdW matched the nine declarations as DECLARED, and the owner's
+    // apply of that run on 2026-11-27 imported the site and set enabled, lite and the two app settings, so
+    // the nine were deleted. Nothing about the site or those settings is declared now, so the same run
+    // again would be read by hand.
     const SITE = 'cloudflare_web_analytics_site.hcw[0]';
     expect(DECLARED.filter((entry) => entry.address === SITE)).toEqual([]);
     expect(
@@ -1519,10 +1553,12 @@ describe('DECLARED', () => {
   });
 
   it('prunes what applied by 2026-11-27, keeps the arming plans and the two gated role assignments, and nothing else', () => {
-    // The plan check on run-su7kVbxufZn3LPdW printed every entry pruned that day as "declared, not in this
-    // plan", and run-uBChZAdiYBb1Rma1's plan (commit a7aa1077) matched no declaration. Each pruned change is
-    // unconditional in infra/ or was read live that day. What stays waits on the owner: four arming plans
-    // (each flag live "false") and two role assignments counted on a workspace variable that defaults to false.
+    // The plan check on run-su7kVbxufZn3LPdW matched #1923's nine entries as DECLARED (they applied in that
+    // run) and printed every other entry pruned that day as "declared, not in this plan"; run-uBChZAdiYBb1Rma1's
+    // plan (commit a7aa1077) matched no declaration. Each pruned change is unconditional in infra/ or was read
+    // live that day. What stays waits on the owner: four arming plans (each flag live "false") and two role
+    // assignments counted on a workspace variable that docs/standards/required-inputs.md §4.1 records as
+    // MISSING (not set) for storage_firewall_remover_enabled and lab_arc_run_command_enabled.
     expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${entry.before} -> ${entry.after}`}`)).toEqual([
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
@@ -1531,7 +1567,10 @@ describe('DECLARED', () => {
       'azurerm_role_assignment.github_arc_run_operator[0] create',
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE: false -> true`,
     ]);
-    // Both kept creates are gated, so a plan without them says nothing about whether they applied.
+    // Both kept creates are counted on a workspace variable, so a plan without them says nothing about
+    // whether they applied: that depends on the value set in the workspace, which this file cannot read.
+    // The record of that value is required-inputs.md §4.1, and the default in the tree is false, so an
+    // unset variable plans nothing.
     for (const [name, variable] of [
       ['github_manifest_window_storage_firewall', 'storage_firewall_remover_enabled'],
       ['github_arc_run_operator', 'lab_arc_run_command_enabled'],
@@ -1539,7 +1578,7 @@ describe('DECLARED', () => {
       expect(infraSource, name).toMatch(
         new RegExp(`resource "azurerm_role_assignment" "${name}" \\{\\n\\s*count\\s*=\\s*var\\.${variable} \\? 1 : 0\\n`)
       );
-      expect(infraSource, variable).toMatch(new RegExp(`variable "${variable}" \\{[\\s\\S]*?\\n\\s*default\\s*=\\s*false\\n`));
+      expect(variableBlock(variable), variable).toMatch(/^\s*default\s*=\s*false$/m);
     }
     // The pruned creates and settings are still in infra/, so the prune hides no destroy or removal.
     for (const [type, name] of [
@@ -1734,7 +1773,7 @@ describe('DECLARED', () => {
 
   /** A variable's default in the tree, as Terraform would interpolate it. */
   const variableDefault = (name) => {
-    const match = new RegExp(`variable "${name}" \\{[\\s\\S]*?\\n\\s*default\\s*=\\s*([^\\n]+)\\n`).exec(infraSource);
+    const match = /^\s*default\s*=\s*([^\n]+)$/m.exec(variableBlock(name));
     expect(match, `var.${name} has no default`).not.toBeNull();
     return match[1].trim();
   };

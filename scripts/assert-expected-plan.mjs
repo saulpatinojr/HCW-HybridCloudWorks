@@ -410,12 +410,13 @@ export const DECLARED = [
   //
   // Applied and deleted here on 2026-11-27, as the header asks. The plan
   // check on run-su7kVbxufZn3LPdW (the #1923 Web Analytics import, which the
-  // owner then applied) printed every entry below as "declared, not in this
-  // plan", and the plan of run-uBChZAdiYBb1Rma1 (commit a7aa1077, applied at
-  // about 10:10 UTC the same day) matched no declaration at all: "OK — the
-  // plan carries the known permanent diff and nothing else". Each change is
-  // either unconditional in infra/, so a plan without it means it is in
-  // state, or was read live that day with read-only az calls:
+  // owner then applied) matched #1923's nine entries as DECLARED, and they
+  // applied in that run; it printed every other entry below as "declared,
+  // not in this plan". The plan of run-uBChZAdiYBb1Rma1 (commit a7aa1077,
+  // applied at about 10:10 UTC the same day) matched no declaration at all:
+  // "OK — the plan carries the known permanent diff and nothing else". Each
+  // change is either unconditional in infra/, so a plan without it means it
+  // is in state, or was read live that day with read-only az calls:
   // - #953 (LAB-7) stage 3, alert-lab-ssh-login's loopback rule and its
   //   description (var.lab_ssh_loopback_only, default true). The live rule's
   //   query reads `let LoopbackOnly = true;` and its description is the new
@@ -424,8 +425,8 @@ export const DECLARED = [
   // - #1923's nine entries: the Web Analytics site's import, its enabled and
   //   lite updates, its four computed values (KNOWN_AFTER_APPLY) and
   //   CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG from "" to the owner's
-  //   values (OWNER_VALUE). The owner's 2026-11-27 apply imported and updated
-  //   the site; the two Web Analytics rules that run also tried to create
+  //   values (OWNER_VALUE). They matched as DECLARED on run-su7kVbxufZn3LPdW,
+  //   whose apply imported and updated the site; the two Web Analytics rules that run also tried to create
   //   were refused by Cloudflare (409, code 10012, maxRulesError: the zone's
   //   Free plan allows none), never reached state and are gone from infra/.
   //   The import block stays in infra/frontend.tf and is skipped now that the
@@ -624,7 +625,12 @@ export const DECLARED = [
   //
   // #1463: planned only once the owner has created the role and set
   // storage_firewall_remover_enabled = true (infra/oidc.tf, count on that
-  // variable, default false).
+  // variable). Kept on 2026-11-27 because what decides it is the workspace
+  // value, which this file cannot read, and docs/standards/required-inputs.md
+  // §4.1 records it as MISSING. An assignment of HCW Storage Firewall Writer
+  // to github_manifest_window on the functions storage account was read live
+  // that day (created 2026-11-04), so the record may be stale: delete this
+  // entry once the workspace value is read as true.
   {
     address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
     action: "create",
@@ -635,9 +641,13 @@ export const DECLARED = [
   // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity's
   // role assignment, planned only once the owner has created HCW Arc Run
   // Command Operator and set lab_arc_run_command_enabled = true
-  // (Required-Inputs §4.6b; infra/oidc.tf, count on that variable, default
-  // false). The identity and its two credentials applied and were deleted
-  // here on 2026-11-27, above. Delete this one once it has applied.
+  // (Required-Inputs §4.6b; infra/oidc.tf, count on that variable). The
+  // identity and its two credentials applied and were deleted here on
+  // 2026-11-27, above. This one is kept for the reason the #1463 entry gives:
+  // required-inputs.md §4.1 records the variable as MISSING, while an
+  // assignment of that role to github_arc_run on rg-lab-hybrid-prod-cus was
+  // read live that day (created 2026-11-09). Delete it once the workspace
+  // value is read as true.
   {
     address: "azurerm_role_assignment.github_arc_run_operator[0]",
     action: "create",
