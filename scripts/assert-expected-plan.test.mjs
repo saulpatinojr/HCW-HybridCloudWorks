@@ -32,8 +32,11 @@ import {
   CONDITIONAL_REPLACED,
   declarationLines,
   DECLARED,
+  describeDeclaration,
   EXPECTED,
   formatPath,
+  KNOWN_AFTER_APPLY,
+  OWNER_VALUE,
   OVERDUE_LAST_DUE,
   OVERDUE_LAST_DUE_BIN_AT,
   overdueQuery,
@@ -46,6 +49,7 @@ import {
 // The module-reading helper moved to its own file when a second check needed
 // it (terraform-role-definitions.test.mjs). Same eight lines, one copy.
 import { terraformSource } from './terraform-source.mjs';
+import { matchesDeclaration } from './lib/plan-declarations.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
@@ -747,6 +751,119 @@ describe('every change is read, not only the ones classify names (#719 review)',
     ]);
   });
 
+  it('passes a declared import at exactly its address, and only the import (#1923)', () => {
+    const declaration = { address: 'azurerm_key_vault.imported', action: 'import', reason: 'test' };
+    const importing = (address, actions = ['no-op']) => ({ address, change: { actions, importing: { id: 'x' } } });
+
+    let { plan } = fixture();
+    plan.resource_changes.push(importing('azurerm_key_vault.imported'));
+    let result = checkPlan(plan, { declared: [declaration] });
+    expect(result).toMatchObject({ ok: true, unexpected: [] });
+    expect(result.declared).toEqual([declaration]);
+    expect(declarationLines(result)).toEqual(['DECLARED    azurerm_key_vault.imported import (test)']);
+
+    // Another address is still named.
+    ({ plan } = fixture());
+    plan.resource_changes.push(importing('azurerm_key_vault.other'));
+    result = checkPlan(plan, { declared: [declaration] });
+    expect(result.unexpected).toEqual(['azurerm_key_vault.other: import']);
+    expect(result.unused).toEqual([declaration]);
+
+    // A declared create does not cover an import, and a declared import does not cover a create.
+    ({ plan } = fixture());
+    plan.resource_changes.push(importing('azurerm_key_vault.imported'));
+    expect(checkPlan(plan, { declared: [{ ...declaration, action: 'create' }] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: import',
+    ]);
+    ({ plan } = fixture());
+    plan.resource_changes.push({ address: 'azurerm_key_vault.imported', change: { actions: ['create'] } });
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual(['azurerm_key_vault.imported: create']);
+
+    // A move beside a declared import is still named.
+    ({ plan } = fixture());
+    plan.resource_changes.push({ ...importing('azurerm_key_vault.imported'), previous_address: 'azurerm_key_vault.old' });
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: moved from azurerm_key_vault.old',
+    ]);
+  });
+
+  it('never prints the Web Analytics site’s identifiers on an undeclared change (#1923)', () => {
+    const tag = '0123456789abcdef0123456789abcdef';
+    const { plan } = fixture();
+    plan.resource_changes.push({
+      address: 'cloudflare_web_analytics_site.hcw[0]',
+      change: {
+        actions: ['update'],
+        before: { account_id: tag, zone_tag: null, site_tag: tag, site_token: tag, snippet: `<script data="${tag}">` },
+        after: { account_id: tag, zone_tag: tag, site_tag: `${tag}0`, site_token: `${tag}1`, snippet: '<script>' },
+        after_unknown: {},
+        before_sensitive: {},
+        after_sensitive: {},
+      },
+    });
+    const result = checkPlan(plan, { declared: [] });
+    expect(result.unexpected).toEqual([
+      'cloudflare_web_analytics_site.hcw[0]: update site_tag: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update site_token: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update snippet: (set) -> (set)',
+      'cloudflare_web_analytics_site.hcw[0]: update zone_tag: null -> (set)',
+    ]);
+    expect(result.unexpected.join('\n')).not.toContain(tag);
+  });
+
+  it('matches KNOWN_AFTER_APPLY only to an unknown, non-sensitive difference at its exact path (#1923)', () => {
+    const declaration = { address: 'example_site.one', path: 'token', after: KNOWN_AFTER_APPLY, reason: 'test' };
+    const difference = (extra) => ({ path: 'token', before: 'old', after: undefined, sensitive: false, unknown: true, ...extra });
+    expect(matchesDeclaration(declaration, 'example_site.one', difference())).toBe(true);
+    // A known change is a value someone has to read, not a computed one.
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ after: 'new', unknown: false }))).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ sensitive: true }))).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.two', difference())).toBe(false);
+    expect(matchesDeclaration(declaration, 'example_site.one', difference({ path: 'snippet' }))).toBe(false);
+    expect(describeDeclaration(declaration)).toBe('example_site.one token: (known after apply) (test)');
+  });
+
+  it('matches OWNER_VALUE only from exactly its before to another non-empty, known string (#1923)', () => {
+    const declaration = { address: 'example_app.one', path: 'app_settings.ID', before: '', after: OWNER_VALUE, reason: 'test' };
+    const difference = (extra) => ({ path: 'app_settings.ID', before: '', after: 'value', sensitive: false, unknown: false, ...extra });
+    expect(matchesDeclaration(declaration, 'example_app.one', difference())).toBe(true);
+    for (const [label, extra] of [
+      ['another before', { before: 'older' }],
+      ['emptied', { after: '' }],
+      ['removed', { after: undefined }],
+      ['not a string', { after: 42 }],
+      ['unknown', { after: undefined, unknown: true }],
+      ['sensitive', { sensitive: true }],
+      ['another path', { path: 'app_settings.OTHER' }],
+    ]) {
+      expect(matchesDeclaration(declaration, 'example_app.one', difference(extra)), label).toBe(false);
+    }
+    expect(describeDeclaration(declaration)).toBe(`example_app.one app_settings.ID: "" -> (the owner's value, not printed) (test)`);
+  });
+
+  it('holds an imported resource’s update to its own declarations, separately from the import (#1923)', () => {
+    const importDeclaration = { address: 'azurerm_key_vault.imported', action: 'import', reason: 'test' };
+    const update = {
+      address: 'azurerm_key_vault.imported',
+      change: {
+        actions: ['update'],
+        importing: { id: 'x' },
+        before: { enabled: null },
+        after: { enabled: true },
+        after_unknown: {},
+        before_sensitive: {},
+        after_sensitive: {},
+      },
+    };
+    const { plan } = fixture();
+    plan.resource_changes.push(update);
+    expect(checkPlan(plan, { declared: [importDeclaration] }).unexpected).toEqual([
+      'azurerm_key_vault.imported: update enabled: null -> true',
+    ]);
+    const enabled = { address: 'azurerm_key_vault.imported', path: 'enabled', before: null, after: true, reason: 'test' };
+    expect(checkPlan(plan, { declared: [importDeclaration, enabled] })).toMatchObject({ ok: true, unexpected: [] });
+  });
+
   it('keeps a data source read quiet', () => {
     const { plan } = fixture();
     plan.resource_changes.push({ address: 'data.azurerm_client_config.current', change: { actions: ['read'] } });
@@ -892,9 +1009,13 @@ describe('DECLARED', () => {
       expect(typeof declaration.address, label).toBe('string');
       expect(typeof declaration.reason === 'string' && declaration.reason.length > 0, label).toBe(true);
       if (declaration.action) {
-        // A create or delete (#816): no path, no values, nothing else.
-        expect(['create', 'delete'], label).toContain(declaration.action);
+        // A create, delete (#816) or import (#1923): no path, no values, nothing else.
+        expect(['create', 'delete', 'import'], label).toContain(declaration.action);
         expect(Object.keys(declaration).sort(), label).toEqual(['action', 'address', 'reason']);
+      } else if (declaration.after === KNOWN_AFTER_APPLY) {
+        // A computed value (#1923): its before is the provider's own and is not
+        // compared, so an entry that wrote one would mislead the next reader.
+        expect(Object.keys(declaration).sort(), label).toEqual(['address', 'after', 'path', 'reason']);
       } else {
         expect(typeof declaration.path, label).toBe('string');
         expect(Object.hasOwn(declaration, 'before') && Object.hasOwn(declaration, 'after'), label).toBe(true);
@@ -1223,7 +1344,9 @@ describe('DECLARED', () => {
   it('prunes what applied by 2026-11-01 (Second Brain, Doc Vault, #1302, #1403, #1479), and keeps the arming plans', () => {
     const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
     const deletes = DECLARED.filter((entry) => entry.action === 'delete').map((entry) => entry.address);
-    const paths = DECLARED.map((entry) => entry.path);
+    // #1923 declares CF_ACCOUNT_ID and CF_WEB_ANALYTICS_SITE_TAG again, as
+    // "" -> the owner's value; what was pruned is #1302's absent -> "".
+    const paths = DECLARED.filter((entry) => entry.after !== OWNER_VALUE).map((entry) => entry.path);
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
     }
@@ -1239,14 +1362,176 @@ describe('DECLARED', () => {
     ]) {
       expect(paths, name).not.toContain(`app_settings.${name}`);
     }
-    // The three arming plans and the site create stay: "not in this plan"
-    // cannot tell them from applied, and each waits on a workspace value.
+    // The three arming plans and the site stay: "not in this plan" cannot
+    // tell them from applied, and each waits on a workspace value. The site
+    // is an import since #1923, no longer a create.
     const arming = (flag) =>
       DECLARED.filter((entry) => entry.path === `app_settings.${flag}`).map((entry) => [entry.before, entry.after]);
     expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_SWEEP_VISITOR_SESSIONS')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_PROBE_AI_PROVIDERS')).toEqual([['false', 'true']]);
-    expect(creates).toContain('cloudflare_web_analytics_site.hcw[0]');
+    expect(creates).not.toContain('cloudflare_web_analytics_site.hcw[0]');
+    expect(
+      DECLARED.filter((entry) => entry.address === 'cloudflare_web_analytics_site.hcw[0]' && entry.action).map(
+        (entry) => entry.action
+      )
+    ).toEqual(['import']);
+  });
+
+  it('declares the Web Analytics site’s import and update and its two rules’ creates, and nothing that would recreate the site (#1923)', () => {
+    // Delete this test with the five declarations, once the site and the rules exist.
+    const SITE = 'cloudflare_web_analytics_site.hcw[0]';
+    const RULES = ['cloudflare_web_analytics_rule.notes_excluded[0]', 'cloudflare_web_analytics_rule.api_excluded[0]'];
+    const actionsAt = (address) =>
+      DECLARED.filter((entry) => entry.address === address && entry.action).map((entry) => entry.action);
+    // Cloudflare made the site for the zone itself; a create is what the API refused.
+    expect(actionsAt(SITE)).toEqual(['import']);
+    for (const rule of RULES) expect(actionsAt(rule), rule).toEqual(['create']);
+    // The import leaves enabled and lite null (the provider never reads them back), and the update sets them.
+    const siteUpdates = DECLARED.filter((entry) => entry.address === SITE && entry.path)
+      .filter((entry) => entry.after !== KNOWN_AFTER_APPLY)
+      .map(({ path, before, after }) => [path, before, after])
+      .sort();
+    expect(siteUpdates).toEqual([
+      ['enabled', null, true],
+      ['lite', null, true],
+    ]);
+    // The four computed values with no plan modifier in provider 5.29.0 go unknown on that update.
+    const computed = DECLARED.filter((entry) => entry.address === SITE && entry.after === KNOWN_AFTER_APPLY)
+      .map((entry) => entry.path)
+      .sort();
+    expect(computed).toEqual(['rules', 'ruleset', 'site_token', 'snippet']);
+    // The two app settings take the owner's values, from "" and with neither value written here.
+    const ownerValues = DECLARED.filter((entry) => entry.after === OWNER_VALUE).map(({ address, path, before }) => [
+      address,
+      path,
+      before,
+    ]);
+    expect(ownerValues).toEqual([
+      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_ACCOUNT_ID', ''],
+      ['azurerm_function_app_flex_consumption.hcw', 'app_settings.CF_WEB_ANALYTICS_SITE_TAG', ''],
+    ]);
+
+    const block = (header, label) => {
+      const start = infraSource.indexOf(`${header} {\n`);
+      expect(start, `${label} not found`).toBeGreaterThanOrEqual(0);
+      const body = infraSource.slice(start + header.length + 3);
+      return body.slice(0, body.indexOf('\n}'));
+    };
+    const site = block('resource "cloudflare_web_analytics_site" "hcw"', 'the site');
+    const notes = block('resource "cloudflare_web_analytics_rule" "notes_excluded"', 'the notes rule');
+    const api = block('resource "cloudflare_web_analytics_rule" "api_excluded"', 'the api-azure rule');
+    const imports = [...infraSource.matchAll(/^import \{\n([\s\S]*?)\n\}/gm)]
+      .map((match) => match[1])
+      .filter((body) => body.includes('cloudflare_web_analytics_site.hcw'));
+    expect(imports).toHaveLength(1);
+    const [importBlock] = imports;
+
+    // One gate for all four: both inputs set. With either missing, nothing is imported or created.
+    expect(infraSource).toMatch(
+      /^\s*web_analytics_managed\s*=\s*var\.cloudflare_account_id != null && var\.cloudflare_web_analytics_site_tag != null$/m
+    );
+    for (const body of [site, notes, api]) {
+      expect(body).toMatch(/^\s*count\s*=\s*local\.web_analytics_managed \? 1 : 0$/m);
+    }
+    // The provider's import id is `<account_id>/<site_id>`; for_each makes the import conditional.
+    expect(importBlock).toMatch(/^\s*to\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]$/m);
+    expect(importBlock).toMatch(/^\s*id\s*=\s*each\.value$/m);
+    expect(importBlock).toContain(
+      'for_each = local.web_analytics_managed ? { hcw = "${var.cloudflare_account_id}/${var.cloudflare_web_analytics_site_tag}" } : {}'
+    );
+    // for_each on an import block needs Terraform 1.7.
+    expect(infraSource).toMatch(/^\s*required_version\s*=\s*"~> 1\.7"$/m);
+
+    // The site as Cloudflare made it: on the zone, automatic setup written out (the provider reads it back), no host.
+    expect(site).toMatch(/^\s*zone_tag\s*=\s*var\.cloudflare_zone_id$/m);
+    expect(site).toMatch(/^\s*auto_install\s*=\s*true$/m);
+    expect(site).toMatch(/^\s*enabled\s*=\s*true$/m);
+    expect(site).toMatch(/^\s*lite\s*=\s*true$/m);
+    expect(site).not.toMatch(/^\s*host\s*=/m);
+    // Unsetting the inputs once the site is in state must stop the plan, not delete Cloudflare's site.
+    expect(site).toMatch(/^\s*prevent_destroy\s*=\s*true$/m);
+    // Once the import block is skipped, a changed tag must stop the plan, not be ignored
+    // (infra/tests/guards.tftest.hcl runs the mismatch).
+    expect(site).toMatch(/^\s*condition\s*=\s*self\.site_tag == var\.cloudflare_web_analytics_site_tag$/m);
+    // Each rule excludes one proxied name that serves HTML, on the site's own ruleset.
+    for (const [body, host] of [
+      [notes, 'notes'],
+      [api, 'api-azure'],
+    ]) {
+      expect(body).toMatch(/^\s*ruleset_id\s*=\s*cloudflare_web_analytics_site\.hcw\[0\]\.ruleset\.id$/m);
+      expect(body).toContain(`host       = "${host}.\${var.domain}"`);
+      expect(body).toMatch(/^\s*inclusive\s*=\s*false$/m);
+      expect(body).toMatch(/^\s*paths\s*=\s*\["\*"\]$/m);
+    }
+
+    // The owner's run, as the plan JSON will carry it: the import with its update, the two creates,
+    // and the Function App's two settings. Every value is a placeholder; none is printed.
+    const importId = 'account-placeholder/site-placeholder';
+    const accountId = 'account-placeholder-0123456789abcdef';
+    const siteTag = 'site-tag-placeholder-0123456789ab';
+    const plan = expectedPlan();
+    const app = plan.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change;
+    Object.assign(app.before.app_settings, { CF_ACCOUNT_ID: '', CF_WEB_ANALYTICS_SITE_TAG: '' });
+    Object.assign(app.after.app_settings, { CF_ACCOUNT_ID: accountId, CF_WEB_ANALYTICS_SITE_TAG: siteTag });
+    plan.resource_changes.push(
+      {
+        address: SITE,
+        change: {
+          actions: ['update'],
+          importing: { id: importId },
+          before: {
+            enabled: null,
+            lite: null,
+            auto_install: true,
+            site_tag: siteTag,
+            site_token: 'token-before',
+            snippet: 'snippet-before',
+            rules: [],
+            ruleset: { id: 'ruleset-before', enabled: true },
+          },
+          after: { enabled: true, lite: true, auto_install: true, site_tag: siteTag },
+          after_unknown: { site_token: true, snippet: true, rules: true, ruleset: true },
+          before_sensitive: {},
+          after_sensitive: {},
+        },
+      },
+      ...RULES.map((address) => ({ address, change: { actions: ['create'] } }))
+    );
+    const result = checkPlan(plan);
+    expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
+    expect(result.declared.map((entry) => `${entry.address} ${entry.action ?? entry.path}`).sort()).toEqual(
+      [
+        `${SITE} import`,
+        `${SITE} enabled`,
+        `${SITE} lite`,
+        ...['rules', 'ruleset', 'site_token', 'snippet'].map((path) => `${SITE} ${path}`),
+        'azurerm_function_app_flex_consumption.hcw app_settings.CF_ACCOUNT_ID',
+        'azurerm_function_app_flex_consumption.hcw app_settings.CF_WEB_ANALYTICS_SITE_TAG',
+        ...RULES.map((rule) => `${rule} create`),
+      ].sort()
+    );
+    // The report names the stand-ins and never the values behind them.
+    const report = declarationLines(result).join('\n');
+    for (const value of [importId, accountId, siteTag, 'token-before', 'snippet-before', 'ruleset-before']) {
+      expect(report, value).not.toContain(value);
+    }
+    expect(report).toContain(`${SITE} site_token: (known after apply)`);
+    expect(report).toContain(`app_settings.CF_ACCOUNT_ID: "" -> (the owner's value, not printed)`);
+
+    // Anything else on that run is still named: a computed value nobody declared, or a setting
+    // that was not "" before (the owner's value replacing another is a change to read).
+    const created = structuredClone(plan);
+    const siteChange = created.resource_changes.find((change) => change.address === SITE).change;
+    siteChange.before.created = '2026-06-30T00:00:00Z';
+    siteChange.after_unknown.created = true;
+    expect(checkPlan(created).unexpected).toEqual([`${SITE}: update created: "2026-06-30T00:00:00Z" -> (known after apply)`]);
+    const replaced = structuredClone(plan);
+    replaced.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change.before.app_settings.CF_ACCOUNT_ID =
+      'an-older-value';
+    expect(checkPlan(replaced).unexpected).toEqual([
+      'azurerm_function_app_flex_consumption.hcw: update app_settings.CF_ACCOUNT_ID: (set) -> (set)',
+    ]);
   });
 
   it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {

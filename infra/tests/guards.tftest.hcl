@@ -12,6 +12,9 @@
 # 6. Muse's read-only app registration (#1763): absent while its switch is
 #    off; when on, built-in Reader on each of the three whole subscriptions
 #    and nothing else, and a secret that expires.
+# 7. The adopted Web Analytics site (#1923): nothing planned while its two
+#    inputs are unset, and a site tag that disagrees with the site Terraform
+#    adopted stops the plan rather than being ignored.
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -249,4 +252,62 @@ run "muse_reader_reads_every_subscription_and_writes_nothing" {
     condition     = azuread_application.muse_reader[0].sign_in_audience == "AzureADMyOrg"
     error_message = "Muse's app registration must be single-tenant (#1763)."
   }
+}
+
+# 7. The adopted Web Analytics site (#1923). The tags are made-up 32-hex
+# values. The override stands in for the site Terraform adopted: its
+# site_tag is what the import read, or, after the first apply, what state
+# holds while the import block is skipped.
+run "web_analytics_site_is_not_managed_by_default" {
+  command = plan
+
+  assert {
+    condition = (
+      length(cloudflare_web_analytics_site.hcw) == 0 &&
+      length(cloudflare_web_analytics_rule.notes_excluded) == 0 &&
+      length(cloudflare_web_analytics_rule.api_excluded) == 0
+    )
+    error_message = "Nothing of Web Analytics may be planned until cloudflare_account_id and cloudflare_web_analytics_site_tag are both set (#1923)."
+  }
+}
+
+run "web_analytics_site_tag_matches_the_adopted_site" {
+  command = plan
+
+  variables {
+    cloudflare_account_id             = "0123456789abcdef0123456789abcdef"
+    cloudflare_web_analytics_site_tag = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  override_resource {
+    target          = cloudflare_web_analytics_site.hcw
+    override_during = plan
+    values = {
+      site_tag = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+
+  assert {
+    condition     = cloudflare_web_analytics_site.hcw[0].site_tag == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    error_message = "The adopted site must be planned with the tag the variable names (#1923)."
+  }
+}
+
+run "web_analytics_site_tag_that_differs_stops_the_plan" {
+  command = plan
+
+  variables {
+    cloudflare_account_id             = "0123456789abcdef0123456789abcdef"
+    cloudflare_web_analytics_site_tag = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+
+  override_resource {
+    target          = cloudflare_web_analytics_site.hcw
+    override_during = plan
+    values = {
+      site_tag = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+
+  expect_failures = [cloudflare_web_analytics_site.hcw]
 }

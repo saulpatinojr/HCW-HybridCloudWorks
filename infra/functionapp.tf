@@ -523,16 +523,17 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "CLOUDFLARE_ADMIN_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ADMIN-TOKEN)"
 
     # The Web Analytics site the read is scoped to, taken STRAIGHT FROM THE
-    # RESOURCE in frontend.tf and never typed by the owner: a copied site tag
-    # drifts the day the site is recreated, and the resource knows its own
-    # tag. Not a secret (it is the site's identifier in the API path; the
-    # token above is the credential). Empty, not absent, while
-    # cloudflare_account_id is unset and the site does not exist, so the timer
-    # reads "" as "not configured" rather than a missing setting as a deploy
-    # fault. Unknown until the first apply creates the site, which
-    # tfc-plan-check reports as an unknown app_settings difference once; it
-    # cannot be declared and is read by hand on that run.
-    "CF_WEB_ANALYTICS_SITE_TAG" = var.cloudflare_account_id == null ? "" : cloudflare_web_analytics_site.hcw[0].site_tag
+    # RESOURCE in frontend.tf: the owner types the tag once, into
+    # cloudflare_web_analytics_site_tag for the import (#1923), and from then
+    # on the resource knows its own tag. Not a secret (it is the site's
+    # identifier in the API path; the token above is the credential). Empty,
+    # not absent, until both Web Analytics inputs are set and the site is
+    # managed, so the timer reads "" as "not configured" rather than a missing
+    # setting as a deploy fault. The run that imports the site plans it from
+    # "" to the tag. tfc-plan-check accepts that as a declared change to the
+    # owner's value (OWNER_VALUE in scripts/assert-expected-plan.mjs), which
+    # never prints the tag, so that run checks clean like any other.
+    "CF_WEB_ANALYTICS_SITE_TAG" = local.web_analytics_managed ? cloudflare_web_analytics_site.hcw[0].site_tag : ""
 
     # The account the site belongs to, the same value the workspace variable
     # carries, because the read is account-scoped: Cloudflare's

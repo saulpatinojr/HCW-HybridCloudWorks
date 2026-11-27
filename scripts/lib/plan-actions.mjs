@@ -6,6 +6,9 @@
 
 import { isDeepStrictEqual } from 'node:util';
 
+/** The side-effect note an import gets, which a declaration can match (#1923). */
+export const IMPORT_NOTE = 'import';
+
 /** The action lists that mean nothing happens to the resource. */
 const QUIET_ACTIONS = [['no-op'], ['read']];
 
@@ -42,7 +45,7 @@ export function sideEffects(change, actions) {
   const recognised =
     classify(actions) !== 'no-op' || QUIET_ACTIONS.some((quiet) => isDeepStrictEqual(quiet, actions));
   if (!recognised) notes.push(`actions ${JSON.stringify(actions)}, which this checker does not recognise`);
-  if (change.change.importing) notes.push('import');
+  if (change.change.importing) notes.push(IMPORT_NOTE);
   if (change.previous_address) notes.push(`moved from ${change.previous_address}`);
   return notes;
 }

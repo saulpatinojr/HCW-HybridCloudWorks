@@ -15,7 +15,11 @@
  *   3. An `app_settings` value prints as `(set)`. They are free-form strings,
  *      and a literal written on the live app outside Terraform, which
  *      infra/functionapp.tf expects can happen, is exactly the drift this
- *      catches. The path is the finding.
+ *      catches. The path is the finding. The same goes for the Cloudflare
+ *      identifiers the Web Analytics site carries (#1923): `account_id`,
+ *      `zone_tag`, `site_tag`, `site_token` and `snippet`. They are 32-hex
+ *      strings (or hold one) that the GUID rule below does not catch, and
+ *      the owner's values are never written in this repository.
  *   4. Any string of six or more characters that the plan marks sensitive
  *      anywhere is replaced wherever it appears in a printed value. That
  *      covers resource values, sensitive input variables and sensitive
@@ -34,7 +38,7 @@ const SENSITIVE = '(sensitive)';
 const UNKNOWN = '(known after apply)';
 
 /** Top-level attributes whose values are never printed (rule 3). */
-export const HIDDEN_VALUES = new Set(['app_settings']);
+export const HIDDEN_VALUES = new Set(['app_settings', 'account_id', 'zone_tag', 'site_tag', 'site_token', 'snippet']);
 
 /** Shorter strings are too common to redact without masking ordinary values. */
 const MIN_SECRET_LENGTH = 6;
