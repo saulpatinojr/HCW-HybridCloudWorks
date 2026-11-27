@@ -93,14 +93,19 @@ describe('the rate limit verdict', () => {
   });
 
   it('is not checked, never red, when the caller lacks the editor role (a viewer pressing Test all)', () => {
-    for (const status of [401, 403]) {
-      expect(rateLimitFailure(refusal('Requires editor or higher', status))).toEqual({
-        state: 'not-allowed',
-        status: 'unknown',
-        count: 0,
-        sentence: 'Not checked: reading the rate limiting rules needs the editor role.',
-      });
-    }
+    expect(rateLimitFailure(refusal('Requires editor or higher', 403))).toEqual({
+      state: 'not-allowed',
+      status: 'unknown',
+      count: 0,
+      sentence: 'Not checked: reading the rate limiting rules needs the editor role.',
+    });
+  });
+
+  it('treats a 401 (a missing or expired sign-in) as a real failure, not a role limit', () => {
+    const expired = rateLimitFailure(refusal('Your session has expired.', 401));
+    expect(expired.state).toBe('failed');
+    expect(expired.status).not.toBe('unknown');
+    expect(expired.sentence).toContain('Your session has expired.');
   });
 
   it('does not count a rule that only logs, since it limits nothing', () => {

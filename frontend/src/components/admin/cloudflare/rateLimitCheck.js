@@ -68,8 +68,10 @@ export function rateLimitVerdict(answer) {
 export function rateLimitFailure(error) {
   const message = String(error?.message || error || 'Cloudflare did not answer.');
   // A viewer may open the Health page, but reading the rules needs the editor
-  // role: a refusal of the caller is not a Cloudflare failure, so it is not red.
-  if (error?.status === 401 || error?.status === 403) {
+  // role: that refusal (403) is not a Cloudflare failure, so it is not red. A
+  // 401 is a missing or expired sign-in, which is a real failure and goes
+  // through the usual classification below.
+  if (error?.status === 403) {
     return {
       state: 'not-allowed',
       status: 'unknown',
