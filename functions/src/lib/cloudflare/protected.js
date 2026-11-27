@@ -15,18 +15,22 @@
  *     under its parent: a record made there would answer in its place.
  *   - Rule phases, as an ALLOW-list. A phase is the point in handling a
  *     request where a group of rules runs. Only the phases in EDITABLE_PHASES
- *     may be replaced from here. Every other phase is read-only: the two
- *     Terraform writes (PROTECTED_PHASES, each with its own reason) and any
- *     other phase, named or not, because some kinds of rule can send or store
- *     the site's traffic elsewhere (an origin rule, a snippet, a cloud
- *     connector), and a kind Cloudflare adds later should start shut.
+ *     may be replaced from here. Every other phase is read-only: the one
+ *     Terraform writes (PROTECTED_PHASES, with its own reason) and any other
+ *     phase, named or not, because some kinds of rule can send or store the
+ *     site's traffic elsewhere (an origin rule, a snippet, a cloud
+ *     connector), and a kind Cloudflare adds later should start shut. The
+ *     API rate limit (`http_ratelimit`) is editable since 2026-11-26: the
+ *     owner moved it from Terraform to this page and Claude Network Guy
+ *     (#1903, ADR 0047's amendment).
  *   - Zone settings only the owner changes (OWNER_ONLY_SETTINGS). A person
  *     with the super admin role may change them; an agent key may not,
  *     because a wrong value breaks or weakens HTTPS for every visitor.
  *
  * It imports nothing, so the browser can mirror it, and protected.test.js
- * reads the two .tf files and fails when a Terraform record or phase is
- * missing from the lists below.
+ * reads the .tf files and fails when a Terraform record or phase is missing
+ * from the lists below, or when a phase Terraform writes is on the
+ * allow-list.
  */
 
 /** The zone the site lives in (infra/variables.tf `domain`). */
@@ -80,10 +84,6 @@ export const PROTECTED_PHASES = Object.freeze(
       reason:
         'The origin secret rule (cloudflare_ruleset.origin_secret in infra/frontend.tf). Changing it locks every visitor out of the API.',
     },
-    {
-      phase: 'http_ratelimit',
-      reason: "The API's rate limit rule, managed by Terraform in infra/. A change here is undone by the next run.",
-    },
   ].map(Object.freeze)
 );
 
@@ -95,6 +95,7 @@ export const EDITABLE_PHASES = Object.freeze(
     { phase: 'http_response_headers_transform', description: 'Response headers: add, change or remove headers on what the site sends back.' },
     { phase: 'http_config_settings', description: 'Configuration rules: change some zone settings for the requests that match.' },
     { phase: 'http_request_firewall_custom', description: 'Custom security rules: block, challenge or log the requests that match (never skip).' },
+    { phase: 'http_ratelimit', description: 'Rate limiting: limit how many requests one address can make, for example to the API.' },
   ].map(Object.freeze)
 );
 

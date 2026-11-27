@@ -278,6 +278,7 @@ file_patterns = ["lab-image/smoke/**"]
 match.plugins = ["qlty"]
 match.rules = ["qlty:similar-code"]
 match.file_patterns = [
+  "frontend/src/components/admin/cloudflare/cloudflareLocks.js",
   "frontend/src/data/addons/catalogue.js",
   "frontend/src/data/ansible/education.js",
   "frontend/src/data/architectures.js",
@@ -308,5 +309,6 @@ match.file_patterns = [
   "frontend/src/pages/terraform/LandingPage.jsx",
   "frontend/src/pages/terraform/ModulesPage.jsx",
   "functions/src/lib/ambassador/programs.js",
+  "functions/src/lib/cloudflare/protected.js",
 ]
 set.ignored = true

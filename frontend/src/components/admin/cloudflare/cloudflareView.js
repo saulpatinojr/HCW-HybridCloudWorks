@@ -134,6 +134,11 @@ export function changeWarning(answer) {
       'The record came back with a protected name: someone may have renamed it while you were editing. Check it in the Cloudflare dashboard.'
     );
   }
+  if (answer?.concurrentWrite === true) {
+    notes.push(
+      'Another change to this rule phase was saved just before yours, so yours may have replaced it. Reload the phase and check it.'
+    );
+  }
   if (answer?.audited === false) {
     notes.push(
       'The change was made in Cloudflare, but its audit row could not be written, so the audit log does not show it. A warning has been sent to the owner’s Telegram.'
@@ -221,12 +226,28 @@ export function parseRulesDraft(text) {
 }
 
 /**
- * Whether a replacement needs the phase's name typed to confirm: in the
- * custom security rules, a shorter list removes a security rule, so the
- * page asks for more than one click.
+ * The phases whose rules protect the site, so a shorter list takes some
+ * protection away: what a removed rule is called, and what removing it does.
+ */
+export const GUARDED_PHASES = Object.freeze({
+  http_request_firewall_custom: Object.freeze({
+    rules: 'custom security rule(s)',
+    effect: 'requests they blocked or challenged will reach the site',
+  }),
+  http_ratelimit: Object.freeze({
+    rules: 'rate limiting rule(s)',
+    effect: 'the requests they limited, such as calls to the API, will no longer be limited',
+  }),
+});
+
+/**
+ * Whether a replacement needs the phase's name typed to confirm: in a
+ * guarded phase (custom security rules, rate limiting), a shorter list
+ * removes a rule that protects the site, so the page asks for more than one
+ * click.
  */
 export const needsTypedConfirm = (phase, currentCount, nextCount) =>
-  phase === 'http_request_firewall_custom' && nextCount < currentCount;
+  Object.hasOwn(GUARDED_PHASES, phase) && nextCount < currentCount;
 
 /** The zone's own entry points (kind `zone`), one per phase. */
 export function entrypointRulesets(rulesets = []) {

@@ -161,7 +161,12 @@ describe('the Cloudflare page', () => {
     );
     expect(screen.getByTestId('family-dns')).toHaveTextContent('can be read');
     expect(screen.getByText('docs.example.com')).toBeInTheDocument();
-    expect(screen.getByText('http_ratelimit')).toBeInTheDocument();
+    // The API rate limit is changed here since #1903; only the origin rule is Terraform's.
+    expect(screen.getByTestId('locked-phases')).toHaveTextContent('http_request_late_transform');
+    expect(screen.getByTestId('locked-phases')).not.toHaveTextContent('http_ratelimit');
+    expect(screen.getByTestId('open-phases')).toHaveTextContent(
+      'http_ratelimit — Rate limiting: limit how many requests one address can make, for example to the API.'
+    );
     expect(screen.getByRole('link', { name: 'Agents → Claude Network Guy' })).toHaveAttribute(
       'href',
       '/admin/agents?tab=claude-network'
@@ -416,12 +421,13 @@ describe('the Rules tab', () => {
     expect(within(panel).queryByRole('button', { name: /Edit these rules/ })).toBeNull();
   });
 
-  it('lists the five phases that can be changed, and opens one with no rules yet', async () => {
+  it('lists the six phases that can be changed, and opens one with no rules yet', async () => {
     api.readCloudflarePhase.mockResolvedValue({ ruleset: null, version: null });
     api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
     renderAt('/admin/cloudflare?tab=rules');
     await screen.findByTestId('editable-http_request_dynamic_redirect');
-    expect(screen.getAllByTestId(/^editable-/)).toHaveLength(5);
+    expect(screen.getAllByTestId(/^editable-/)).toHaveLength(6);
+    expect(screen.getByTestId('editable-http_ratelimit')).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Open http_request_dynamic_redirect from the list of what can be changed',
@@ -503,6 +509,57 @@ describe('the Rules tab', () => {
     expect(go).toBeEnabled();
     fireEvent.click(go);
     await waitFor(() => expect(api.replaceCloudflarePhase).toHaveBeenCalledTimes(1));
+  });
+
+  it('asks for the phase name typed before removing a rate limiting rule', async () => {
+    // Two rules, as a paid plan allows; the Free plan has one, and an empty list is refused.
+    const limit = (id, path, requests) => ({
+      id,
+      expression: `(lower(http.request.uri.path) contains "${path}")`,
+      action: 'block',
+      enabled: true,
+      ratelimit: {
+        characteristics: ['cf.colo.id', 'ip.src'],
+        period: 10,
+        requests_per_period: requests,
+        mitigation_timeout: 10,
+      },
+    });
+    const kept = limit('limit-2', '/api/public/', 50);
+    api.readCloudflarePhase.mockResolvedValue({
+      ruleset: { name: 'Rate limits', rules: [limit('limit-1', '/api/', 200), kept] },
+      version: '2',
+    });
+    api.replaceCloudflarePhase.mockResolvedValue({ ruleset: {} });
+    renderAt('/admin/cloudflare?tab=rules');
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open http_ratelimit from the list of what can be changed',
+      })
+    );
+    const panel = await screen.findByTestId('phase-http_ratelimit');
+    fireEvent.click(await within(panel).findByRole('button', { name: /Edit these rules/ }));
+    fireEvent.change(within(panel).getByLabelText('Rules for http_ratelimit'), {
+      target: { value: JSON.stringify([kept]) },
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Replace the rules' }));
+    const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
+    expect(confirm).toHaveTextContent(
+      /removes 1 rate limiting rule\(s\), so the requests they limited, such as calls to the API, will no longer be limited/
+    );
+    const go = within(confirm).getByRole('button', { name: 'Replace the rules' });
+    expect(go).toBeDisabled();
+    fireEvent.change(within(confirm).getByLabelText('Type the phase name to confirm'), {
+      target: { value: 'http_ratelimit' },
+    });
+    expect(go).toBeEnabled();
+    fireEvent.click(go);
+    await waitFor(() =>
+      expect(api.replaceCloudflarePhase).toHaveBeenCalledWith('http_ratelimit', {
+        rules: [kept],
+        expectedVersion: '2',
+      })
+    );
   });
 
   it('shows the server’s sentence when the phase changed since it was opened, and keeps the edit', async () => {

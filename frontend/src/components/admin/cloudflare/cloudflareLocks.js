@@ -8,7 +8,8 @@
  * the request instead of after it. cloudflareLocks.test.js imports that file
  * (it imports nothing) and fails when the two differ:
  *
- *   PROTECTED_PHASES     the two phases Terraform writes, with their reasons
+ *   PROTECTED_PHASES     the phase Terraform writes, with its reason (the API
+ *                        rate limit left Terraform for this page in #1903)
  *   EDITABLE_PHASES      the only phases that may be replaced (an allow-list:
  *                        every other phase is read-only)
  *   OWNER_ONLY_SETTINGS  zone settings an agent key may not change
@@ -32,39 +33,32 @@ export const PROTECTED_PHASES = Object.freeze([
     reason:
       'The origin secret rule (infra/frontend.tf, cloudflare_ruleset.origin_secret) adds the header that proves a visitor came through Cloudflare. Changing it locks every visitor out of the API.',
   }),
-  Object.freeze({
-    phase: 'http_ratelimit',
-    reason:
-      'The API rate limit rule is managed by Terraform (infra/). A change here would be undone on the next Terraform run, and removing it lets one visitor flood the API.',
-  }),
 ]);
 
-/** The only rule phases that may be replaced from the page, each in a line. */
+/**
+ * The only rule phases that may be replaced from the page, each with its line.
+ * Kept as phase -> line (the server keeps a list of records); the mirror test
+ * holds the two equal, and EDITABLE_PHASES below gives the same records.
+ */
+const EDITABLE_PHASE_LINES = Object.freeze({
+  http_request_dynamic_redirect: 'Redirects: send a visitor from one address to another.',
+  http_request_transform:
+    'URL rewrites: change the path or query of a request before it reaches the site.',
+  http_response_headers_transform:
+    'Response headers: add, change or remove headers on what the site sends back.',
+  http_config_settings:
+    'Configuration rules: change some zone settings for the requests that match.',
+  http_request_firewall_custom:
+    'Custom security rules: block, challenge or log the requests that match (never skip).',
+  http_ratelimit:
+    'Rate limiting: limit how many requests one address can make, for example to the API.',
+});
+
+/** The editable phases as records ({ phase, description }), in the server's order. */
 export const EDITABLE_PHASES = Object.freeze(
-  [
-    {
-      phase: 'http_request_dynamic_redirect',
-      description: 'Redirects: send a visitor from one address to another.',
-    },
-    {
-      phase: 'http_request_transform',
-      description:
-        'URL rewrites: change the path or query of a request before it reaches the site.',
-    },
-    {
-      phase: 'http_response_headers_transform',
-      description: 'Response headers: add, change or remove headers on what the site sends back.',
-    },
-    {
-      phase: 'http_config_settings',
-      description: 'Configuration rules: change some zone settings for the requests that match.',
-    },
-    {
-      phase: 'http_request_firewall_custom',
-      description:
-        'Custom security rules: block, challenge or log the requests that match (never skip).',
-    },
-  ].map(Object.freeze)
+  Object.entries(EDITABLE_PHASE_LINES).map(([phase, description]) =>
+    Object.freeze({ phase, description })
+  )
 );
 
 /** Why every other phase is read-only. */

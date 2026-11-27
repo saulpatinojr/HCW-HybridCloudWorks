@@ -135,7 +135,8 @@ describe('the phase lock matches the server’s allow-list', () => {
     expect(editablePhaseList(SERVER_STATUS).map((item) => item.phase)).toEqual(
       server.EDITABLE_PHASES.map((item) => item.phase)
     );
-    expect(editablePhaseList(null)).toHaveLength(5);
+    expect(editablePhaseList(null)).toHaveLength(6);
+    expect(isEditablePhase('http_ratelimit')).toBe(true);
   });
 });
 

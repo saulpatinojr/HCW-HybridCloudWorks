@@ -31,10 +31,32 @@
  * checks); and, from an agent key, never a list that leaves out a rule the
  * phase has now (an agent key adds and changes rules; only the owner
  * removes one, 403 CLOUDFLARE_OWNER_ONLY).
+ *
+ * THE GUARDED PHASES. In the custom security rules and the rate limiting
+ * rules (GUARDED_PHASES), a rule protects the site, so an agent key is held
+ * to two more limits, each 403 CLOUDFLARE_OWNER_ONLY before anything is
+ * written: it may not switch a rule off (an existing rule sent back with
+ * `enabled` anything but true, or a new rule that starts that way), because
+ * a rule switched off is a rule removed in effect; and it may not set a
+ * custom response (`action_parameters.response`), the body Cloudflare sends
+ * a blocked caller, which only a paid plan offers and is closed ahead of
+ * time.
  */
 import { Refusal, bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
-import { isAgentUser } from '../agent-content/agent-keys.js';
 import { recordChange, requireOurZone } from './record.js';
+import {
+  AGENT_DISABLE_MESSAGE,
+  AGENT_REMOVAL_MESSAGE,
+  AGENT_RESPONSE_MESSAGE,
+  GUARDED_PHASES,
+  concurrentWriteNote,
+  refuseAgentDisable,
+  refuseAgentRemoval,
+  refuseAgentResponse,
+  versionOf,
+} from './rules-guards.js';
+
+export { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, concurrentWriteNote, versionOf };
 import { REDACTED_VALUE, REFUSED_FIREWALL_ACTION, isEditablePhase, phaseProtection } from './protected.js';
 
 export const PHASE_PATTERN = /^[a-z0-9_]{1,64}$/;
@@ -74,8 +96,6 @@ export function rulesFor(phase, rules) {
   return list.map(isEditablePhase(phase) ? redactedRule : summaryRule);
 }
 
-/** A ruleset's version as the freshness check compares it: Cloudflare's version, else last_updated, else null. */
-export const versionOf = (ruleset) => (ruleset ? String(ruleset.version ?? ruleset.last_updated ?? '') || null : null);
 
 export const STALE_MESSAGE = 'This phase changed since you opened it; reload it and make your change again.';
 
@@ -148,27 +168,6 @@ async function refuseStale(client, phase, expectedVersion) {
   return current;
 }
 
-export const AGENT_REMOVAL_MESSAGE =
-  'An agent key may add or change rules but not remove one. Removing a rule is done by the owner on the Cloudflare page.';
-
-/** The ids of a list of rules, leaving out any rule without one. */
-const idsOf = (rules) => (Array.isArray(rules) ? rules : []).map((rule) => rule?.id).filter((id) => typeof id === 'string' && id);
-
-/**
- * Refuses (403, nothing written) an agent key's list that leaves out a rule
- * the phase has now. Every current rule's id must be in the new list, so an
- * agent key may add rules and change existing ones but never drop one. A
- * person (super_admin) may remove rules; the page asks them to type a
- * confirmation first.
- */
-function refuseAgentRemoval(user, current, rules) {
-  if (!isAgentUser(user)) return;
-  const kept = new Set(idsOf(rules));
-  if (idsOf(current?.rules).some((id) => !kept.has(id))) {
-    throw new Refusal(AGENT_REMOVAL_MESSAGE, { status: 403, code: 'CLOUDFLARE_OWNER_ONLY' });
-  }
-}
-
 /** A phase's new rules, checked for shape. Cloudflare checks what each rule says. */
 function rulesBody(phase, body) {
   refuseUnknownFields(body, ['rules', 'description', 'expectedVersion']);
@@ -193,11 +192,15 @@ export async function putPhase(call) {
   if (reason) throw protectedRefusal('That rule phase may not be changed from here', reason);
   const body = await bodyOf(request);
   const sent = rulesBody(phase, body);
+  refuseAgentResponse(user, phase, sent.rules);
   await requireOurZone(client);
   const current = await refuseStale(client, phase, body.expectedVersion);
   refuseAgentRemoval(user, current, sent.rules);
+  refuseAgentDisable(user, phase, current, sent.rules);
   const saved = await client.putPhase(phase, sent);
   const count = sent.rules.length;
-  const audited = await recordChange(call, { family: 'rules', phase, count }, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`);
-  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited });
+  const note = concurrentWriteNote(current, saved);
+  const details = { family: 'rules', phase, count, ...(note ? { concurrentWrite: true } : {}) };
+  const audited = await recordChange(call, details, `replaced the Cloudflare rules in the ${phase} phase (${count} rule(s)).`, note ? [note] : []);
+  return json(200, { ok: true, ruleset: rulesetView(phase, saved), audited, concurrentWrite: Boolean(note) });
 }

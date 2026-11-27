@@ -57,19 +57,22 @@ const STATUS = {
 describe('locks', () => {
   it('joins the server’s phases with the mirror, the server’s reason first', () => {
     const list = protectedPhaseList(STATUS);
-    expect(list.map((item) => item.phase)).toEqual([
-      'http_request_late_transform',
-      'http_ratelimit',
-    ]);
+    expect(list.map((item) => item.phase)).toEqual(['http_request_late_transform']);
     expect(list[0].reason).toBe('The origin secret rule.');
-    expect(protectedPhaseList(null)).toHaveLength(2);
+    expect(protectedPhaseList(null)).toHaveLength(1);
+    expect(
+      protectedPhaseList({
+        protected: { phases: [{ phase: 'http_ratelimit', reason: 'Server says.' }] },
+      })
+    ).toContainEqual({ phase: 'http_ratelimit', reason: 'Server says.' });
   });
 
   it('locks a phase the ruleset marks, a Terraform phase, and every phase not on the allow-list', () => {
     expect(
       phaseLock('http_custom', { ruleset: { locked: true, lockedReason: 'Server says.' } })
     ).toBe('Server says.');
-    expect(phaseLock('http_ratelimit')).toMatch(/rate limit/);
+    expect(phaseLock('http_ratelimit')).toBeNull();
+    expect(phaseLock('http_ratelimit', { status: STATUS })).toBeNull();
     expect(phaseLock('http_request_late_transform', { status: STATUS })).toBe(
       'The origin secret rule.'
     );
@@ -246,15 +249,17 @@ describe('the rules editor', () => {
     expect(() => parseRulesDraft('[{"action":"block"}]')).toThrow(/expression/);
   });
 
-  it('asks for the phase name typed when a custom security rule would be removed', () => {
+  it('asks for the phase name typed when a custom security or rate limiting rule would be removed', () => {
     expect(needsTypedConfirm('http_request_firewall_custom', 3, 2)).toBe(true);
     expect(needsTypedConfirm('http_request_firewall_custom', 3, 3)).toBe(false);
+    expect(needsTypedConfirm('http_ratelimit', 1, 0)).toBe(true);
+    expect(needsTypedConfirm('http_ratelimit', 1, 2)).toBe(false);
     expect(needsTypedConfirm('http_request_dynamic_redirect', 3, 1)).toBe(false);
   });
 
   it('separates the zone’s own entry points from Cloudflare’s managed rulesets', () => {
     const all = [
-      { id: '1', kind: 'zone', phase: 'http_ratelimit' },
+      { id: '1', kind: 'zone', phase: 'http_request_late_transform' },
       { id: '2', kind: 'managed', phase: 'http_request_firewall_managed' },
     ];
     expect(entrypointRulesets(all).map((r) => r.id)).toEqual(['1']);
@@ -361,5 +366,12 @@ describe('a saved change that needs checking', () => {
     expect(changeWarning({ audited: false, protectedAfterWrite: true })).toMatch(
       /protected name.*audit row could not be written/
     );
+  });
+
+  it('warns when a rule write landed just after another one (#1910)', () => {
+    expect(changeWarning({ audited: true, concurrentWrite: true })).toMatch(
+      /saved just before yours/
+    );
+    expect(changeWarning({ audited: true, concurrentWrite: false })).toBeNull();
   });
 });

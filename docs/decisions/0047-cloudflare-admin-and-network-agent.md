@@ -1,6 +1,6 @@
 # ADR 0047: Cloudflare administration from the admin portal, and Claude Network Guy
 
-**Status:** Accepted
+**Status:** Accepted; amended 2026-11-26 (the API rate limit moved from Terraform to the Cloudflare page)
 **Decision date:** 2026-11-26
 **Owners:** Site owner (workload and architecture)
 
@@ -19,6 +19,16 @@ changed in two ways only:
   [#1904](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1904),
   the API rate limit rule.
 - **The Cloudflare dashboard**, by hand, for everything else.
+
+> **Amended 2026-11-26: the rate limit moved from Terraform to the Cloudflare
+> page, owner request via
+> [#1903](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1903).**
+> The rate limit rule #1904 added was never applied, and
+> [#1908](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1908)
+> takes it out of Terraform. Terraform now owns the seven DNS records, the
+> origin rule and the Web Analytics site; the rate limit is made and changed
+> on the Cloudflare page or by Claude Network Guy. See the amendment at the
+> end of the Decision section.
 
 On 2026-11-26 the owner asked
 ([#1905](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1905))
@@ -94,9 +104,11 @@ decision widens that for one system, Cloudflare, in a narrow way.
      and `http_ratelimit`, the rate limit) with their own reasons, and every
      other phase, including any Cloudflare adds later, because that kind of
      rule can send or store the site's traffic elsewhere (an origin rule, a
-     snippet, a cloud connector). An empty list is refused (it would delete
+     snippet, a cloud connector). *(Amended 2026-11-26: `http_ratelimit` is
+     now a sixth editable phase and `http_request_late_transform` the only
+     Terraform write; see the amendment below.)* An empty list is refused (it would delete
      every rule), a custom security rule may not `skip`, and a replacement
-     must carry the version it read, so it cannot overwrite a newer change.
+     must carry the version it read, and is refused if the phase changed since. Cloudflare's rule set update takes no condition, so a write that lands in the moment between that check and this write is caught afterwards: the saved version is then more than one past the checked one, and the owner is warned (#1910).
      An agent key may add rules and change existing ones but never remove
      one: its new list must keep the id of every rule the phase has now,
      or it is refused with 403 `CLOUDFLARE_OWNER_ONLY`. Removing a rule is
@@ -141,6 +153,76 @@ decision widens that for one system, Cloudflare, in a narrow way.
    the right tab. Claude's key is shown as **Claude Publisher**; its id stays
    `claude`, so its record, its audit rows and the drafts it wrote keep their
    names.
+
+### Amendment 2026-11-26: the API rate limit is the Cloudflare page's
+
+Amended 2026-11-26: the rate limit moved from Terraform to the Cloudflare
+page, owner request via
+[#1903](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1903).
+The owner wants Claude Network Guy to make Cloudflare changes like this one,
+so nobody has to sign in to the Cloudflare dashboard by hand.
+[#1908](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1908)
+removes `cloudflare_ruleset.api_rate_limit` from `infra/frontend.tf` (it was
+never applied, so nothing is destroyed), and this change follows it:
+
+- **`http_ratelimit` moves from `PROTECTED_PHASES` to `EDITABLE_PHASES`** in
+  `functions/src/lib/cloudflare/protected.js` and its browser mirror, as
+  "Rate limiting: limit how many requests one address can make, for example
+  to the API." Six phases are now editable, and `http_request_late_transform`
+  (the origin rule) is the only phase Terraform writes.
+- **Every guard in point 4 applies to it unchanged:** no empty list, an
+  agent key may add and change rules but never remove one, the version
+  check, the zone check, secret-looking header values hidden, and an audit
+  row and phone message for each change.
+- **Two more limits for an agent key, in the custom security rules and the
+  rate limiting rules** (`GUARDED_PHASES` in
+  `functions/src/lib/cloudflare/rules-guards.js`), each refused with 403
+  `CLOUDFLARE_OWNER_ONLY` before anything is written: it may not switch a
+  rule off, or add one that starts switched off, because a rule switched
+  off is a rule removed in effect; and it may not set a custom response
+  (`action_parameters.response`, the body Cloudflare sends a blocked
+  caller), which only a paid plan offers and is closed ahead of time. A
+  person signed in as `super_admin` may still do both.
+- **Removing the rule is done in the Cloudflare dashboard.** The Free plan
+  has exactly one rate limiting rule
+  ([Cloudflare's availability table](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability)),
+  and the page refuses an empty list, so neither the page nor an agent key
+  can remove it; the owner deletes it on the Cloudflare dashboard's security
+  rules page. The page still asks for the phase name to be typed before a
+  person removes one of several rate limiting rules, as it does for a
+  custom security rule; that only matters on a paid plan, and the code is
+  kept for it.
+- **The sync test is tightened.** `protected.test.js` now holds that the
+  protected phases are exactly the ones `infra/` and `infra-lab/` write, so
+  a phase Terraform gives up is not left locked and one it takes on is
+  never left editable. It also counts the `cloudflare_ruleset` blocks
+  against the plain `phase = "..."` lines, so a phase written as a variable
+  cannot slip past it.
+- **The rule itself** is the one #1904 chose: phase `http_ratelimit`,
+  expression `(lower(http.request.uri.path) contains "/api/")`, 200 requests
+  per 10 seconds counted by `cf.colo.id` and `ip.src`, blocked for 10
+  seconds. The steps are in the
+  [Cloudflare admin runbook](../runbooks/cloudflare-admin.md#part-4-making-the-api-rate-limit-rule).
+  The token's permission list in Part 2 of that runbook includes Zone WAF
+  Edit, the permission
+  [Cloudflare lists for a zone rate limiting rule](https://developers.cloudflare.com/terraform/additional-configurations/rate-limiting-rules/).
+  The token has not been made yet, so the rule cannot be made until it is
+  pasted on Integrations → Keys.
+
+**What this adds to the accepted risks.** With the rules switch on, a stolen
+Network Guy key could loosen the rate limit on the Free plan in three ways: a
+much higher count, an expression that matches nothing, or a challenge in
+place of a block. It cannot remove the rule, and switching it off is now
+refused. It could also make the rule harsher, the opposite risk: an
+expression matching every path (`/`) with a limit of 1 request would
+throttle every visitor to the zone's proxied hosts, such as `api-azure` and
+`notes`, including the owner's own calls from the Cloudflare page, so the change would then have to be undone
+in the Cloudflare dashboard. Each change reaches the owner's phone. The rule
+is no longer recorded in `infra/`, so it is not put back by an apply; the
+audit log is the record, as for zone settings. Where the consequences below
+say "five editable phases", read six. Revisit these limits when the zone
+moves to a paid plan, which adds more rate limiting rules and more ways to
+change them.
 
 ## Consequences and accepted risks
 
@@ -207,6 +289,9 @@ decision widens that for one system, Cloudflare, in a narrow way.
 - Revisit when Terraform starts managing zone settings, when a Cloudflare
   plan with more features is bought, when the DNS audit's issues for this
   token become noise, or if a Network Guy change ever needs undoing by hand.
+- Added 2026-11-26 with the amendment: revisit when the zone moves to a paid
+  plan, because the rate limiting guards above assume the Free plan's one
+  rule.
 
 ## Related decisions and references
 

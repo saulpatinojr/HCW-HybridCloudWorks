@@ -23,7 +23,7 @@ import {
 import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES } from './client.js';
 import { EDITABLE_PHASES, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE } from './record.js';
-import { AGENT_REMOVAL_MESSAGE, STALE_MESSAGE } from './rules-routes.js';
+import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE, concurrentWriteNote } from './rules-routes.js';
 import { agentUserOf } from '../agent-content/keys.js';
 import { formatTelegramText } from '../notify.js';
 import { agentKeyById } from '../agent-content/agent-keys.js';
@@ -709,7 +709,11 @@ describe('rules', () => {
     },
   };
   const entrypoint = (phase, ruleset) => ({ [`GET ${PHASES}/${phase}/entrypoint`]: ok(ruleset) });
-  const put = (phase) => ({ [`PUT ${PHASES}/${phase}/entrypoint`]: (url, init) => ok({ id: 'r2', phase, version: '9', ...JSON.parse(init.body) }) });
+  // The saved rule set comes back with the next version unless a test names
+  // another (a version further on means a write landed in between).
+  const put = (phase, version) => ({
+    [`PUT ${PHASES}/${phase}/entrypoint`]: (url, init) => ok({ id: 'r2', phase, ...(version ? { version } : {}), ...JSON.parse(init.body) }),
+  });
   const replace = (phase, body) => request({ params: { phase }, body: { expectedVersion: '3', ...body } });
   const current = (phase, version = '3') => entrypoint(phase, { id: 'r2', phase, version, rules: [] });
 
@@ -804,9 +808,9 @@ describe('rules', () => {
     expect(api.fetch).not.toHaveBeenCalled();
   });
 
-  it.each([LATE, 'http_ratelimit'])('refuses to replace the Terraform phase %s, with its own reason, and calls nothing', async (phase) => {
+  it('refuses to replace the Terraform phase http_request_late_transform, with its own reason, and calls nothing', async () => {
     const { handlers, api, store } = setup({ user: NETWORK_GUY });
-    const res = parse(await handlers.putPhase(replace(phase, { rules: [RULE] }), {}));
+    const res = parse(await handlers.putPhase(replace(LATE, { rules: [RULE] }), {}));
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
     expect(res.body.reason).not.toBe(READ_ONLY_PHASE_REASON);
@@ -886,13 +890,40 @@ describe('rules', () => {
 
   it('replaces an editable phase’s rules when the version still matches, and records it', async () => {
     const rules = [{ expression: 'true', action: 'block' }];
-    const { handlers, api, store } = setup({ routes: { ...current('http_request_firewall_custom'), ...put('http_request_firewall_custom') } });
+    const { handlers, api, store } = setup({ routes: { ...current('http_request_firewall_custom'), ...put('http_request_firewall_custom', '4') } });
     const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules, description: 'Custom' }), {}));
     expect(res.status).toBe(200);
     expect(methods(api)).toEqual(['GET ', 'GET /rulesets/phases/http_request_firewall_custom/entrypoint', 'PUT /rulesets/phases/http_request_firewall_custom/entrypoint']);
     expect(api.calls[2].body).toEqual({ rules, description: 'Custom' });
-    expect(res.body.ruleset.version).toBe('9');
+    expect(res.body.ruleset.version).toBe('4');
+    expect(res.body.concurrentWrite).toBe(false);
     expect(store.upsertDoc.mock.calls[0][1].details).toEqual({ family: 'rules', phase: 'http_request_firewall_custom', count: 1 });
+  });
+
+  it.each([
+    ['a person', undefined],
+    ['an agent key', 'agent'],
+  ])('warns when another write landed between the check and the write, for %s', async (_who, kind) => {
+    const rules = [{ id: 'c1', expression: 'true', action: 'block', enabled: true }];
+    const routes = { ...entrypoint('http_request_firewall_custom', { id: 'r2', phase: 'http_request_firewall_custom', version: '3', rules: [{ id: 'c1', expression: 'false', action: 'block', enabled: true }] }), ...put('http_request_firewall_custom', '5') };
+    const { handlers, store, notifier } = setup({ ...(kind ? { user: NETWORK_GUY } : {}), routes });
+    const res = parse(await handlers.putPhase(replace('http_request_firewall_custom', { rules }), {}));
+    expect(res.status).toBe(200);
+    expect(res.body.concurrentWrite).toBe(true);
+    expect(store.upsertDoc.mock.calls[0][1].details).toMatchObject({ phase: 'http_request_firewall_custom', concurrentWrite: true });
+    expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    expect(notifier.notifyTelegram.mock.calls[0][0].message).toMatch(/may have replaced it/);
+  });
+
+  it('does not warn when the version moved on by one, or when Cloudflare gave no version', async () => {
+    expect(concurrentWriteNote({ version: '3' }, { version: '4' })).toBeNull();
+    expect(concurrentWriteNote({ version: '3' }, {})).toBeNull();
+    expect(concurrentWriteNote(null, { version: '1' })).toBeNull();
+    expect(concurrentWriteNote(null, {})).toBeNull();
+    expect(concurrentWriteNote({ last_updated: '2026-11-26T00:00:00Z' }, { last_updated: '2026-11-27T00:00:00Z' })).toBeNull();
+    expect(concurrentWriteNote({ version: '3' }, { version: '5' })).toMatch(/may have replaced it/);
+    // A phase with no rule set yet: the first write makes version 1, so 2 means two first writes raced.
+    expect(concurrentWriteNote(null, { version: '2' })).toMatch(/may have replaced it/);
   });
 
   it('refuses with 409, writing nothing, when the phase changed since it was read', async () => {
@@ -933,6 +964,137 @@ describe('rules', () => {
   it.each(EDITABLE_PHASES.map((entry) => entry.phase))('lets the editable phase %s be replaced', async (phase) => {
     const { handlers } = setup({ routes: { ...current(phase), ...put(phase) } });
     expect(parse(await handlers.putPhase(replace(phase, { rules: [{ expression: 'true', action: 'block' }] }), {})).status).toBe(200);
+  });
+
+  describe('the API rate limit rule (http_ratelimit), the Cloudflare page’s since #1903', () => {
+    const RATE = 'http_ratelimit';
+    // The rule #1904 chose: 200 requests in 10 seconds from one address to /api/, blocked for 10 seconds.
+    const LIMIT = {
+      description: 'Block an address sending more than 200 requests in 10 seconds to the API (counted per Cloudflare data centre)',
+      expression: '(lower(http.request.uri.path) contains "/api/")',
+      action: 'block',
+      enabled: true,
+      ratelimit: { characteristics: ['cf.colo.id', 'ip.src'], period: 10, requests_per_period: 200, mitigation_timeout: 10 },
+    };
+    const SAVED = { id: 'limit-1', ...LIMIT };
+    const withLimit = entrypoint(RATE, { id: 'r5', phase: RATE, kind: 'zone', version: '2', rules: [SAVED] });
+
+    it('lets Claude Network Guy make the rule in an empty phase, recorded and sent to the phone', async () => {
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: put(RATE) });
+      const res = parse(await handlers.putPhase(replace(RATE, { rules: [LIMIT], expectedVersion: null }), {}));
+      expect(res.status).toBe(200);
+      expect(methods(api)).toEqual(['GET ', `GET /rulesets/phases/${RATE}/entrypoint`, `PUT /rulesets/phases/${RATE}/entrypoint`]);
+      expect(api.calls[2].body).toEqual({ rules: [LIMIT] });
+      expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({ agent: 'claude-network', details: { family: 'rules', phase: RATE, count: 1 } });
+      expect(notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(notifier.notifyTelegram.mock.calls[0][0]).toMatchObject({
+        source: 'cloudflare-change:claude-network:audit-1',
+        message: `Claude Network Guy replaced the Cloudflare rules in the ${RATE} phase (1 rule(s)).`,
+      });
+    });
+
+    it('reads the phase in full, limits included, as editable', async () => {
+      const { handlers } = setup({ routes: withLimit });
+      const res = parse(await handlers.getPhase(request({ params: { phase: RATE } }), {}));
+      expect(res.body).toMatchObject({ editable: true, locked: false, lockedReason: null, version: '2' });
+      expect(res.body.ruleset.rules).toEqual([SAVED]);
+    });
+
+    it('lets an agent key change the limit but not remove the rule', async () => {
+      const changed = setup({ user: NETWORK_GUY, routes: { ...withLimit, ...put(RATE) } });
+      const raised = { ...SAVED, ratelimit: { ...SAVED.ratelimit, requests_per_period: 300 } };
+      expect(parse(await changed.handlers.putPhase(replace(RATE, { rules: [raised], expectedVersion: '2' }), {})).status).toBe(200);
+
+      const removed = setup({ user: NETWORK_GUY, routes: { ...withLimit, ...put(RATE) } });
+      const res = parse(await removed.handlers.putPhase(replace(RATE, { rules: [{ ...LIMIT, description: 'a new one' }], expectedVersion: '2' }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_REMOVAL_MESSAGE });
+      expect(WRITES(removed.api)).toEqual([]);
+      expect(removed.store.upsertDoc).not.toHaveBeenCalled();
+      expect(removed.notifier.notifyTelegram).not.toHaveBeenCalled();
+    });
+
+    it('refuses an empty list and a stale version for everyone, writing nothing', async () => {
+      for (const user of [PERSON, NETWORK_GUY]) {
+        const empty = setup({ user, routes: { ...withLimit, ...put(RATE) } });
+        const none = parse(await empty.handlers.putPhase(replace(RATE, { rules: [], expectedVersion: '2' }), {}));
+        expect(none.status).toBe(400);
+        expect(none.body.error).toMatch(/deletes every rule in the phase/);
+        expect(empty.api.fetch).not.toHaveBeenCalled();
+
+        const stale = setup({ user, routes: { ...withLimit, ...put(RATE) } });
+        const old = parse(await stale.handlers.putPhase(replace(RATE, { rules: [SAVED], expectedVersion: '1' }), {}));
+        expect(old.status).toBe(409);
+        expect(old.body).toMatchObject({ code: 'CLOUDFLARE_STALE', error: STALE_MESSAGE });
+        expect(WRITES(stale.api)).toEqual([]);
+        expect(stale.store.upsertDoc).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses to change the rule when the zone is not this site’s', async () => {
+      const { handlers, api, store } = setup({ user: NETWORK_GUY, routes: { [`GET ${ZONE_PATH}`]: zoneReply('other.example'), ...put(RATE) } });
+      const res = parse(await handlers.putPhase(replace(RATE, { rules: [LIMIT], expectedVersion: null }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_WRONG_ZONE', error: WRONG_ZONE_MESSAGE });
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('in a guarded phase an agent key may not switch a rule off or set a custom response', () => {
+    const ON = { id: 'rule-on', expression: 'true', action: 'block', enabled: true };
+    const OFF = { id: 'rule-off', expression: 'false', action: 'block', enabled: false };
+    const withRules = (phase, rules) => entrypoint(phase, { id: 'r6', phase, version: '3', rules });
+    const RESPONSE = { response: { status_code: 429, content: 'Slow down', content_type: 'text/plain' } };
+
+    it('guards the custom security rules and the rate limiting rules', () => {
+      expect(GUARDED_PHASES).toEqual(['http_request_firewall_custom', 'http_ratelimit']);
+    });
+
+    it.each(GUARDED_PHASES.flatMap((phase) => [
+      [phase, 'switches a rule that is on to enabled: false', [{ ...ON, enabled: false }, OFF]],
+      [phase, 'switches a rule that is on to a value that is not true', [{ ...ON, enabled: 'false' }, OFF]],
+      [phase, 'adds a new rule that starts switched off', [ON, OFF, { expression: 'true', action: 'block', enabled: false }]],
+      [phase, 'adds a rule under an id the phase does not hold, switched off', [ON, OFF, { id: 'rule-new', expression: 'true', action: 'block', enabled: false }]],
+    ]))('refuses in %s an agent key’s list that %s, with 403 and nothing written', async (phase, label, rules) => {
+      const { handlers, api, store, notifier } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON, OFF]), ...put(phase) } });
+      const res = parse(await handlers.putPhase(replace(phase, { rules }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_DISABLE_MESSAGE });
+      expect(WRITES(api)).toEqual([]);
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+      expect(notifier.notifyTelegram).not.toHaveBeenCalled();
+    });
+
+    it.each(GUARDED_PHASES)('lets an agent key keep a rule that is already off as it is, and add rules that are on, in %s', async (phase) => {
+      const { handlers, api } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON, OFF]), ...put(phase) } });
+      const rules = [ON, OFF, { expression: 'true', action: 'block' }, { expression: 'true', action: 'block', enabled: true }];
+      expect(parse(await handlers.putPhase(replace(phase, { rules }), {})).status).toBe(200);
+      expect(WRITES(api)).toHaveLength(1);
+    });
+
+    it.each(GUARDED_PHASES)('refuses an agent key’s custom response in %s before calling Cloudflare', async (phase) => {
+      const { handlers, api, store } = setup({ user: NETWORK_GUY, routes: { ...withRules(phase, [ON]), ...put(phase) } });
+      const rules = [{ ...ON, action_parameters: RESPONSE }];
+      const res = parse(await handlers.putPhase(replace(phase, { rules }), {}));
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: 'CLOUDFLARE_OWNER_ONLY', error: AGENT_RESPONSE_MESSAGE });
+      expect(api.fetch).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    });
+
+    it.each(GUARDED_PHASES)('lets a super_admin person switch a rule off and set a custom response in %s', async (phase) => {
+      const { handlers, api } = setup({ routes: { ...withRules(phase, [ON]), ...put(phase) } });
+      const rules = [{ ...ON, enabled: false, action_parameters: RESPONSE }];
+      expect(parse(await handlers.putPhase(replace(phase, { rules }), {})).status).toBe(200);
+      expect(api.calls[2].body).toEqual({ rules });
+    });
+
+    it('leaves the other editable phases as they were: an agent key may switch a redirect off', async () => {
+      const redirect = { id: 'rule-on', expression: 'true', action: 'redirect', enabled: true };
+      const { handlers } = setup({ user: NETWORK_GUY, routes: { ...withRules(REDIRECT, [redirect]), ...put(REDIRECT) } });
+      expect(parse(await handlers.putPhase(replace(REDIRECT, { rules: [{ ...redirect, enabled: false }] }), {})).status).toBe(200);
+    });
   });
 
   describe('an agent key may add or change rules, never remove one', () => {
