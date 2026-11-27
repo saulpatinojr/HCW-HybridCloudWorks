@@ -25,7 +25,7 @@
  */
 import { bad, bodyOf, json, paramOf, protectedRefusal, refuseUnknownFields } from './input.js';
 import { recordChange, requireOurZone } from './record.js';
-import { checkDnsName, dnsNameProtection, normalizeDnsName } from './protected.js';
+import { checkDnsName, dnsNameProtection, normalizeDnsName, otherManagedZone } from './protected.js';
 
 /** The record types the page may add or edit. Others are read-only here. */
 export const DNS_TYPES = Object.freeze(['A', 'AAAA', 'CNAME', 'MX', 'TXT']);
@@ -37,10 +37,21 @@ function typeValue(value) {
   return type;
 }
 
-/** The name, checked strictly and written in full (the name that is checked is the name that is sent). */
+/**
+ * Refuses (400) a name that belongs to the other managed zone (#1911): sent
+ * here it would be made inside this zone under a confusing name, so the
+ * caller is told to pick that zone instead.
+ */
+function refuseOtherZone(value, zoneName) {
+  const other = otherManagedZone(value, zoneName);
+  if (other) throw bad(`name ends with ${other}, which is its own zone: send it with zone=${other} (or pick that zone on the page) to change it there.`);
+}
+
+/** The name, checked strictly and written in full inside the zone (the name that is checked is the name that is sent). */
 function nameValue(value, zoneName) {
   if (typeof value !== 'string' || !value.trim() || value.length > 253) throw bad('name must be a DNS name of 1 to 253 characters.');
   if (!/^[A-Za-z0-9*_.@-]+$/.test(value.trim())) throw bad('name may hold only letters, digits, dots, hyphens, underscores, @ and *.');
+  refuseOtherZone(value, zoneName);
   const checked = checkDnsName(value, zoneName);
   if (checked.problem) throw bad(checked.problem);
   return checked.name;

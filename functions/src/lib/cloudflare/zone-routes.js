@@ -38,6 +38,7 @@ export function protectedView(zone) {
     dnsNames: zone.dnsNames.map(({ name, reason }) => ({ name, reason })),
     dnsPrefixes: zone.dnsPrefixes.map(({ prefix, reason }) => ({ prefix, reason })),
     phases: zone.phases.map(({ phase, reason }) => ({ phase, reason })),
+    wildcardReason: zone.wildcardReason,
     editablePhases: EDITABLE_PHASES.map(({ phase, description }) => ({ phase, description })),
     ownerOnlySettings: OWNER_ONLY_SETTINGS.map(({ setting, reason }) => ({ setting, reason })),
   };

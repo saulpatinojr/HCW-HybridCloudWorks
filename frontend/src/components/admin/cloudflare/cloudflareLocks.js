@@ -18,8 +18,9 @@
  *   OWNER_ONLY_SETTINGS  zone settings an agent key may not change
  *   DNS name checks      dnsNameLock matches the server's dnsNameProtection:
  *                        a `*.x` entry covers every name under x, `*` and a
- *                        wildcard over a protected name are locked, and the
- *                        prefixes come from the status answer
+ *                        wildcard over (or above) a protected name are
+ *                        locked, and the prefixes and the lab zone's
+ *                        every-wildcard rule come from the status answer
  *   REDACTED_VALUE       what a hidden secret reads as in an editable phase
  *
  * The status answer (`status.protected`) carries the server's own lists; a
@@ -217,11 +218,29 @@ function prefixLock(full, status) {
   return found ? found.reason || DEFAULT_LOCK : null;
 }
 
+/** The reason of a listed name lying under `base` (a `*.y` entry counts as y), or null. */
+function listedUnderLock(base, status, zone) {
+  const found = protectedDnsList(status).find((item) =>
+    normalizeDnsName(item.name, zone).replace(/^\*\./, '').endsWith(`.${base}`)
+  );
+  return found ? found.reason || DEFAULT_LOCK : null;
+}
+
+/**
+ * Why a wildcard `*.x` is locked: the zone's own wildcard, any wildcard in a
+ * zone that refuses them all (the status answer's `wildcardReason`, the lab
+ * zone's), or one that would answer for a locked name (x, or one under x).
+ */
 function wildcardLock(full, status, zone) {
   if (!full.startsWith('*.')) return null;
   const base = full.slice(2);
   if (base === zone) return APEX_WILDCARD_REASON;
-  return listedLock(base, status, zone) || prefixLock(base, status);
+  return (
+    status?.protected?.wildcardReason ||
+    listedLock(base, status, zone) ||
+    prefixLock(base, status) ||
+    listedUnderLock(base, status, zone)
+  );
 }
 
 /**

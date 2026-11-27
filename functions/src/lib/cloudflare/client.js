@@ -5,9 +5,11 @@
  * The site's zone is named by its id (CF_ZONE_ID, set by Terraform). Any
  * other managed zone (protected.js MANAGED_ZONES; the lab zone, #1911) is
  * named by its name, and its id is looked up once with the same token
- * (`GET /zones?name=`), then kept for the instance's life. A lookup that
- * finds no zone of exactly that name is refused with a sentence saying the
- * token cannot reach it; a failed lookup is never kept.
+ * (`GET /zones?name=`), then kept for the instance's life. A lookup must
+ * find exactly one active zone of exactly that name, or it is refused with
+ * a sentence saying the token cannot reach it; a failed lookup is never
+ * kept, and a kept id is forgotten as soon as Cloudflare answers 403 or 404
+ * for a call under it (the zone was removed, or the token lost it).
  *
  * Every call goes through guardedFetch (https only, no redirects, a deadline
  * and a size cap), to a path built here from fixed pieces and ids the
@@ -155,7 +157,13 @@ async function call(conn, method, path, { query = null, body = undefined, allow4
   const status = response.status;
   if (status === 404 && allow404) return { status, body: null };
   if (isSuccess(status, parsed)) return { status, body: parsed };
-  throw refusalError(status, parsed);
+  throw refusedCall(conn, status, parsed);
+}
+
+/** The error for a refused call, after telling the connection when Cloudflare said 403 or 404. */
+function refusedCall(conn, status, parsed) {
+  if (status === 403 || status === 404) conn.onRefused?.();
+  return refusalError(status, parsed);
 }
 
 /** The `result` of a call. */
@@ -217,12 +225,17 @@ export function forgetZoneIds(name = null) {
 export const zoneUnreachableMessage = (name) =>
   `The admin token cannot reach the zone ${name}: add it to the token's Zone Resources in the Cloudflare dashboard (the Cloudflare admin runbook, part 2), then try again.`;
 
-/** The id of the zone with exactly this name, read once with the token and then kept. */
+/** The one active zone of exactly this name in a lookup's answer, or null (none, several, or not active). */
+function onlyActive(result, name) {
+  const named = (Array.isArray(result) ? result : []).filter((zone) => String(zone?.name ?? '').toLowerCase() === name);
+  return named.length === 1 && named[0]?.status === 'active' ? named[0] : null;
+}
+
+/** The id of the one active zone with exactly this name, read once with the token and then kept. */
 async function lookupZoneId(conn, name) {
   if (ZONE_IDS.has(name)) return ZONE_IDS.get(name);
   const result = await resultOf(conn, 'GET', '/zones', { query: { name, per_page: 5 } });
-  const found = (Array.isArray(result) ? result : []).find((zone) => String(zone?.name ?? '').toLowerCase() === name);
-  const id = String(found?.id ?? '').toLowerCase();
+  const id = String(onlyActive(result, name)?.id ?? '').toLowerCase();
   if (!ZONE_ID_PATTERN.test(id)) {
     throw new CloudflareError(zoneUnreachableMessage(name), { status: 502, code: 'CLOUDFLARE_ZONE_UNREACHABLE' });
   }
@@ -266,7 +279,9 @@ export function createCloudflareClient(options) {
   const { token, zoneId = null, zoneName = null } = options;
   if (zoneId !== null && !ZONE_ID_PATTERN.test(String(zoneId))) throw new Error('createCloudflareClient: zone id has the wrong shape');
   if (zoneId === null && !zoneName) throw new Error('createCloudflareClient: give a zone id or a zone name');
-  const conn = { token, doubles: doublesOf(options) };
+  // A looked-up id is forgotten when Cloudflare answers 403 or 404 under it.
+  const onRefused = zoneId ? null : () => forgetZoneIds(zoneName);
+  const conn = { token, doubles: doublesOf(options), onRefused };
   const base = zoneBaseOf(conn, zoneId, zoneName);
   const at = async (suffix = '') => `${await base()}${suffix}`;
   const setting = (id) => at(`/settings/${encodeURIComponent(id)}`);

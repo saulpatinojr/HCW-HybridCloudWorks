@@ -156,6 +156,11 @@ function LockedNames({ status }) {
         locked name (such as <code>*.www</code>) is locked too, and so is <code>*</code> for the
         whole zone: {APEX_WILDCARD_REASON}
       </p>
+      {status?.protected?.wildcardReason ? (
+        <p className="text-xs text-muted-foreground" data-testid="all-wildcards">
+          In this zone every wildcard is locked: {status.protected.wildcardReason}
+        </p>
+      ) : null}
       <ul className="mt-1 space-y-1 text-sm">
         {protectedPrefixList(status).map((item) => (
           <Reasoned key={item.prefix} code={`${item.prefix}…`} reason={item.reason} />

@@ -756,6 +756,9 @@ describe('the zone picker (#1911)', () => {
   const SITE_ROLE = "The site's own zone: the website and its API.";
   const LAB_ROLE = "The lab's certificate zone: Caddy writes its certificate checks here.";
   const CADDY = 'A certificate check the lab host’s Caddy writes. Caddy owns these names.';
+  const APEX = 'The lab zone’s own address. Nothing lives there.';
+  const SUBTREE = 'Where the lab’s certificate checks live.';
+  const WILDCARDS = 'A wildcard in the lab zone could answer the lab’s certificate check.';
   const statusFor = (zone) =>
     zone === LAB
       ? {
@@ -763,8 +766,13 @@ describe('the zone picker (#1911)', () => {
           zone: { id: 'z2', name: LAB, status: 'active', plan: 'Free Website' },
           managed: { name: LAB, role: LAB_ROLE },
           protected: {
-            dnsNames: [],
+            dnsNames: [
+              { name: LAB, reason: APEX },
+              { name: `lab.${LAB}`, reason: SUBTREE },
+              { name: `*.lab.${LAB}`, reason: SUBTREE },
+            ],
             dnsPrefixes: [{ prefix: '_acme-challenge', reason: CADDY }],
+            wildcardReason: WILDCARDS,
             phases: [],
             ownerOnlySettings: STATUS.protected.ownerOnlySettings,
           },
@@ -809,6 +817,8 @@ describe('the zone picker (#1911)', () => {
         .map((option) => option.value)
     ).toEqual([SITE, LAB]);
     expect(picker).toHaveValue(SITE);
+    await screen.findByText('Free Website');
+    expect(screen.queryByTestId('all-wildcards')).toBeNull();
     expect(await screen.findByTestId('zone-role')).toHaveTextContent(SITE_ROLE);
     expect(api.readCloudflareStatus).toHaveBeenCalledWith(SITE);
     expect(screen.getByTestId('where')).toHaveTextContent(/^$/);
@@ -841,7 +851,7 @@ describe('the zone picker (#1911)', () => {
     expect(api.readCloudflareSettings).not.toHaveBeenCalledWith('example.com');
   });
 
-  it('locks the lab zone’s certificate checks with Caddy’s reason, and sends a lab record to the lab zone', async () => {
+  it('locks the lab zone’s certificate names, its apex and every wildcard, and sends a lab record to the lab zone', async () => {
     api.createCloudflareDnsRecord.mockResolvedValue({ record: {} });
     renderWithAddress(`/admin/cloudflare?tab=dns&zone=${LAB}`);
     await screen.findByTestId('dns-row-rec2');
@@ -852,8 +862,17 @@ describe('the zone picker (#1911)', () => {
       target: { value: '_acme-challenge.lab' },
     });
     fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'x' } });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${CADDY}`);
-    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: '@' } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${SUBTREE}`);
+    for (const [name, reason] of [
+      ['_acme-challenge', CADDY],
+      ['x.lab', SUBTREE],
+      ['@', APEX],
+      ['*.foo', WILDCARDS],
+    ]) {
+      fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: name } });
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(`That name is locked. ${reason}`);
+    }
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'www' } });
     fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: '192.0.2.30' } });
     expect(within(dialog).queryByRole('alert')).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: /Add the record/ }));
@@ -867,6 +886,7 @@ describe('the zone picker (#1911)', () => {
       await screen.findByText(/None in this zone: Terraform writes no rules here/)
     ).toBeInTheDocument();
     expect(screen.getByTestId('locked-phases')).toBeEmptyDOMElement();
+    expect(screen.getByTestId('all-wildcards')).toHaveTextContent(WILDCARDS);
   });
 
   it('shows a note in place of the tabs when the server answers for another zone, and offers no change', async () => {

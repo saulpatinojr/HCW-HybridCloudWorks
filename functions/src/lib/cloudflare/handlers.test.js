@@ -1296,7 +1296,7 @@ describe('the lab zone (#1911)', () => {
   const LAB_ID = '00000000000000000000000000000003';
   const LAB_PATH = `/client/v4/zones/${LAB_ID}`;
   const LAB = `zone=${LAB_ZONE}`;
-  const lookup = (zones = [{ id: LAB_ID, name: LAB_ZONE }]) => ({ 'GET /client/v4/zones': ok(zones) });
+  const lookup = (zones = [{ id: LAB_ID, name: LAB_ZONE, status: 'active' }]) => ({ 'GET /client/v4/zones': ok(zones) });
   const labZone = (name = LAB_ZONE) => ({ [`GET ${LAB_PATH}`]: ok({ id: LAB_ID, name, status: 'active', plan: { name: 'Free Website' } }) });
   const labRoutes = (extra = {}) => ({ ...lookup(), ...labZone(), ...extra });
   const paths = (api) => api.calls.map((call) => `${call.method} ${call.path.replace(LAB_PATH, '<lab>')}`);
@@ -1359,7 +1359,9 @@ describe('the lab zone (#1911)', () => {
     it.each([
       ['no zone', []],
       ['only a zone whose name merely contains it', [{ id: LAB_ID, name: `evil-${LAB_ZONE}` }]],
-      ['a zone of that name without a proper id', [{ id: '../zones', name: LAB_ZONE }]],
+      ['a zone of that name without a proper id', [{ id: '../zones', name: LAB_ZONE, status: 'active' }]],
+      ['a zone of that name that is not active', [{ id: LAB_ID, name: LAB_ZONE, status: 'pending' }]],
+      ['two active zones of that name', [{ id: LAB_ID, name: LAB_ZONE, status: 'active' }, { id: ZONE, name: LAB_ZONE.toUpperCase(), status: 'active' }]],
     ])('refuses when the token finds %s, says to add it to the token, and keeps nothing', async (label, zones) => {
       const { handlers, api } = setup({ routes: { ...lookup(zones), ...labZone() } });
       const res = parse(await handlers.getSettings(request({ query: LAB }), { warn: vi.fn() }));
@@ -1370,6 +1372,23 @@ describe('the lab zone (#1911)', () => {
       const again = setup({ routes: { ...lookup(zones), ...labZone() } });
       await again.handlers.getSettings(request({ query: LAB }), { warn: vi.fn() });
       expect(paths(again.api)).toEqual(['GET /client/v4/zones']);
+    });
+
+    it.each([403, 404])('forgets a looked-up id when Cloudflare answers %i under it, and looks it up again next time (F5)', async (code) => {
+      const refused = reply(code, { success: false, errors: [{ code: 7003, message: 'gone' }] });
+      const first = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: refused }) });
+      expect(parse(await first.handlers.getSettings(request({ query: LAB }), { warn: vi.fn() })).status).not.toBe(200);
+      const second = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: ok([]) }) });
+      await second.handlers.getSettings(request({ query: LAB }), {});
+      expect(paths(second.api)).toEqual(['GET /client/v4/zones', 'GET <lab>/settings']);
+    });
+
+    it('keeps a looked-up id through any other refusal', async () => {
+      const first = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: reply(500, {}) }) });
+      await first.handlers.getSettings(request({ query: LAB }), { warn: vi.fn() });
+      const second = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/settings`]: ok([]) }) });
+      await second.handlers.getSettings(request({ query: LAB }), {});
+      expect(paths(second.api)).toEqual(['GET <lab>/settings']);
     });
 
     it('answers the status with the sentence when the lookup fails, looking up once', async () => {
@@ -1383,36 +1402,50 @@ describe('the lab zone (#1911)', () => {
   });
 
   describe('what is protected there', () => {
-    it('lists only the certificate checks, with Caddy’s reason, and no Terraform phase', async () => {
+    it('lists the apex, the certificate subtree, Caddy’s checks and the wildcard rule, and no Terraform phase', async () => {
       const { handlers } = setup({ routes: labRoutes() });
       const res = parse(await handlers.getStatus(request({ query: LAB }), {}));
       expect(res.body.managed).toEqual({ name: LAB_ZONE, role: expect.stringMatching(/Caddy/) });
-      expect(res.body.protected.dnsNames).toEqual([]);
+      expect(res.body.protected.dnsNames.map((item) => item.name)).toEqual([LAB_ZONE, `lab.${LAB_ZONE}`, `*.lab.${LAB_ZONE}`]);
       expect(res.body.protected.dnsPrefixes).toEqual([{ prefix: '_acme-challenge', reason: expect.stringMatching(/Caddy.*lab-host\/README\.md/) }]);
+      expect(res.body.protected.wildcardReason).toMatch(/wildcard in the lab zone could answer the lab's certificate check/);
       expect(res.body.protected.phases).toEqual([]);
       expect(res.body.protected.editablePhases.map((item) => item.phase)).toEqual(EDITABLE_PHASES.map((item) => item.phase));
     });
 
-    it.each(['_acme-challenge.lab', `_acme-challenge.lab.${LAB_ZONE}`, '_acme-challenge', '*._acme-challenge.lab', '*'])(
-      'refuses to add %s, before any call',
-      async (name) => {
-        const { handlers, api } = setup({ routes: labRoutes(created) });
-        const res = parse(await handlers.createDns(request({ query: LAB, body: { type: 'TXT', name, content: 'x' } }), {}));
-        expect(res.status).toBe(409);
-        expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
-        expect(api.fetch).not.toHaveBeenCalled();
-      }
-    );
+    it('lists no wildcard rule for the site’s zone', async () => {
+      const { handlers } = setup();
+      const res = parse(await handlers.getStatus(request(), {}));
+      expect(res.body.protected.wildcardReason).toBeNull();
+    });
 
-    it('adds a record at the lab zone’s apex or www, which nothing there uses, named in full in that zone', async () => {
-      for (const [name, full] of [['@', LAB_ZONE], ['www', `www.${LAB_ZONE}`]]) {
-        forgetZoneIds();
-        const { handlers, api } = setup({ routes: labRoutes(created) });
-        const res = parse(await handlers.createDns(request({ query: LAB, body: { type: 'A', name, content: '192.0.2.1' } }), {}));
-        expect(res.status, name).toBe(201);
-        expect(api.calls.at(-1).body.name).toBe(full);
-        expect(res.body.record).toMatchObject({ name: full, locked: false });
-      }
+    it.each([
+      ['TXT', '*.lab'],
+      ['CNAME', '*.lab'],
+      ['TXT', '*'],
+      ['CNAME', '*.foo'],
+      ['TXT', '*.x.lab'],
+      ['TXT', 'lab'],
+      ['CNAME', 'x.lab'],
+      ['TXT', '_acme-challenge.lab'],
+      ['TXT', `_acme-challenge.lab.${LAB_ZONE}`],
+      ['TXT', '_acme-challenge'],
+      ['MX', '@'],
+      ['TXT', LAB_ZONE],
+    ])('refuses to add a %s record at %s, before any call', async (type, name) => {
+      const { handlers, api } = setup({ routes: labRoutes(created) });
+      const res = parse(await handlers.createDns(request({ query: LAB, body: { type, name, content: 'x.example.net', priority: 10 } }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
+      expect(api.fetch).not.toHaveBeenCalled();
+    });
+
+    it('adds a record at www, which nothing there uses, named in full in that zone', async () => {
+      const { handlers, api } = setup({ routes: labRoutes(created) });
+      const res = parse(await handlers.createDns(request({ query: LAB, body: { type: 'A', name: 'www', content: '192.0.2.1' } }), {}));
+      expect(res.status).toBe(201);
+      expect(api.calls.at(-1).body.name).toBe(`www.${LAB_ZONE}`);
+      expect(res.body.record).toMatchObject({ name: `www.${LAB_ZONE}`, locked: false });
     });
 
     it('still refuses the site’s own address in the site’s zone when it is named', async () => {
@@ -1423,31 +1456,52 @@ describe('the lab zone (#1911)', () => {
       expect(api.fetch).not.toHaveBeenCalled();
     });
 
-    it('refuses an edit to a certificate check by its new name before any call, and by its current name after reading it', async () => {
-      const current = (name) => ok({ id: RECORD_ID, type: 'TXT', name, content: 'x', proxied: false, ttl: 1 });
-      const patch = { [`PATCH ${LAB_PATH}/dns_records/${RECORD_ID}`]: ok({}) };
-      const byNew = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: current(`note.${LAB_ZONE}`), ...patch }) });
-      const renamed = parse(await byNew.handlers.patchDns(request({ query: LAB, params: { recordId: RECORD_ID }, body: { name: '_acme-challenge.lab' } }), {}));
-      expect(renamed.status).toBe(409);
-      expect(byNew.api.fetch).not.toHaveBeenCalled();
-      const byOld = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: current(`_acme-challenge.lab.${LAB_ZONE}`), ...patch }) });
-      const edited = parse(await byOld.handlers.patchDns(request({ query: LAB, params: { recordId: RECORD_ID }, body: { content: 'y' } }), {}));
-      expect(edited.status).toBe(409);
-      expect(edited.body.reason).toMatch(/Caddy/);
-      expect(WRITES(byOld.api)).toEqual([]);
+    const current = (name) => ok({ id: RECORD_ID, type: 'TXT', name, content: 'x', proxied: false, ttl: 1 });
+    const patch = { [`PATCH ${LAB_PATH}/dns_records/${RECORD_ID}`]: ok({}) };
+
+    it.each(['*.lab', 'x.lab', '_acme-challenge.lab', '*.foo', '@'])('refuses renaming an editable lab record to %s, before any call', async (name) => {
+      const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: current(`note.${LAB_ZONE}`), ...patch }) });
+      const res = parse(await handlers.patchDns(request({ query: LAB, params: { recordId: RECORD_ID }, body: { name } }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('CLOUDFLARE_PROTECTED');
+      expect(api.fetch).not.toHaveBeenCalled();
     });
 
-    it('locks the certificate checks in the list, and leaves the apex open', async () => {
+    it('refuses an edit to a certificate check by its current name, after reading it', async () => {
+      const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records/${RECORD_ID}`]: current(`_acme-challenge.lab.${LAB_ZONE}`), ...patch }) });
+      const res = parse(await handlers.patchDns(request({ query: LAB, params: { recordId: RECORD_ID }, body: { content: 'y' } }), {}));
+      expect(res.status).toBe(409);
+      expect(res.body.reason).toMatch(/certificate.*lab-host\/README\.md/);
+      expect(WRITES(api)).toEqual([]);
+    });
+
+    it('locks the certificate checks and the apex in the list, and leaves www open', async () => {
       const records = [
         { id: 'a', type: 'TXT', name: `_acme-challenge.lab.${LAB_ZONE}`, content: 'x' },
-        { id: 'b', type: 'A', name: LAB_ZONE, content: '192.0.2.1' },
+        { id: 'b', type: 'MX', name: LAB_ZONE, content: 'mail.example.net' },
+        { id: 'c', type: 'A', name: `www.${LAB_ZONE}`, content: '192.0.2.1' },
       ];
       const { handlers } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records`]: ok(records, { result_info: { total_pages: 1 } }) }) });
       const res = parse(await handlers.listDns(request({ query: LAB }), {}));
       expect(res.body.records.map((record) => [record.name, record.locked])).toEqual([
         [`_acme-challenge.lab.${LAB_ZONE}`, true],
-        [LAB_ZONE, false],
+        [LAB_ZONE, true],
+        [`www.${LAB_ZONE}`, false],
       ]);
+    });
+
+    it.each([
+      [LAB, `x.${ZONE_APEX}`, ZONE_APEX],
+      [LAB, ZONE_APEX, ZONE_APEX],
+      [`zone=${ZONE_APEX}`, `x.${LAB_ZONE}`, LAB_ZONE],
+    ])('with %s, refuses (400) the name %s, which belongs to %s, before any call (F6)', async (query, name, other) => {
+      const { handlers, api } = setup({ routes: labRoutes(created) });
+      const res = parse(await handlers.createDns(request({ query, body: { type: 'A', name, content: '192.0.2.1' } }), {}));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(`name ends with ${other}, which is its own zone: send it with zone=${other} (or pick that zone on the page) to change it there.`);
+      expect(api.fetch).not.toHaveBeenCalled();
+      const renamed = parse(await handlers.patchDns(request({ query, params: { recordId: RECORD_ID }, body: { name } }), {}));
+      expect(renamed.status).toBe(400);
     });
 
     it('reads the origin rule’s phase as read-only for the plain reason: Terraform writes no rule there', async () => {

@@ -174,6 +174,7 @@ describe('the managed zones (#1911)', () => {
       dnsNames: zone.dnsNames.map(({ name, reason }) => ({ name, reason })),
       dnsPrefixes: zone.dnsPrefixes.map(({ prefix, reason }) => ({ prefix, reason })),
       phases: zone.phases.map(({ phase, reason }) => ({ phase, reason })),
+      wildcardReason: zone.wildcardReason,
     },
   });
 
@@ -204,6 +205,13 @@ describe('the managed zones (#1911)', () => {
     '*._acme-challenge.lab',
     '*',
     '*.lab',
+    '*.x.lab',
+    '*.foo',
+    '*.www',
+    'labs',
+    'lab',
+    'x.lab',
+    'a.b.lab',
     `x.${server.LAB_ZONE}`,
   ];
   it.each(LAB_NAMES)('locks %s in the lab zone exactly as the server does', (name) => {
@@ -236,5 +244,19 @@ describe('the managed zones (#1911)', () => {
     expect(protectedPhaseList(null).map((item) => item.phase)).toEqual([
       'http_request_late_transform',
     ]);
+  });
+});
+
+describe('a wildcard over a locked name, in the site’s zone too (#1911 review F1)', () => {
+  it.each([
+    '*.go',
+    '*.api-azure',
+    '*.coder.lab',
+    '*.lab',
+    '*.x.coder.lab',
+    '*.blog',
+    '*.shop.blog',
+  ])('%s matches the server', (name) => {
+    expect(dnsNameLock(name, { status: SERVER_STATUS })).toBe(server.dnsNameProtection(name));
   });
 });

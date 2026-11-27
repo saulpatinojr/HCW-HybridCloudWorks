@@ -14,6 +14,8 @@ import { terraformSource } from '../../../test/terraform-source.js';
 import {
   APEX_WILDCARD_REASON,
   EDITABLE_PHASES,
+  LAB_ACME_TARGET,
+  LAB_SUBTREE,
   LAB_ZONE,
   MANAGED_ZONES,
   OWNER_ONLY_SETTINGS,
@@ -27,6 +29,8 @@ import {
   dnsNameProtection,
   isEditablePhase,
   managedZone,
+  otherManagedZone,
+  protectionIn,
   normalizeDnsName,
   ownerOnlySettingReason,
   phaseProtection,
@@ -249,19 +253,57 @@ describe('the managed zones (#1911)', () => {
     }
   });
 
-  it('protects only the certificate checks in the lab zone, with Caddy’s reason', () => {
-    const lab = (name) => dnsNameProtection(name, LAB_ZONE);
-    for (const name of ['_acme-challenge.lab', `_acme-challenge.lab.${LAB_ZONE}`, '_acme-challenge', '*._acme-challenge.lab', '_acme-challenge-x']) {
+  const lab = (name) => dnsNameProtection(name, LAB_ZONE);
+
+  it('protects the certificate checks Caddy writes in the lab zone, with Caddy’s reason', () => {
+    for (const name of ['_acme-challenge', '_acme-challenge.note', '_acme-challenge-x']) {
       expect(lab(name), name).toMatch(/Caddy.*lab-host\/README\.md/);
     }
-    expect(lab('*')).toBe(APEX_WILDCARD_REASON);
-    for (const name of ['@', LAB_ZONE, 'www', 'lab', 'note', '*.lab']) expect(lab(name), name).toBeNull();
+  });
+
+  it('derives the protected lab subtree from the delegation target infra-lab points at', () => {
+    expect(LAB_ACME_TARGET).toBe(defaultOf(labVariables, 'lab_acme_challenge_target'));
+    expect(LAB_SUBTREE).toBe(`lab.${LAB_ZONE}`);
+    expect(LAB_ACME_TARGET.endsWith(`.${LAB_SUBTREE}`)).toBe(true);
+  });
+
+  it.each(['lab', 'x.lab', 'a.b.lab', '_acme-challenge.lab', `_acme-challenge.lab.${LAB_ZONE}`, 'LAB'])('protects %s, in the lab’s certificate subtree', (name) => {
+    expect(lab(name)).toMatch(/certificate.*lab-host\/README\.md/);
+  });
+
+  it.each(['*', '*.lab', '*.x.lab', '*.foo', '*.www', '*.a.b', `*.${LAB_ZONE}`])('refuses the wildcard %s in the lab zone (#1911 review F1)', (name) => {
+    expect(lab(name)).not.toBeNull();
+    if (name !== '*' && name !== `*.${LAB_ZONE}`) expect(lab(name)).toMatch(/wildcard|certificate/);
+  });
+
+  it('protects the lab zone’s apex for every record type, and leaves www and other names open (F2)', () => {
+    for (const name of ['@', LAB_ZONE, `${LAB_ZONE}.`]) expect(lab(name), name).toMatch(/receive mail for the domain/);
+    for (const name of ['www', 'note', 'labs', 'mylab', 'lab-two', `x.www.${LAB_ZONE}`]) expect(lab(name), name).toBeNull();
   });
 
   it('keeps every site protection out of the lab zone, and the lab zone’s apex out of the site’s', () => {
     expect(dnsNameProtection('www', LAB_ZONE)).toBeNull();
     expect(dnsNameProtection(`www.${ZONE_APEX}`, ZONE_APEX)).not.toBeNull();
     expect(dnsNameProtection('@')).not.toBeNull();
+  });
+
+  it('refuses a wildcard over any protected name, not only over a protected base (F1)', () => {
+    const zone = { name: 'example.test', dnsNames: [{ name: 'a.b.example.test', reason: 'R' }], dnsPrefixes: [], phases: [], wildcardReason: null };
+    expect(protectionIn(zone, '*.b.example.test')).toBe('R');
+    expect(protectionIn(zone, '*.c.b.example.test')).toBeNull();
+    expect(protectionIn(zone, '*.other.example.test')).toBeNull();
+    expect(protectionIn(zone, '*.example.test')).toBe(APEX_WILDCARD_REASON);
+    const starred = { ...zone, dnsNames: [{ name: '*.a.b.example.test', reason: 'S' }] };
+    expect(protectionIn(starred, '*.b.example.test')).toBe('S');
+  });
+
+  it('names the other managed zone a name belongs to (F6)', () => {
+    expect(otherManagedZone(`x.${ZONE_APEX}`, LAB_ZONE)).toBe(ZONE_APEX);
+    expect(otherManagedZone(ZONE_APEX, LAB_ZONE)).toBe(ZONE_APEX);
+    expect(otherManagedZone(`X.${LAB_ZONE}.`, ZONE_APEX)).toBe(LAB_ZONE);
+    for (const [name, zone] of [['blog', ZONE_APEX], [`x.${LAB_ZONE}`, LAB_ZONE], ['@', LAB_ZONE], [`x${ZONE_APEX}`, LAB_ZONE]]) {
+      expect(otherManagedZone(name, zone), name).toBeNull();
+    }
   });
 
   it('refuses everything in a zone that is not managed', () => {
