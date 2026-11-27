@@ -41,12 +41,11 @@ export const ZONE_ID_PATTERN = /^[a-f0-9]{32}$/;
 const TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 /**
- * DNS records are listed 100 a page, and at most this many pages (5,000
- * records). A zone with more is cut at the cap, and the list says so
- * (`truncated: true`) rather than passing a part off as the whole.
+ * DNS records are read 100 a page, one page per call (#1907): the caller
+ * asks for the next page when it wants more, so a zone with thousands of
+ * records never holds one request open for all of them.
  */
 export const DNS_PAGE_SIZE = 100;
-export const DNS_MAX_PAGES = 50;
 
 /** A refusal or failure from Cloudflare, with a sentence written here. */
 export class CloudflareError extends AuthoredError {
@@ -188,16 +187,25 @@ const READ_PROBES = Object.freeze({
   cache: ['/settings/cache_level'],
 });
 
-/** Every DNS record, a page at a time, up to the page cap; `truncated` when the zone holds more. */
-async function listDns(conn, zonePath) {
-  const records = [];
-  let totalPages = 1;
-  for (let page = 1; page <= Math.min(totalPages, DNS_MAX_PAGES); page += 1) {
-    const { body } = await call(conn, 'GET', `${zonePath}/dns_records`, { query: { page, per_page: DNS_PAGE_SIZE } });
-    if (Array.isArray(body.result)) records.push(...body.result);
-    totalPages = Number(body.result_info?.total_pages) || 1;
-  }
-  return { records, truncated: totalPages > DNS_MAX_PAGES };
+/** A count Cloudflare sent in `result_info`, or null when it sent none (or not a whole number). */
+const countOf = (value) => (Number.isInteger(value) && value >= 0 ? value : null);
+
+/**
+ * Whether a page follows this one: from `total_pages` when Cloudflare sends
+ * it, else (it is missing) from whether this page came back full.
+ */
+const hasMoreAfter = (page, totalPages, count) => (totalPages === null ? count === DNS_PAGE_SIZE : page < totalPages);
+
+/**
+ * One page of the zone's DNS records (1-based), with the totals from
+ * Cloudflare's `result_info` (`total_pages`, `total_count`; null when absent).
+ */
+async function listDnsPage(conn, zonePath, page) {
+  const { body } = await call(conn, 'GET', `${zonePath}/dns_records`, { query: { page, per_page: DNS_PAGE_SIZE } });
+  const records = Array.isArray(body.result) ? body.result : [];
+  const totalPages = countOf(body.result_info?.total_pages);
+  const totalCount = countOf(body.result_info?.total_count);
+  return { records, page, perPage: DNS_PAGE_SIZE, totalPages, totalCount, hasMore: hasMoreAfter(page, totalPages, records.length) };
 }
 
 /** One phase's entry point ruleset, or null when the phase has none yet. */
@@ -308,7 +316,7 @@ export function createCloudflareClient(options) {
     getSetting: async (settingId) => resultOf(conn, 'GET', await setting(settingId)),
     patchSetting: async (settingId, value) => resultOf(conn, 'PATCH', await setting(settingId), { body: { value } }),
     purge: async (body) => resultOf(conn, 'POST', await at('/purge_cache'), { body }),
-    listDns: async () => listDns(conn, await at()),
+    listDnsPage: async (page) => listDnsPage(conn, await at(), page),
     getDns: async (recordId) => resultOf(conn, 'GET', await record(recordId)),
     createDns: async (fields) => resultOf(conn, 'POST', await at('/dns_records'), { body: fields }),
     patchDns: async (recordId, changes) => resultOf(conn, 'PATCH', await record(recordId), { body: changes }),

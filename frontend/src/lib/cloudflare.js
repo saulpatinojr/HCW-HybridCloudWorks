@@ -10,7 +10,8 @@
  *   readCloudflareSettings()             GET   every zone setting          editor
  *   saveCloudflareSetting(id, value)     PATCH one zone setting           super_admin
  *   purgeCloudflareCache(request)        POST  everything, or 1–30 URLs   super_admin
- *   readCloudflareDns()                  GET   every DNS record            editor
+ *   readCloudflareDns(zone, page)        GET   one page of DNS records
+ *                                              (100 a page) and the totals editor
  *   createCloudflareDnsRecord(record)    POST  a new record               super_admin
  *   updateCloudflareDnsRecord(id, patch) PATCH change a record            super_admin
  *   readCloudflareRulesets()             GET   the zone's rulesets         editor
@@ -81,8 +82,21 @@ export function purgeCloudflareCache(request, zone) {
   return postJSON(at(`${BASE}/purge`, zone), body);
 }
 
-export function readCloudflareDns(zone) {
-  return getJSON(at(`${BASE}/dns`, zone));
+/** The highest DNS page the server reads (dns-routes.js MAX_DNS_PAGE). */
+export const MAX_DNS_PAGE = 1000;
+
+/**
+ * One page of the zone's DNS records (#1907), 1-based: page 1 when left
+ * out, sent as `?page=` only past the first. The answer carries `page`,
+ * `perPage`, `totalPages`, `totalCount` and `hasMore`.
+ */
+export function readCloudflareDns(zone, page = 1) {
+  if (!Number.isInteger(page) || page < 1 || page > MAX_DNS_PAGE) {
+    throw new Error('That is not a valid page number.');
+  }
+  const route = at(`${BASE}/dns`, zone);
+  if (page === 1) return getJSON(route);
+  return getJSON(`${route}${route.includes('?') ? '&' : '?'}page=${page}`);
 }
 
 export function createCloudflareDnsRecord(record, zone) {

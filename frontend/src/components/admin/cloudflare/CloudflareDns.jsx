@@ -1,6 +1,6 @@
 /**
- * The Cloudflare page's DNS tab (#1905): every DNS record in the zone, and a
- * form to add one or change one. A DNS record is a line in the internet's
+ * The Cloudflare page's DNS tab (#1905): the zone's DNS records, and a form
+ * to add one or change one. A DNS record is a line in the internet's
  * address book: it says where a name such as `lab.example.com` points.
  *
  * NOTHING HERE DELETES. There is no delete button and no delete route.
@@ -8,8 +8,12 @@
  * Terraform manages, certificate checks) is LOCKED: its row shows a lock and
  * the server's reason and offers no edit, and the server refuses a change to
  * it (409) whatever is sent. The add form checks a new name against the same
- * list before sending. A long zone is listed up to the server's page cap,
- * and the tab says so when the server answers `truncated`.
+ * list before sending.
+ *
+ * The records come 100 at a time (#1907, useDnsPages): page 1 first, then
+ * "Load more" (disabled while a page is on its way) appends the next page
+ * while more remain. The tab says how many records the zone holds in all.
+ * After an add or a change the list is read again from page 1.
  *
  * Adding and changing need the super admin role (RoleGate); the form's Save
  * is disabled while its request is out.
@@ -54,6 +58,7 @@ import {
   editableType,
   ttlText,
 } from './cloudflareView';
+import useDnsPages, { dnsCountText } from './useDnsPages';
 
 const EMPTY = Object.freeze({ records: [] });
 const SELECT_CLASS =
@@ -94,6 +99,29 @@ function RowAction({ record, lock, busy, onChange }) {
         Change
       </Button>
     </RoleGate>
+  );
+}
+
+/** Under the table: "Load more" while more pages remain, and why the last one failed. */
+function LoadMore({ list }) {
+  return (
+    <>
+      {list.hasMore && (
+        <div className="mt-3 flex justify-center">
+          <Button size="sm" variant="outline" disabled={list.loadingMore} onClick={list.loadMore}>
+            {list.loadingMore && (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" aria-hidden="true" />
+            )}
+            Load more
+          </Button>
+        </div>
+      )}
+      {list.moreError && (
+        <p role="alert" className="mt-2 text-center text-sm text-destructive">
+          {list.moreError}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -244,10 +272,12 @@ function RecordDialog({ open, record, status, busy, onClose, onSave }) {
 export default function CloudflareDns({ status = null }) {
   const zone = useCloudflareZone();
   const read = useZoneRead(readCloudflareDns, EMPTY);
+  const list = useDnsPages(read, readCloudflareDns, zone);
+  // A change re-reads page 1, which drops the pages loaded after it.
   const { busyIds, run } = useCloudflareWrite(read.refresh);
   // `{ record: null }` adds; `{ record }` edits; null is closed.
   const [dialog, setDialog] = useState(null);
-  const records = read.data?.records ?? [];
+  const { records } = list;
 
   const onSave = async (id, body) => {
     const done =
@@ -269,10 +299,9 @@ export default function CloudflareDns({ status = null }) {
                 changed only in Terraform. No record can be deleted from this page, and only A,
                 AAAA, CNAME, MX and TXT records can be added or changed.
               </CardDescription>
-              {read.data?.truncated && (
-                <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
-                  The zone holds more records than this page lists at once; the list stops at the
-                  limit. Find the rest in the Cloudflare dashboard.
+              {records.length > 0 && (
+                <p data-testid="dns-count" className="text-sm text-muted-foreground">
+                  {dnsCountText(list)}
                 </p>
               )}
             </div>
@@ -344,6 +373,7 @@ export default function CloudflareDns({ status = null }) {
               </tbody>
             </table>
           )}
+          <LoadMore list={list} />
         </CardContent>
       </Card>
       {dialog && (

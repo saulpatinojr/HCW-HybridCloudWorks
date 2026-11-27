@@ -20,7 +20,8 @@ import {
   WRITE_ROLE,
   notConfiguredMessage,
 } from './handlers.js';
-import { CLOUDFLARE_API_BASE, DNS_MAX_PAGES, forgetZoneIds, zoneUnreachableMessage } from './client.js';
+import { CLOUDFLARE_API_BASE, DNS_PAGE_SIZE, forgetZoneIds, zoneUnreachableMessage } from './client.js';
+import { MAX_DNS_PAGE } from './dns-routes.js';
 import { EDITABLE_PHASES, LAB_ZONE, OWNER_ONLY_SETTINGS, READ_ONLY_PHASE_REASON, ZONE_APEX } from './protected.js';
 import { UNAUDITED_NOTE, WRONG_ZONE_MESSAGE, wrongZoneMessage } from './record.js';
 import { AGENT_DISABLE_MESSAGE, AGENT_REMOVAL_MESSAGE, AGENT_RESPONSE_MESSAGE, GUARDED_PHASES, STALE_MESSAGE, concurrentWriteNote } from './rules-routes.js';
@@ -449,30 +450,61 @@ describe('DNS records', () => {
   const record = (over = {}) => ({ id: RECORD_ID, type: 'A', name: `blog.${ZONE_APEX}`, content: '192.0.2.1', proxied: true, ttl: 1, comment: null, ...over });
   const created = { [`POST ${ZONE_PATH}/dns_records`]: (url, init) => ok(record(JSON.parse(init.body))) };
 
-  it('lists every page, and marks the protected ones with their reason', async () => {
-    const { handlers, api } = setup({
-      routes: {
-        [`GET ${ZONE_PATH}/dns_records`]: (url) =>
-          url.searchParams.get('page') === '1'
-            ? ok([record(), record({ id: 'b', name: `www.${ZONE_APEX}` })], { result_info: { page: 1, total_pages: 2 } })
-            : ok([record({ id: 'c', name: `_acme-challenge.${ZONE_APEX}`, type: 'TXT' })], { result_info: { page: 2, total_pages: 2 } }),
-      },
-    });
+  const pageInfo = (over = {}) => ({ count: 1, page: 1, per_page: DNS_PAGE_SIZE, total_count: 250, total_pages: 3, ...over });
+  const dnsPage = (records, info) => ({ [`GET ${ZONE_PATH}/dns_records`]: ok(records, info === null ? {} : { result_info: pageInfo(info) }) });
+
+  it('reads page 1 alone when no page is named, and marks the protected ones with their reason', async () => {
+    const records = [record(), record({ id: 'b', name: `www.${ZONE_APEX}` }), record({ id: 'c', name: `_acme-challenge.${ZONE_APEX}`, type: 'TXT' })];
+    const { handlers, api } = setup({ routes: dnsPage(records, {}) });
     const res = parse(await handlers.listDns(request(), {}));
-    expect(api.calls.map((call) => call.query.get('page'))).toEqual(['1', '2']);
+    expect(res.status).toBe(200);
+    expect(api.calls.map((call) => [call.path, call.query.get('page'), call.query.get('per_page')])).toEqual([[`${ZONE_PATH}/dns_records`, '1', String(DNS_PAGE_SIZE)]]);
     expect(res.body.records.map((r) => [r.id, r.locked])).toEqual([[RECORD_ID, false], ['b', true], ['c', true]]);
+    expect(res.body.records[0].lockedReason).toBeNull();
     expect(res.body.records[1].lockedReason).toMatch(/Static Web App/);
-    expect(res.body.truncated).toBe(false);
+    expect(res.body.records[2].lockedReason).toBeTruthy();
+    expect(res.body).not.toHaveProperty('truncated');
   });
 
-  it('stops at the page cap and says the list is cut', async () => {
-    const { handlers, api } = setup({
-      routes: { [`GET ${ZONE_PATH}/dns_records`]: (url) => ok([record({ id: url.searchParams.get('page') })], { result_info: { total_pages: DNS_MAX_PAGES + 10 } }) },
-    });
-    const res = parse(await handlers.listDns(request(), {}));
-    expect(api.calls).toHaveLength(DNS_MAX_PAGES);
-    expect(res.body.records).toHaveLength(DNS_MAX_PAGES);
-    expect(res.body.truncated).toBe(true);
+  it('answers the page it was asked for, with Cloudflare’s totals, in one call', async () => {
+    const { handlers, api } = setup({ routes: dnsPage([record()], { page: 2 }) });
+    const res = parse(await handlers.listDns(request({ query: 'page=2' }), {}));
+    expect(api.calls).toHaveLength(1);
+    expect(api.calls[0].query.get('page')).toBe('2');
+    expect(res.body).toMatchObject({ ok: true, page: 2, perPage: DNS_PAGE_SIZE, totalPages: 3, totalCount: 250, hasMore: true });
+  });
+
+  it('says no page follows the last one', async () => {
+    const { handlers } = setup({ routes: dnsPage([record()], { page: 3 }) });
+    const res = parse(await handlers.listDns(request({ query: 'page=3' }), {}));
+    expect(res.body).toMatchObject({ page: 3, totalPages: 3, hasMore: false });
+  });
+
+  it('falls back to whether the page came back full when Cloudflare sends no totals', async () => {
+    const full = Array.from({ length: DNS_PAGE_SIZE }, (_, i) => record({ id: `r${i}` }));
+    const one = setup({ routes: dnsPage(full, null) });
+    expect(parse(await one.handlers.listDns(request(), {})).body).toMatchObject({ totalPages: null, totalCount: null, hasMore: true });
+    const two = setup({ routes: dnsPage([record()], { total_pages: 'many', total_count: -1 }) });
+    expect(parse(await two.handlers.listDns(request(), {})).body).toMatchObject({ totalPages: null, totalCount: null, hasMore: false });
+  });
+
+  it.each(['page=0', 'page=-1', 'page=1.5', 'page=abc', 'page=', 'page=01', `page=${MAX_DNS_PAGE + 1}`, 'page=99999', 'page=1&page=2', 'page=%201'])(
+    'refuses %s with 400 before calling Cloudflare',
+    async (query) => {
+      const { handlers, api } = setup({ routes: dnsPage([record()], {}) });
+      const res = parse(await handlers.listDns(request({ query }), {}));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(`page must be a whole number from 1 to ${MAX_DNS_PAGE}, given once.`);
+      expect(api.fetch).not.toHaveBeenCalled();
+    }
+  );
+
+  it(`reads page ${MAX_DNS_PAGE}, the highest allowed`, async () => {
+    const { handlers, api } = setup({ routes: dnsPage([], { page: MAX_DNS_PAGE }) });
+    const res = parse(await handlers.listDns(request({ query: `page=${MAX_DNS_PAGE}` }), {}));
+    expect(res.status).toBe(200);
+    expect(api.calls[0].query.get('page')).toBe(String(MAX_DNS_PAGE));
+    expect(res.body.records).toEqual([]);
   });
 
   it.each(['@', ZONE_APEX, 'www', `www.${ZONE_APEX}`, 'api-azure', `docs.${ZONE_APEX}`, '_acme-challenge.blog', `x.lab.${ZONE_APEX}`, 'lab', '*', `*.${ZONE_APEX}`, '*.api-azure', '*.www', '*._acme-challenge', '*.lab', '*.x.lab', 'WWW'])(
@@ -1497,14 +1529,51 @@ describe('the lab zone (#1911)', () => {
       expect(WRITES(api)).toEqual([]);
     });
 
+    it('reads page 2 of the lab zone, with ?zone= and ?page= together, in at most two calls (#1907)', async () => {
+      const records = [
+        { id: 'a', type: 'TXT', name: `_acme-challenge.lab.${LAB_ZONE}`, content: 'x' },
+        { id: 'c', type: 'A', name: `www.${LAB_ZONE}`, content: '192.0.2.1' },
+      ];
+      const info = { page: 2, per_page: 100, count: 2, total_count: 102, total_pages: 2 };
+      const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records`]: ok(records, { result_info: info }) }) });
+      const res = parse(await handlers.listDns(request({ query: `${LAB}&page=2` }), {}));
+      expect(res.status).toBe(200);
+      expect(paths(api)).toEqual(['GET /client/v4/zones', 'GET <lab>/dns_records']);
+      expect(api.calls[1].query.get('page')).toBe('2');
+      expect(res.body).toMatchObject({ page: 2, perPage: 100, totalPages: 2, totalCount: 102, hasMore: false });
+      expect(res.body.records.map((record) => [record.name, record.locked])).toEqual([
+        [`_acme-challenge.lab.${LAB_ZONE}`, true],
+        [`www.${LAB_ZONE}`, false],
+      ]);
+      // The id is kept: the next page is one call.
+      const again = await handlers.listDns(request({ query: `${LAB}&page=1` }), {});
+      expect(again.status).toBe(200);
+      expect(paths(api).slice(2)).toEqual(['GET <lab>/dns_records']);
+    });
+
+    it.each([
+      ['an unknown zone with a good page', 'zone=example.com&page=2', 'CLOUDFLARE_UNMANAGED_ZONE'],
+      ['the lab zone with a bad page', `${LAB}&page=0`, 'BAD_REQUEST'],
+      ['the lab zone with a repeated page', `${LAB}&page=2&page=3`, 'BAD_REQUEST'],
+    ])('refuses %s with 400 before any call', async (label, query, code) => {
+      const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records`]: ok([], { result_info: { total_pages: 1 } }) }) });
+      const res = parse(await handlers.listDns(request({ query }), {}));
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe(code);
+      expect(api.fetch).not.toHaveBeenCalled();
+    });
+
     it('locks the certificate checks and the apex in the list, and leaves www open', async () => {
       const records = [
         { id: 'a', type: 'TXT', name: `_acme-challenge.lab.${LAB_ZONE}`, content: 'x' },
         { id: 'b', type: 'MX', name: LAB_ZONE, content: 'mail.example.net' },
         { id: 'c', type: 'A', name: `www.${LAB_ZONE}`, content: '192.0.2.1' },
       ];
-      const { handlers } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records`]: ok(records, { result_info: { total_pages: 1 } }) }) });
+      const { handlers, api } = setup({ routes: labRoutes({ [`GET ${LAB_PATH}/dns_records`]: ok(records, { result_info: { total_pages: 1 } }) }) });
       const res = parse(await handlers.listDns(request({ query: LAB }), {}));
+      // At most two calls to Cloudflare for one page (#1907): the zone's id lookup, then the page.
+      expect(paths(api)).toEqual(['GET /client/v4/zones', 'GET <lab>/dns_records']);
+      expect(res.body.hasMore).toBe(false);
       expect(res.body.records.map((record) => [record.name, record.locked])).toEqual([
         [`_acme-challenge.lab.${LAB_ZONE}`, true],
         [LAB_ZONE, true],

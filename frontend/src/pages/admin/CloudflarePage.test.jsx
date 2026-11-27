@@ -365,6 +365,126 @@ describe('the DNS tab', () => {
   });
 });
 
+describe('the DNS tab, a page at a time (#1907)', () => {
+  const REC3 = {
+    id: 'rec3',
+    type: 'TXT',
+    name: 'note.example.com',
+    content: 'hello',
+    proxied: false,
+    ttl: 1,
+    comment: '',
+    locked: false,
+  };
+  const FIRST = {
+    records: RECORDS,
+    page: 1,
+    perPage: 100,
+    totalPages: 2,
+    totalCount: 3,
+    hasMore: true,
+  };
+  const LAST = {
+    records: [REC3],
+    page: 2,
+    perPage: 100,
+    totalPages: 2,
+    totalCount: 3,
+    hasMore: false,
+  };
+  const byPage =
+    (pages) =>
+    (zone, page = 1) =>
+      Promise.resolve(pages[page]);
+  const loadMore = () => screen.queryByRole('button', { name: 'Load more' });
+
+  it('loads page 1, says how many records there are, and appends the next page', async () => {
+    api.readCloudflareDns.mockImplementation(byPage({ 1: FIRST, 2: LAST }));
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    expect(api.readCloudflareDns).toHaveBeenCalledTimes(1);
+    expect(api.readCloudflareDns.mock.calls[0]).toEqual([SITE]);
+    expect(screen.getByTestId('dns-count')).toHaveTextContent("Showing 2 of the zone's 3 records");
+    expect(screen.queryByTestId('dns-row-rec3')).toBeNull();
+    fireEvent.click(loadMore());
+    expect(await screen.findByTestId('dns-row-rec3')).toBeInTheDocument();
+    expect(api.readCloudflareDns).toHaveBeenLastCalledWith(SITE, 2);
+    // Appended, not replaced: page 1's rows and their locks are still there.
+    expect(within(screen.getByTestId('dns-row-rec1')).getByText('Locked.')).toBeInTheDocument();
+    expect(screen.getByTestId('dns-row-rec2')).toBeInTheDocument();
+    expect(screen.getByTestId('dns-count')).toHaveTextContent('The zone has 3 records.');
+    // The last page: no button.
+    expect(loadMore()).toBeNull();
+  });
+
+  it('shows no Load more when the first page is the last', async () => {
+    api.readCloudflareDns.mockResolvedValue({
+      ...FIRST,
+      totalPages: 1,
+      totalCount: 2,
+      hasMore: false,
+    });
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    expect(loadMore()).toBeNull();
+    expect(screen.getByTestId('dns-count')).toHaveTextContent('The zone has 2 records.');
+  });
+
+  it('disables Load more while the page is on its way, and asks for it once', async () => {
+    const pending = deferred();
+    api.readCloudflareDns.mockImplementation((zone, page = 1) =>
+      page === 1 ? Promise.resolve(FIRST) : pending.promise
+    );
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    const button = loadMore();
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(api.readCloudflareDns).toHaveBeenCalledTimes(2);
+    pending.resolve(LAST);
+    expect(await screen.findByTestId('dns-row-rec3')).toBeInTheDocument();
+    expect(loadMore()).toBeNull();
+  });
+
+  it('says why a page could not be read and keeps the rows it has', async () => {
+    api.readCloudflareDns.mockImplementation((zone, page = 1) =>
+      page === 1
+        ? Promise.resolve(FIRST)
+        : Promise.reject(new Error('Cloudflare could not be reached.'))
+    );
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    fireEvent.click(loadMore());
+    expect(await screen.findByText('Cloudflare could not be reached.')).toBeInTheDocument();
+    expect(screen.getByTestId('dns-row-rec1')).toBeInTheDocument();
+    expect(loadMore()).toBeEnabled();
+  });
+
+  it('reads again from page 1 after a change', async () => {
+    api.readCloudflareDns.mockImplementation(byPage({ 1: FIRST, 2: LAST }));
+    api.updateCloudflareDnsRecord.mockResolvedValue({ record: {} });
+    renderAt('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    fireEvent.click(loadMore());
+    await screen.findByTestId('dns-row-rec3');
+    fireEvent.click(screen.getByRole('button', { name: 'Change A lab.example.com' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Content'), {
+      target: { value: '192.0.2.11' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save the change/ }));
+    // Longer than the 1 s default: save, re-read and re-render are three steps,
+    // and the whole suite runs these files side by side.
+    const slow = { timeout: 5000 };
+    await waitFor(() => expect(api.readCloudflareDns).toHaveBeenCalledTimes(3), slow);
+    await waitFor(() => expect(screen.queryByTestId('dns-row-rec3')).toBeNull(), slow);
+    expect(api.readCloudflareDns.mock.calls).toEqual([[SITE], [SITE, 2], [SITE]]);
+    expect(screen.getByTestId('dns-row-rec2')).toBeInTheDocument();
+    expect(loadMore()).toBeEnabled();
+  });
+});
+
 describe('the Rules tab', () => {
   it('shows a locked phase’s rules with its reason and no edit', async () => {
     api.readCloudflarePhase.mockResolvedValue({
@@ -837,6 +957,42 @@ describe('the zone picker (#1911)', () => {
     await waitFor(() => expect(api.readCloudflareRulesets).toHaveBeenLastCalledWith(LAB));
     fireEvent.change(screen.getByLabelText('Zone'), { target: { value: SITE } });
     expect(screen.getByTestId('where')).toHaveTextContent(/^\?tab=rules$/);
+  });
+
+  it('starts again at page 1 when the zone changes, and asks for the next page of the picked zone (#1907)', async () => {
+    const row = (id, name) => ({ ...RECORDS[1], id, name });
+    const pages = {
+      [SITE]: {
+        1: { records: RECORDS, page: 1, totalPages: 2, totalCount: 3, hasMore: true },
+        2: { records: [row('rec3', 'note.example.com')], page: 2, totalPages: 2, hasMore: false },
+      },
+      [LAB]: {
+        1: {
+          records: [row('lab1', `www.${LAB}`)],
+          page: 1,
+          totalPages: 2,
+          totalCount: 2,
+          hasMore: true,
+        },
+        2: { records: [row('lab2', `note.${LAB}`)], page: 2, totalPages: 2, hasMore: false },
+      },
+    };
+    api.readCloudflareDns.mockImplementation(async (zone, page = 1) => pages[zone][page]);
+    renderWithAddress('/admin/cloudflare?tab=dns');
+    await screen.findByTestId('dns-row-rec2');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByTestId('dns-row-rec3');
+    fireEvent.change(screen.getByLabelText('Zone'), { target: { value: LAB } });
+    await screen.findByTestId('dns-row-lab1');
+    // Page 1 of the lab zone alone: nothing of the site's pages is left.
+    expect(screen.queryByTestId('dns-row-rec3')).toBeNull();
+    expect(screen.queryByTestId('dns-row-rec2')).toBeNull();
+    expect(api.readCloudflareDns.mock.calls).toEqual([[SITE], [SITE, 2], [LAB]]);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByTestId('dns-row-lab2');
+    expect(api.readCloudflareDns).toHaveBeenLastCalledWith(LAB, 2);
+    expect(screen.getByTestId('dns-row-lab1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 
   it('opens the zone a link names, in any letter case, and the site’s for any other name', async () => {

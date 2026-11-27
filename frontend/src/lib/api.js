@@ -96,9 +96,10 @@ const FUNCTION_TIMEOUT_MS = {
   // The Cloudflare page (#1905). Each call the server makes to Cloudflare
   // may take up to 15 s (functions/src/lib/cloudflare/client.js). The status
   // reads the zone and then four reads side by side (about 30 s at worst);
-  // a purge reads the zone and then purges. Adding a DNS record shares its
-  // route with the list, which reads the zone's records a page at a time.
-  // None of these is retried: a write sent twice would change twice.
+  // a purge reads the zone and then purges. The DNS route lists one page of
+  // records (#1907) or adds a record; either is at most two calls (the zone
+  // check or lookup, then the page or the change). None of these is
+  // retried: a write sent twice would change twice.
   'cms/cloudflare/status': 35000,
   'cms/cloudflare/purge': 35000,
   'cms/cloudflare/dns': 50000,
@@ -129,8 +130,11 @@ const PATTERN_TIMEOUT_MS = [
 ];
 
 export function timeoutForFunction(fnName) {
-  if (FUNCTION_TIMEOUT_MS[fnName]) return FUNCTION_TIMEOUT_MS[fnName];
-  const matched = PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(fnName));
+  // The route alone decides: `cms/cloudflare/dns?zone=…&page=2` waits as
+  // long as `cms/cloudflare/dns` (#1907).
+  const [route] = String(fnName).split('?');
+  if (FUNCTION_TIMEOUT_MS[route]) return FUNCTION_TIMEOUT_MS[route];
+  const matched = PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(route));
   return matched ? matched[1] : DEFAULT_TIMEOUT_MS;
 }
 
