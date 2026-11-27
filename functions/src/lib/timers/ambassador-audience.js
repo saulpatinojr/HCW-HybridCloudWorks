@@ -41,7 +41,11 @@
  * tried was refused, 409, code 10012; infra/frontend.tf, "WHY THERE ARE NO
  * RULES"). So the dashboard still shows those pages, and this read leaves
  * them out. `requestHost_in` was read from the schema by introspection on
- * 2026-11-27, not yet seen against a live month.
+ * 2026-11-27 and the live API accepted the query that day (a 7-day window
+ * with no page views yet). Which `requestHost` a page view on the apex and
+ * www is stored under has NOT been seen yet: before AMBASSADOR_AUDIENCE_MONTHLY
+ * is armed, read a window that has page views by `requestHost` and check the
+ * two names match SITE_HOSTS exactly, or the read records a quiet zero.
  *
  * The site is registered with the lite option (infra/frontend.tf), which
  * asks Cloudflare not to measure visitors in the EU: documented for the

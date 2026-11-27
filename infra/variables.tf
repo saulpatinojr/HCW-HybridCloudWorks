@@ -1064,7 +1064,7 @@ variable "cloudflare_zone_id" {
 # required variable would fail every plan — the merge's queued run, the
 # speculative plans, tfc-plan-check's read — until the owner has typed the
 # value into the workspace. Null keeps the apply whole: the Web Analytics
-# site is not imported, its two rules are not created, the outputs read
+# site is not imported, the outputs read
 # null and CF_WEB_ANALYTICS_SITE_TAG stays empty until this and
 # cloudflare_web_analytics_site_tag (below) are both set. CF_ACCOUNT_ID
 # follows this variable alone and is filled whenever it is set. Thirty-two lowercase hex characters, which is the shape
