@@ -155,6 +155,41 @@ reports that as unexpected for someone to read.
       site has
       ([CSPs with Cloudflare](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/content-security-policies/)).
 
+    **How to add it.**
+
+    1. On the admin page, open **Rules**, then the phase
+       `http_config_settings`, then **Edit these rules**.
+    2. The editor takes a JSON list: the whole list of rules in that phase.
+       The phase holds no rules today (Cloudflare answered "not found" for
+       it on 2026-11-27), so replace everything in the box with exactly
+       this, then **Replace the rules**:
+
+        ```json
+        [
+          {
+            "description": "Site apex and www: strict origin check, no HTML rewriting (#1929)",
+            "expression": "(http.host in {\"hybridcloudworks.com\" \"www.hybridcloudworks.com\"})",
+            "action": "set_config",
+            "action_parameters": {
+              "ssl": "strict",
+              "email_obfuscation": false,
+              "automatic_https_rewrites": false
+            },
+            "enabled": true
+          }
+        ]
+        ```
+
+       The `\"` inside `expression` is how JSON writes a quotation mark
+       inside text; Cloudflare stores it as
+       `(http.host in {"hybridcloudworks.com" "www.hybridcloudworks.com"})`.
+       The field names are Cloudflare's configuration rule settings
+       ([Configuration Rules settings](https://developers.cloudflare.com/rules/configuration-rules/settings/)).
+    3. **Success:** the phase shows one rule with that description, and
+       Cloudflare has given it an `id`. If the phase already holds rules
+       (someone added one since), keep them in the list and add this one
+       at the end, instead of replacing them.
+
 3. **Three zone settings**, owner only, on the same page (Settings) or in the
    Cloudflare dashboard. Each applies at once to the names already proxied
    (`api-azure`, the API, and `notes`), and to the site only after the switch:
