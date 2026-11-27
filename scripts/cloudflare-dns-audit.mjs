@@ -134,6 +134,20 @@ export function isTerraformSiteCname(change) {
   return String(change.recordType ?? '').toUpperCase() === 'CNAME' && TERRAFORM_SITE_CNAMES.includes(name);
 }
 
+/**
+ * Whether the entry says which record it touched. A bare delete with no
+ * sibling create in the window carries neither name nor type (both read
+ * `unknown`), so it could be one of the Terraform-managed CNAMEs: the owner's
+ * dashboard allowance does not cover it, and it reads UNEXPECTED (#1929).
+ */
+export function namesItsRecord(change) {
+  const known = (value) => {
+    const text = String(value ?? '').trim();
+    return text !== '' && text !== 'unknown';
+  };
+  return known(change.recordName) && known(change.recordType);
+}
+
 /** The two things Cloudflare's own certificate validation does to its TXT record. */
 const DCV_ACTIONS = new Set(['create', 'delete']);
 
@@ -214,12 +228,17 @@ export const ALLOWLIST = [
       "The owner's own edits in the Cloudflare dashboard (the apex's validation TXT and the other " +
       'records Terraform does not manage are changed there by design; docs/runbooks/edge-dns-verification.md). ' +
       'The apex and `www` CNAMEs are left out: Terraform manages them since #1929, so a dashboard edit of ' +
-      'either is drift and reads UNEXPECTED. A dashboard session signed in as the ' +
+      'either is drift and reads UNEXPECTED, and so does an owner edit whose entry names no record ' +
+      '(a bare delete), since it could be either of them. A dashboard session signed in as the ' +
       `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
       'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',
     matches: (change, settings) =>
-      change.actorContext === 'dash' && change.actorType === 'user' && isOwner(change, settings) && !isTerraformSiteCname(change),
+      change.actorContext === 'dash' &&
+      change.actorType === 'user' &&
+      isOwner(change, settings) &&
+      namesItsRecord(change) &&
+      !isTerraformSiteCname(change),
   },
   {
     id: 'cloudflare-dcv',

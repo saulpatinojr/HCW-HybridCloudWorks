@@ -344,6 +344,10 @@ describe('the allowlist', () => {
       const record = normalise(entry({ actor: OWNER_DASH, record: { name: 'hybridcloudworks.com', type } }));
       expect(classify(record, settings), type).toEqual({ verdict: 'EXPECTED', rule: 'owner-dashboard' });
     }
+    // A bare owner delete names no record, so it could be one of the pair: never EXPECTED.
+    const bareOwnerDelete = normalise(entry({ actor: OWNER_DASH, action: 'delete', resource: { request: {}, response: {} } }));
+    expect(bareOwnerDelete.recordName).toBe('unknown');
+    expect(classify(bareOwnerDelete, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
     // Another record type at www, and a CNAME elsewhere, are not the Terraform-managed pair.
     const wwwTxt = normalise(entry({ actor: OWNER_DASH, record: { name: 'www.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(wwwTxt, settings).verdict).toBe('EXPECTED');
