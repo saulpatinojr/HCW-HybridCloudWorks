@@ -2,6 +2,17 @@
  * cloudflare/client.js — the calls the Cloudflare page makes to Cloudflare's
  * API (#1905), for one zone, with the admin token.
  *
+ * The site's zone is named by its id (CF_ZONE_ID, set by Terraform). Any
+ * other managed zone (protected.js MANAGED_ZONES; the lab zone, #1911) is
+ * named by its name, and its id is looked up once with the same token
+ * (`GET /zones?name=`), then kept for the instance's life. A lookup must
+ * find exactly one active zone of exactly that name, or it is refused with
+ * a sentence saying the token cannot reach it; a failed lookup is never
+ * kept, and a kept id is forgotten when Cloudflare answers 403 or 404 for
+ * the zone itself (the zone was removed, or the token lost it). A 403 or
+ * 404 for something inside the zone (a record, a setting, a rule set) says
+ * nothing about the zone, so the id is kept.
+ *
  * Every call goes through guardedFetch (https only, no redirects, a deadline
  * and a size cap), to a path built here from fixed pieces and ids the
  * handlers have already checked. The token goes in the Authorization header
@@ -154,10 +165,14 @@ async function call(conn, method, path, { query = null, body = undefined, allow4
 /** The `result` of a call. */
 const resultOf = async (conn, method, path, options) => (await call(conn, method, path, options)).body.result;
 
-/** Whether a read is allowed: true for a 2xx, false for 401/403, null for anything else. */
+/**
+ * Whether a read is allowed: true for a 2xx, false for 401/403, null for
+ * anything else. `path` is a promise, so a zone lookup that fails counts as
+ * the read failing.
+ */
 async function canRead(conn, path, query) {
   try {
-    await call(conn, 'GET', path, { query });
+    await call(conn, 'GET', await path, { query });
     return true;
   } catch (error) {
     const refused = error?.upstreamStatus === 401 || error?.upstreamStatus === 403;
@@ -193,6 +208,68 @@ async function getPhase(conn, zonePath, phase) {
   return body ? body.result : null;
 }
 
+/** Zone ids looked up by name, kept for the instance's life (a name's id does not change while the zone exists). */
+const ZONE_IDS = new Map();
+
+/** Forgets every looked-up zone id (tests), or one name's (a zone check that found another zone there). */
+export function forgetZoneIds(name = null) {
+  if (name === null) ZONE_IDS.clear();
+  else ZONE_IDS.delete(name);
+}
+
+/** The sentence for a managed zone the token cannot find. */
+export const zoneUnreachableMessage = (name) =>
+  `The admin token cannot reach the zone ${name}: add it to the token's Zone Resources in the Cloudflare dashboard (the Cloudflare admin runbook, part 2), then try again.`;
+
+/** The answers to a zone read that mean the zone is gone, or the token no longer reaches it. */
+const ZONE_GONE = Object.freeze([403, 404]);
+
+/**
+ * The zone itself (`GET /zones/{id}`). When the id was looked up by name and
+ * Cloudflare answers 403 or 404, the kept id is forgotten, so the next
+ * request looks the zone up again.
+ */
+async function readZone(conn, path, lookedUpName) {
+  try {
+    return await resultOf(conn, 'GET', path);
+  } catch (error) {
+    if (lookedUpName && ZONE_GONE.includes(error?.upstreamStatus)) forgetZoneIds(lookedUpName);
+    throw error;
+  }
+}
+
+/** The one active zone of exactly this name in a lookup's answer, or null (none, several, or not active). */
+function onlyActive(result, name) {
+  const named = (Array.isArray(result) ? result : []).filter((zone) => String(zone?.name ?? '').toLowerCase() === name);
+  return named.length === 1 && named[0]?.status === 'active' ? named[0] : null;
+}
+
+/** The id of the one active zone with exactly this name, read once with the token and then kept. */
+async function lookupZoneId(conn, name) {
+  if (ZONE_IDS.has(name)) return ZONE_IDS.get(name);
+  const result = await resultOf(conn, 'GET', '/zones', { query: { name, per_page: 5 } });
+  const id = String(onlyActive(result, name)?.id ?? '').toLowerCase();
+  if (!ZONE_ID_PATTERN.test(id)) {
+    throw new CloudflareError(zoneUnreachableMessage(name), { status: 502, code: 'CLOUDFLARE_ZONE_UNREACHABLE' });
+  }
+  ZONE_IDS.set(name, id);
+  return id;
+}
+
+/**
+ * The zone's base path, answered at once for a known id and looked up on
+ * first use for a name. One client looks up at most once, failure included,
+ * so a status read does not repeat a lookup that has just failed.
+ */
+function zoneBaseOf(conn, zoneId, zoneName) {
+  if (zoneId) return () => Promise.resolve(`/zones/${zoneId}`);
+  let pending = null;
+  return () => {
+    pending ??= lookupZoneId(conn, zoneName).then((id) => `/zones/${id}`);
+    return pending;
+  };
+}
+
 /** The test doubles, when given, passed through to guardedFetch. */
 function doublesOf({ fetch: fetchImpl, resolve, dispatcherFor }) {
   const doubles = {};
@@ -205,34 +282,38 @@ function doublesOf({ fetch: fetchImpl, resolve, dispatcherFor }) {
 /**
  * @param {object} options
  * @param {string} options.token the admin token, read by the caller with readSetting
- * @param {string} options.zoneId the zone id, already checked against ZONE_ID_PATTERN
+ * @param {string} [options.zoneId] the site zone's id, already checked against ZONE_ID_PATTERN
+ * @param {string} [options.zoneName] another managed zone's name, whose id is looked up (when no zoneId)
  * @param {typeof fetch} [options.fetch] for tests
  * @param {Function} [options.resolve] for tests
  * @param {Function} [options.dispatcherFor] for tests
  */
 export function createCloudflareClient(options) {
-  const { token, zoneId } = options;
-  if (!ZONE_ID_PATTERN.test(String(zoneId || ''))) throw new Error('createCloudflareClient: zone id has the wrong shape');
+  const { token, zoneId = null, zoneName = null } = options;
+  if (zoneId !== null && !ZONE_ID_PATTERN.test(String(zoneId))) throw new Error('createCloudflareClient: zone id has the wrong shape');
+  if (zoneId === null && !zoneName) throw new Error('createCloudflareClient: give a zone id or a zone name');
   const conn = { token, doubles: doublesOf(options) };
-  const zone = `/zones/${zoneId}`;
-  const setting = (id) => `${zone}/settings/${encodeURIComponent(id)}`;
-  const record = (id) => `${zone}/dns_records/${encodeURIComponent(id)}`;
-  const phase = (id) => `${zone}/rulesets/phases/${encodeURIComponent(id)}/entrypoint`;
+  const base = zoneBaseOf(conn, zoneId, zoneName);
+  const at = async (suffix = '') => `${await base()}${suffix}`;
+  const setting = (id) => at(`/settings/${encodeURIComponent(id)}`);
+  const record = (id) => at(`/dns_records/${encodeURIComponent(id)}`);
+  const phase = (id) => at(`/rulesets/phases/${encodeURIComponent(id)}/entrypoint`);
 
   return Object.freeze({
     zoneId,
-    getZone: () => resultOf(conn, 'GET', zone),
-    canRead: (family) => canRead(conn, `${zone}${READ_PROBES[family][0]}`, READ_PROBES[family][1]),
-    listSettings: () => resultOf(conn, 'GET', `${zone}/settings`),
-    getSetting: (settingId) => resultOf(conn, 'GET', setting(settingId)),
-    patchSetting: (settingId, value) => resultOf(conn, 'PATCH', setting(settingId), { body: { value } }),
-    purge: (body) => resultOf(conn, 'POST', `${zone}/purge_cache`, { body }),
-    listDns: () => listDns(conn, zone),
-    getDns: (recordId) => resultOf(conn, 'GET', record(recordId)),
-    createDns: (fields) => resultOf(conn, 'POST', `${zone}/dns_records`, { body: fields }),
-    patchDns: (recordId, changes) => resultOf(conn, 'PATCH', record(recordId), { body: changes }),
-    listRulesets: () => resultOf(conn, 'GET', `${zone}/rulesets`),
-    getPhase: (phaseId) => getPhase(conn, zone, phaseId),
-    putPhase: (phaseId, ruleset) => resultOf(conn, 'PUT', phase(phaseId), { body: ruleset }),
+    zoneName,
+    getZone: async () => readZone(conn, await at(), zoneId ? null : zoneName),
+    canRead: (family) => canRead(conn, at(READ_PROBES[family][0]), READ_PROBES[family][1]),
+    listSettings: async () => resultOf(conn, 'GET', await at('/settings')),
+    getSetting: async (settingId) => resultOf(conn, 'GET', await setting(settingId)),
+    patchSetting: async (settingId, value) => resultOf(conn, 'PATCH', await setting(settingId), { body: { value } }),
+    purge: async (body) => resultOf(conn, 'POST', await at('/purge_cache'), { body }),
+    listDns: async () => listDns(conn, await at()),
+    getDns: async (recordId) => resultOf(conn, 'GET', await record(recordId)),
+    createDns: async (fields) => resultOf(conn, 'POST', await at('/dns_records'), { body: fields }),
+    patchDns: async (recordId, changes) => resultOf(conn, 'PATCH', await record(recordId), { body: changes }),
+    listRulesets: async () => resultOf(conn, 'GET', await at('/rulesets')),
+    getPhase: async (phaseId) => getPhase(conn, await at(), phaseId),
+    putPhase: async (phaseId, ruleset) => resultOf(conn, 'PUT', await phase(phaseId), { body: ruleset }),
   });
 }

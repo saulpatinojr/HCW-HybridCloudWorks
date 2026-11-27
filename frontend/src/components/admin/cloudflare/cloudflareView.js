@@ -11,7 +11,9 @@
 
 export {
   APEX_WILDCARD_REASON,
+  DEFAULT_ZONE,
   EDITABLE_PHASES,
+  MANAGED_ZONE_NAMES,
   OWNER_ONLY_SETTINGS,
   PROTECTED_DNS_PREFIXES,
   PROTECTED_PHASES,
@@ -28,7 +30,9 @@ export {
   protectedDnsList,
   protectedPhaseList,
   protectedPrefixList,
+  resolveZone,
 } from './cloudflareLocks';
+import { DEFAULT_ZONE } from './cloudflareLocks';
 
 export {
   CAREFUL_SETTINGS,
@@ -64,7 +68,7 @@ export const PREREQUISITE_NOTES = Object.freeze({
     setting: 'CLOUDFLARE_ADMIN_TOKEN',
     short: 'the admin token',
     description:
-      'The page needs the Cloudflare admin token: an account-owned API token limited to this one zone. Make it in the Cloudflare dashboard, then paste it on Integrations → Keys (the row CLOUDFLARE-ADMIN-TOKEN). The site never shows it again.',
+      'The page needs the Cloudflare admin token: an account-owned API token limited to the site’s zone and the lab zone. Make it in the Cloudflare dashboard, then paste it on Integrations → Keys (the row CLOUDFLARE-ADMIN-TOKEN). The site never shows it again.',
   }),
   zoneId: Object.freeze({
     setting: 'CF_ZONE_ID',
@@ -117,6 +121,25 @@ export function notConfiguredHeadline(status) {
   const verb = found.length > 1 ? 'are' : 'is';
   const terraform = found.includes('zoneId') ? ' (Terraform sets the zone id)' : '';
   return `Not set up yet: ${words} ${verb} missing${terraform}.`;
+}
+
+// ── The picked zone ──────────────────────────────────────────────────────────
+
+/**
+ * The status answer for the picked zone, or null while none is in hand, and
+ * whether the server answered for another zone. The server names the zone
+ * each answer is about (`managed`); an answer without it comes from a server
+ * older than #1911, which knows only the site's zone. So while the read for
+ * a newly picked zone is out the old answer is not shown as this zone's, and
+ * a settled answer for another zone means the server cannot act on this one
+ * yet: the page then shows a note in place of the tabs rather than let a
+ * change land in the wrong zone.
+ */
+export function zoneStatus(read, zone) {
+  const data = read?.loaded ? read.data : null;
+  if (!data) return { status: null, otherZone: false };
+  if ((data.managed?.name ?? DEFAULT_ZONE) === zone) return { status: data, otherZone: false };
+  return { status: null, otherZone: !read.pending };
 }
 
 // ── After a change ───────────────────────────────────────────────────────────

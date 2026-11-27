@@ -50,6 +50,7 @@ export function contentItemHref(item) {
  *   program      Ambassador Hub → Programs, with the program's details open (#1886)
  *   talk         Speaking → the stored talk's edit form open, on Upcoming or Past (#1886)
  *   certification  Certifications → the certification's editor open (#1886)
+ *   zone         Cloudflare → every tab acts on that managed zone (#1911)
  */
 export const LINK_PARAMS = Object.freeze({
   transcript: 'transcript',
@@ -63,6 +64,7 @@ export const LINK_PARAMS = Object.freeze({
   program: 'program',
   talk: 'talk',
   certification: 'certification',
+  zone: 'zone',
 });
 
 /** An address inside the admin, and nothing that could leave it. */

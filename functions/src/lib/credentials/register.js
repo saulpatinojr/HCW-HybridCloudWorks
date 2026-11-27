@@ -359,15 +359,16 @@ const KEY_VAULT_METADATA = Object.freeze({
     rotate:
       "Mint a new read-only token (Account Analytics: Read) under My Profile → API Tokens in the Cloudflare dashboard, paste it on Integrations → Keys, then revoke the old one.",
   },
-  // The Cloudflare page's token (#1905): account-owned, limited to the one
-  // zone, made with a one-year expiry, so its reminder is dated by that.
+  // The Cloudflare page's token (#1905): account-owned, limited to the two
+  // managed zones (the site's and, since #1911, the lab's), made with a
+  // one-year expiry, so its reminder is dated by that.
   "CLOUDFLARE-ADMIN-TOKEN": {
     issuer: "Cloudflare account API tokens",
     consumer:
-      "The Cloudflare page and Claude Network Guy: read and change the zone's settings, DNS records, rules and cache",
+      "The Cloudflare page and Claude Network Guy: read and change the settings, DNS records, rules and cache of the site's zone and the lab zone",
     lifetimeDays: CLOUDFLARE_ADMIN_TOKEN_DAYS,
     rotate:
-      "Make a new account-owned token for the one zone (Manage Account → API Tokens in the Cloudflare dashboard, same permissions, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",
+      "Make a new account-owned token for the site's zone and the lab zone (Manage Account → API Tokens in the Cloudflare dashboard, same permissions and the same two zones, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",
   },
 });
 

@@ -41,8 +41,9 @@ import {
   TD,
   TH,
   WRITE_REASON,
-  useCloudflareRead,
   useCloudflareWrite,
+  useCloudflareZone,
+  useZoneRead,
 } from './CloudflareParts';
 import {
   DNS_TYPES,
@@ -241,7 +242,8 @@ function RecordDialog({ open, record, status, busy, onClose, onSave }) {
 }
 
 export default function CloudflareDns({ status = null }) {
-  const read = useCloudflareRead(readCloudflareDns, EMPTY);
+  const zone = useCloudflareZone();
+  const read = useZoneRead(readCloudflareDns, EMPTY);
   const { busyIds, run } = useCloudflareWrite(read.refresh);
   // `{ record: null }` adds; `{ record }` edits; null is closed.
   const [dialog, setDialog] = useState(null);
@@ -250,8 +252,8 @@ export default function CloudflareDns({ status = null }) {
   const onSave = async (id, body) => {
     const done =
       id === 'new'
-        ? await run(id, () => createCloudflareDnsRecord(body), `${body.name} is added.`)
-        : await run(id, () => updateCloudflareDnsRecord(id, body), 'The record is changed.');
+        ? await run(id, () => createCloudflareDnsRecord(body, zone), `${body.name} is added.`)
+        : await run(id, () => updateCloudflareDnsRecord(id, body, zone), 'The record is changed.');
     if (done) setDialog(null);
   };
 

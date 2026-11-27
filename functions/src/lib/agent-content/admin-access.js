@@ -305,7 +305,9 @@ export const POLICY = Object.freeze(
     ['POST', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
     ['PATCH', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
 
-    // Cloudflare (#1905): the Cloudflare page, for the site's one zone. One
+    // Cloudflare (#1905): the Cloudflare page, for both managed zones (the
+    // site's and, since #1911, the lab zone, named by the route's `?zone=`,
+    // which the path match ignores): the same four switches cover both. One
     // switch reads; each kind of change is its own switch. The changes act
     // as super_admin, the role the routes ask of a person, because a change
     // there reaches every visitor at once; the switches, the protected list
