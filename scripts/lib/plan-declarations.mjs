@@ -124,27 +124,54 @@ export function findDeclaredAction(declared, address, action) {
 }
 
 /**
- * Declarations that name the same `step` stand or fall together (#1929). A
- * step is one run's whole change, such as proxying www, which moves proxied
- * and ttl together. A plan that carries some of a step's changes and not the
- * rest is not that step, so each declaration of it the plan lacks is
- * returned, to be named as unexpected. A step none of whose changes is in
- * the plan is not returned: it has usually applied, and each declaration
- * prints as a NOTE like any other.
- *
- * @param {object[]} declared every declaration
- * @param {Set<object>} matched the declarations this plan matched
- * @returns {object[]} the declarations of partly matched steps that did not match
+ * Whether a matched declaration shows that its step is in the plan. A
+ * computed value (`KNOWN_AFTER_APPLY`) does not: it matches any unknown value
+ * at its path, such as the `modified_on` that every change to a record
+ * leaves unknown, so it says nothing about which change the plan holds. Only
+ * a declared value, or a declared create, delete or import, does.
  */
-export function incompleteSteps(declared, matched) {
-  const partial = new Set(declared.filter((d) => d.step && matched.has(d)).map((d) => d.step));
-  return declared.filter((d) => d.step && partial.has(d.step) && !matched.has(d));
+const opensStep = (declaration) => declaration.after !== KNOWN_AFTER_APPLY;
+
+/** The steps this plan holds: those with at least one matched declaration that opens a step. */
+export function presentSteps(declared, matched) {
+  return new Set(declared.filter((d) => d.step && matched.has(d) && opensStep(d)).map((d) => d.step));
 }
 
-/** How a declaration missing from a partly matched step is named. */
+/**
+ * Declarations that name the same `step` stand or fall together (#1929). A
+ * step is one run's whole change, such as proxying www, which moves proxied
+ * and ttl together. A step is in the plan when one of its declared values
+ * (not a computed one) matched. A plan that holds a step but not all of its
+ * changes is not that step, so each declaration of it the plan lacks is
+ * returned, to be named as unexpected. A step that is not in the plan is
+ * not returned: it has usually applied, or is the other direction of a
+ * switch, and each of its declarations prints as a NOTE like any other.
+ *
+ * @param {object[]} declared every declaration
+ * @param {Set<object>} matched the declarations that covered a difference in this plan
+ * @returns {object[]} the declarations of steps in the plan that it lacks
+ */
+export function incompleteSteps(declared, matched) {
+  const present = presentSteps(declared, matched);
+  return declared.filter((d) => d.step && present.has(d.step) && !matched.has(d));
+}
+
+/**
+ * The declarations this plan is credited with, for the DECLARED lines. A
+ * computed declaration of a step that is not in the plan covered its
+ * difference but is not credited: with a forward and a going-back step on
+ * the same record, both steps' `modified_on` cover the one unknown value,
+ * and only the step the plan holds is reported.
+ */
+export function creditedDeclarations(declared, matched) {
+  const present = presentSteps(declared, matched);
+  return declared.filter((d) => matched.has(d) && (!d.step || present.has(d.step)));
+}
+
+/** How a declaration missing from a step the plan holds is named. */
 export function describeIncomplete(declaration) {
   return (
-    `${describeDeclaration(declaration)}: not in this plan, although the rest of ` +
-    `step "${declaration.step}" is. A step's declarations apply together.`
+    `${describeDeclaration(declaration)}: not in this plan, although other changes of ` +
+    `step "${declaration.step}" are. A step's declarations apply together.`
   );
 }

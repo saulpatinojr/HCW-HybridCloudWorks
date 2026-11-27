@@ -1031,7 +1031,7 @@ describe('declarations that share a step (#1929)', () => {
     expect(part.ok).toBe(false);
     expect(part.unexpected).toEqual([describeIncomplete(declared[1])]);
     expect(part.unexpected[0]).toBe(
-      `${ADDRESS} b: 1 -> 2 (made up): not in this plan, although the rest of step "example step" is. ` +
+      `${ADDRESS} b: 1 -> 2 (made up): not in this plan, although other changes of step "example step" are. ` +
         "A step's declarations apply together."
     );
     expect(part.unused).toEqual([declared[2]]);
@@ -1040,10 +1040,67 @@ describe('declarations that share a step (#1929)', () => {
     expect(loose.ok).toBe(true);
     expect(incompleteSteps(declared, new Set([declared[2]]))).toEqual([]);
   });
+
+  it('never opens a step on a computed value alone, and credits every declaration that covers a difference', () => {
+    const one = { address: ADDRESS, path: 'a', step: 'one', before: 1, after: 2, reason: 'one' };
+    const oneStamp = { address: ADDRESS, path: 'm', step: 'one', after: KNOWN_AFTER_APPLY, reason: 'one' };
+    const twoStamp = { address: ADDRESS, path: 'm', step: 'two', after: KNOWN_AFTER_APPLY, reason: 'two' };
+    const two = { address: ADDRESS, path: 'b', step: 'two', before: 1, after: 2, reason: 'two' };
+    const stamped = (paths) => {
+      const before = { a: 1, b: 1, m: 'then' };
+      const after = { ...before, ...Object.fromEntries(paths.map((path) => [path, 2])) };
+      delete after.m;
+      return {
+        resource_changes: [
+          ...expectedPlan().resource_changes,
+          {
+            address: ADDRESS,
+            change: { actions: ['update'], before, after, after_unknown: { m: true }, before_sensitive: {}, after_sensitive: {} },
+          },
+        ],
+      };
+    };
+    for (const order of [
+      [twoStamp, two, oneStamp, one],
+      [one, oneStamp, two, twoStamp],
+    ]) {
+      const result = checkPlan(stamped(['a']), { declared: order });
+      expect(result.unexpected).toEqual([]);
+      expect(new Set(result.declared)).toEqual(new Set([one, oneStamp]));
+      expect(new Set(result.unused)).toEqual(new Set([two, twoStamp]));
+    }
+    // Only the computed value differs: it is covered, but neither step opens, so nothing is missing or credited.
+    const stampOnly = checkPlan(stamped([]), { declared: [one, oneStamp, two, twoStamp] });
+    expect(stampOnly.unexpected).toEqual([]);
+    expect(stampOnly.declared).toEqual([]);
+    expect(incompleteSteps([one, oneStamp], new Set([oneStamp]))).toEqual([]);
+  });
 });
 
 describe('DECLARED', () => {
   const infraSource = terraformSource();
+
+  it('gives each step a name of its own: one change per path in a step, and a declared value in every step (#1929)', () => {
+    const steps = new Map();
+    for (const entry of DECLARED.filter((declaration) => declaration.step)) {
+      if (!steps.has(entry.step)) steps.set(entry.step, []);
+      steps.get(entry.step).push(entry);
+    }
+    for (const [step, entries] of steps) {
+      // A step names one run's change: it never declares the same thing twice, so two different changes
+      // cannot share a name and be read as one.
+      const keys = entries.map((entry) => `${entry.address} ${entry.action ?? entry.path}`);
+      expect(new Set(keys).size, step).toBe(keys.length);
+      // A step made of computed values alone could never be found in a plan (they do not open a step).
+      expect(entries.some((entry) => entry.after !== KNOWN_AFTER_APPLY), step).toBe(true);
+    }
+    // Two steps that declare the same address and path (forward and back) must differ in their values,
+    // or the plan could not tell them apart.
+    const values = DECLARED.filter((entry) => entry.step && entry.after !== KNOWN_AFTER_APPLY && !entry.action).map(
+      (entry) => JSON.stringify([entry.address, entry.path, entry.before, entry.after])
+    );
+    expect(new Set(values).size).toBe(values.length);
+  });
 
   it('holds only complete entries, each for a resource infra/*.tf declares, or no longer declares for a delete', () => {
     // Empty is the normal state, and then this passes trivially. An entry
@@ -1593,29 +1650,37 @@ describe('DECLARED', () => {
     }
   });
 
-  it('keeps the site records in state with no lookup or import left, DNS-only by default, and declares only www’s step 1 (#1929, applied 2026-11-27; #1937)', () => {
+  it('keeps the site records in state with no lookup or import left, DNS-only by default, and declares only www’s step 1, forward and back (#1929, applied 2026-11-27; #1937)', () => {
     // The owner's apply of 2026-11-27 imported both records and wrote their comments (Cloudflare shows them
     // since about 19:21 UTC, DNS-only, the apex at ttl 1 and www at ttl 60), so the eight declarations, the
     // lookup and the two import blocks were deleted. The only declarations about either record since are
-    // #1929 step 1's three for www (Part 3, step 1 of docs/runbooks/proxy-site-hosts.md: the owner sets
-    // site_proxied_hosts from "none" to "www"). Any other change to either record, the same import run again
-    // included, is UNEXPECTED and read by hand.
+    // #1929 step 1's three for www and its three going back (Part 3, steps 1 and 2 of
+    // docs/runbooks/proxy-site-hosts.md: the owner sets site_proxied_hosts from "none" to "www", or back).
+    // Any other change to either record, the same import run again included, is UNEXPECTED and read by hand.
     const RECORDS = ['cloudflare_dns_record.site_apex', 'cloudflare_dns_record.site_www'];
     const COMMENTS = {
       [RECORDS[0]]: "The site's own address (Static Web App), apex; proxy switch: site_proxied_hosts",
       [RECORDS[1]]: "The site's own address (Static Web App), www; proxy switch: site_proxied_hosts",
     };
     const STEP = '#1929 step 1';
+    const BACK = '#1929 step 1 back';
     expect(DECLARED.filter((entry) => entry.address === RECORDS[0]), RECORDS[0]).toEqual([]);
     const wwwDeclared = DECLARED.filter((entry) => entry.address === RECORDS[1]);
     // proxied and ttl move together (`ttl = local.site_www_proxied ? 1 : 60`, held below), and modified_on is
-    // the provider's to set: its ModifyPlan (5.29.0) leaves it unknown when proxied or ttl changes, and keeps
-    // comment_modified_on, created_on, proxiable, meta, settings and tags from state, so none of those is declared.
+    // the provider's to set: its ModifyPlan (5.29.0) leaves it unknown when proxied or ttl changes, keeps
+    // comment_modified_on (the comment is unchanged), proxiable, meta, settings and tags from state, and sets
+    // tags_modified_on to null with no tags; id and created_on are held by plan modifiers. So none of those is
+    // declared. Both directions stay declared until www is settled (docs/runbooks/proxy-site-hosts.md).
     expect(wwwDeclared.map(({ path, step, before, after }) => [path, step, before, after])).toEqual([
       ['proxied', STEP, false, true],
       ['ttl', STEP, 60, 1],
       ['modified_on', STEP, undefined, KNOWN_AFTER_APPLY],
+      ['proxied', BACK, true, false],
+      ['ttl', BACK, 1, 60],
+      ['modified_on', BACK, undefined, KNOWN_AFTER_APPLY],
     ]);
+    const forward = wwwDeclared.filter((entry) => entry.step === STEP);
+    const back = wwwDeclared.filter((entry) => entry.step === BACK);
     // The lookup is gone, so a record missing or renamed by hand no longer fails every plan in the workspace,
     // and no import block names either record.
     expect(infraSource).not.toMatch(/data\s+"cloudflare_dns_record"\s+"site"/);
@@ -1664,12 +1729,13 @@ describe('DECLARED', () => {
     // A record's in-place update as the provider plans it. `stamped` is a real change, which leaves
     // modified_on unknown until the apply (Terraform then omits it from `after`).
     const LIVE_TTL = { [RECORDS[0]]: 1, [RECORDS[1]]: 60 };
-    const update = (address, changes, { stamped = true } = {}) => {
+    const update = (address, changes, { stamped = true, from = {} } = {}) => {
       const before = {
         comment: COMMENTS[address],
         modified_on: '2026-11-27T19:21:00Z',
         proxied: false,
         ttl: LIVE_TTL[address],
+        ...from,
       };
       const after = { ...before, ...changes };
       if (stamped) delete after.modified_on;
@@ -1685,20 +1751,75 @@ describe('DECLARED', () => {
         },
       };
     };
-    const wwwLines = wwwDeclared.map((entry) => `DECLARED    ${describeDeclaration(entry)}`);
+    const linesOf = (entries) => entries.map((entry) => `DECLARED    ${describeDeclaration(entry)}`);
+    const declaredLines = (result) => declarationLines(result).filter((line) => line.startsWith('DECLARED'));
+    const PROXIED = { proxied: true, ttl: 1 };
+    const DNS_ONLY = { proxied: false, ttl: 60 };
+    const forwardPlan = () => {
+      const plan = expectedPlan();
+      plan.resource_changes.push(update(RECORDS[1], PROXIED));
+      return plan;
+    };
+    const backPlan = () => {
+      const plan = expectedPlan();
+      plan.resource_changes.push(update(RECORDS[1], DNS_ONLY, { from: PROXIED }));
+      return plan;
+    };
 
-    // Step 1's own run: www proxied, its ttl to automatic and modified_on unknown. It reads as the three
-    // DECLARED lines beside the permanent diff and nothing else.
-    const step1 = expectedPlan();
-    step1.resource_changes.push(update(RECORDS[1], { proxied: true, ttl: 1 }));
-    const passed = checkPlan(step1);
+    // Step 1's own run: www proxied, its ttl to automatic and modified_on unknown. It reads as step 1's three
+    // DECLARED lines beside the permanent diff and nothing else, the going-back step as NOTEs.
+    const passed = checkPlan(forwardPlan());
     expect(passed.unexpected).toEqual([]);
     expect(passed.ok).toBe(true);
-    expect(passed.declared).toEqual(wwwDeclared);
-    expect(declarationLines(passed).filter((line) => line.startsWith('DECLARED'))).toEqual(wwwLines);
-    expect(wwwLines.join('\n')).toContain(`${RECORDS[1]} proxied: false -> true`);
-    expect(wwwLines.join('\n')).toContain(`${RECORDS[1]} ttl: 60 -> 1`);
-    expect(wwwLines.join('\n')).toContain(`${RECORDS[1]} modified_on: (known after apply)`);
+    expect(passed.declared).toEqual(forward);
+    expect(declaredLines(passed)).toEqual(linesOf(forward));
+    for (const entry of back) expect(passed.unused).toContain(entry);
+    expect(linesOf(forward).join('\n')).toContain(`${RECORDS[1]} proxied: false -> true`);
+    expect(linesOf(forward).join('\n')).toContain(`${RECORDS[1]} ttl: 60 -> 1`);
+    expect(linesOf(forward).join('\n')).toContain(`${RECORDS[1]} modified_on: (known after apply)`);
+
+    // The going-back run (www to "none": step 2's test, or a rollback) reads as the back step's three alone.
+    const wentBack = checkPlan(backPlan());
+    expect(wentBack.unexpected).toEqual([]);
+    expect(wentBack.ok).toBe(true);
+    expect(wentBack.declared).toEqual(back);
+    expect(declaredLines(wentBack)).toEqual(linesOf(back));
+    expect(linesOf(back).join('\n')).toContain(`${RECORDS[1]} proxied: true -> false`);
+    expect(linesOf(back).join('\n')).toContain(`${RECORDS[1]} ttl: 1 -> 60`);
+
+    // Both directions on one address, in either order in the list (the reviewer's simulation on #1929 step 1's
+    // pull request): each run is credited with its own three, whichever step comes first. Before the fix a
+    // modified_on credited to the first step alone opened that step, and the other's values read as missing.
+    for (const order of [
+      [...forward, ...back],
+      [...back, ...forward],
+    ]) {
+      for (const [name, plan, own] of [
+        ['forward', forwardPlan(), forward],
+        ['back', backPlan(), back],
+      ]) {
+        const result = checkPlan(plan, { declared: order });
+        expect(result.unexpected, `${name}, ${order[0].step} first`).toEqual([]);
+        expect(result.ok, `${name}, ${order[0].step} first`).toBe(true);
+        expect(declaredLines(result), `${name}, ${order[0].step} first`).toEqual(linesOf(own));
+      }
+    }
+    // The back step without `step` beside step 1 still reads clean: every covering declaration is credited,
+    // and step 1's modified_on alone does not open step 1.
+    const backLoose = back.map(({ step: _step, ...rest }) => rest);
+    expect(checkPlan(backPlan(), { declared: [...forward, ...backLoose] }).unexpected).toEqual([]);
+
+    // An unrelated change to www (its comment, here), with both steps declared: only the comment is named.
+    // modified_on goes unknown with it and is covered by both steps' computed entries, but neither step opens,
+    // so there is no "missing" line and nothing is credited.
+    for (const declared of [DECLARED, forward]) {
+      const commented = expectedPlan();
+      commented.resource_changes.push(update(RECORDS[1], { comment: 'A different comment' }));
+      const result = checkPlan(commented, { declared });
+      expect(result.ok).toBe(false);
+      expect(result.unexpected).toEqual([`${RECORDS[1]}: update comment: ${JSON.stringify(COMMENTS[RECORDS[1]])} -> "A different comment"`]);
+      expect(result.declared.filter((entry) => entry.address === RECORDS[1])).toEqual([]);
+    }
 
     // The same run with any apex change too: the apex has no declaration, so each of its changes is named,
     // and www's step still matches.
@@ -1709,7 +1830,7 @@ describe('DECLARED', () => {
     );
     const apexChanged = checkPlan(withApex);
     expect(apexChanged.ok).toBe(false);
-    expect(apexChanged.declared).toEqual(wwwDeclared);
+    expect(apexChanged.declared).toEqual(forward);
     expect(apexChanged.unexpected.length).toBe(2);
     for (const line of apexChanged.unexpected) expect(line.startsWith(`${RECORDS[0]}: update `), line).toBe(true);
     expect(apexChanged.unexpected).toContain(`${RECORDS[0]}: update proxied: false -> true`);
@@ -1721,7 +1842,7 @@ describe('DECLARED', () => {
     ttlKept.resource_changes.push(update(RECORDS[1], { proxied: true }));
     const partial = checkPlan(ttlKept);
     expect(partial.ok).toBe(false);
-    const ttlDeclaration = wwwDeclared.find((entry) => entry.path === 'ttl');
+    const ttlDeclaration = forward.find((entry) => entry.path === 'ttl');
     expect(partial.unexpected).toEqual([describeIncomplete(ttlDeclaration)]);
     expect(partial.unexpected[0]).toContain(`${RECORDS[1]} ttl: 60 -> 1`);
     expect(partial.unexpected[0]).toContain(`step "${STEP}"`);
@@ -1731,10 +1852,17 @@ describe('DECLARED', () => {
     const ttlOnly = expectedPlan();
     ttlOnly.resource_changes.push(update(RECORDS[1], { ttl: 1 }));
     expect(checkPlan(ttlOnly).unexpected).toEqual([
-      describeIncomplete(wwwDeclared.find((entry) => entry.path === 'proxied')),
+      describeIncomplete(forward.find((entry) => entry.path === 'proxied')),
     ]);
 
-    // With no www change at all (before the owner's run, or once it has applied) the three are NOTEs only.
+    // Going back with the ttl left at 1 is not the back step either: its ttl is named as missing.
+    const backTtlKept = expectedPlan();
+    backTtlKept.resource_changes.push(update(RECORDS[1], { proxied: false }, { from: PROXIED }));
+    expect(checkPlan(backTtlKept).unexpected).toEqual([
+      describeIncomplete(back.find((entry) => entry.path === 'ttl')),
+    ]);
+
+    // With no www change at all (before the owner's run, or between runs) all six are NOTEs only.
     const quiet = checkPlan(expectedPlan());
     expect(quiet.ok).toBe(true);
     for (const entry of wwwDeclared) expect(quiet.unused).toContain(entry);
@@ -1770,7 +1898,7 @@ describe('DECLARED', () => {
     expect(checkPlan(again).unexpected).toEqual([`${address}: create`]);
   });
 
-  it('prunes what applied by 2026-11-27, keeps the four arming plans and #1929 step 1, and nothing else', () => {
+  it('prunes what applied by 2026-11-27, keeps the four arming plans and #1929 step 1 both ways, and nothing else', () => {
     // The plan check on run-su7kVbxufZn3LPdW matched #1923's nine entries as DECLARED (they applied in that
     // run) and printed every other entry pruned that day as "declared, not in this plan"; run-uBChZAdiYBb1Rma1's
     // plan (commit a7aa1077) matched no declaration. Each pruned change is unconditional in infra/ or was read
@@ -1778,14 +1906,17 @@ describe('DECLARED', () => {
     // assignments counted on storage_firewall_remover_enabled and lab_arc_run_command_enabled were pruned too,
     // once the owner confirmed on 2026-11-27 that both workspace variables are true (both assignments were
     // read live that day); docs/standards/required-inputs.md §4.1 records both as SET. Since then, #1929
-    // step 1's three www entries wait on the owner's switch (site_proxied_hosts "none" -> "www"); they go
-    // once that run has applied, when www's going-back declarations take their place.
+    // step 1's www entries, forward (site_proxied_hosts "none" -> "www") and back, stay until www is settled:
+    // they go when the apex step is declared, or when www goes back to "none" for good.
     const values = (entry) =>
       entry.after === KNOWN_AFTER_APPLY ? '(known after apply)' : `${entry.before} -> ${entry.after}`;
     expect(DECLARED.map((entry) => `${entry.address} ${entry.action ?? `${entry.path}: ${values(entry)}`}`)).toEqual([
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS: false -> true`,
       'cloudflare_dns_record.site_www proxied: false -> true',
       'cloudflare_dns_record.site_www ttl: 60 -> 1',
+      'cloudflare_dns_record.site_www modified_on: (known after apply)',
+      'cloudflare_dns_record.site_www proxied: true -> false',
+      'cloudflare_dns_record.site_www ttl: 1 -> 60',
       'cloudflare_dns_record.site_www modified_on: (known after apply)',
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS: false -> true`,

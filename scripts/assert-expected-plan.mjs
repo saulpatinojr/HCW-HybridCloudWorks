@@ -107,8 +107,12 @@
  * such as `"#1929 step 1"` on www's proxied, ttl and modified_on. They then
  * stand or fall together: a plan that carries some of a step's changes and
  * not the others is UNEXPECTED, naming each one it lacks, where without
- * `step` the missing one would only be a NOTE. A step none of whose changes
- * is in the plan still prints as NOTEs, as it does once it has applied.
+ * `step` the missing one would only be a NOTE. A step is in the plan only
+ * when one of its declared values matched: a `KNOWN_AFTER_APPLY` entry
+ * matches any unknown value at its path, so it never counts on its own, and
+ * two steps on one record (forward and back) can both be declared. A step
+ * that is not in the plan prints as NOTEs, as it does once it has applied.
+ * Every declaration that covers a difference is credited, not only the first.
  *
  * `tfc-plan-check.yml` reads the declarations on the ref it was dispatched
  * from (normally `main`), not those at the commit the run was planned for.
@@ -149,6 +153,7 @@ import {
   sideEffects,
 } from "./lib/plan-actions.mjs";
 import {
+  creditedDeclarations,
   declarationLines,
   describeIncomplete,
   findDeclaredAction,
@@ -552,7 +557,7 @@ export const DECLARED = [
   // were deleted here with the lookup and the import blocks in
   // infra/frontend.tf (#1937). A plan that changes either record now, a
   // proxied or ttl change before the owner sets site_proxied_hosts above
-  // all, is UNEXPECTED and is read, except www's step declared just below.
+  // all, is UNEXPECTED and is read, except www's two steps declared just below.
   //
   // #1929 step 1 (Part 3, step 1 of docs/runbooks/proxy-site-hosts.md): the
   // owner sets site_proxied_hosts from "none" to "www", and the run changes
@@ -562,16 +567,25 @@ export const DECLARED = [
   //     60`), and a proxied record takes only 1, "automatic";
   //   - modified_on known after apply. Read from the provider's source
   //     (5.29.0, internal/services/dns_record/custom.go, ModifyPlan): a
-  //     changed proxied or ttl leaves modified_on unknown, while created_on,
-  //     proxiable, meta, settings and tags keep their state values, and
-  //     comment_modified_on keeps its own because the comment does not change.
-  // The apex is declared nothing: "www" leaves local.site_apex_proxied false
-  // and its ttl is 1 either way, so any apex change in that run is UNEXPECTED.
-  // The three share a step, so a plan that proxies www and leaves its ttl at
-  // 60 (or changes ttl alone) names the missing one instead of passing.
-  // Delete these three once the owner's run has applied, in the same pull
-  // request that adds www's going-back declarations (proxied true -> false,
-  // ttl 1 -> 60, modified_on), as the runbook's table says.
+  //     changed proxied or ttl leaves modified_on unknown. created_on and id
+  //     keep their state values (plan modifiers in schema.go), so do
+  //     proxiable, meta, settings and tags (ModifyPlan copies them),
+  //     comment_modified_on keeps its own because the comment does not
+  //     change, and tags_modified_on is set to null because there are no
+  //     tags, as it already is in state.
+  // "#1929 step 1 back" is the same run the other way (www back to "none":
+  // Part 3, step 2's test, or any rollback of www): proxied true -> false,
+  // ttl 1 -> 60 and modified_on, read from the same source.
+  // The apex is declared nothing: neither value proxies it, and its ttl is 1
+  // either way, so any apex change in either run is UNEXPECTED.
+  // Each step's three share a `step`, so a plan that proxies www and leaves
+  // its ttl at 60 (or changes ttl alone) names the missing one instead of
+  // passing. modified_on alone never counts as either step, because any
+  // change to the record leaves it unknown.
+  // Both steps stay here, so either direction checks clean, from now until
+  // www is settled: they are deleted in the pull request that declares the
+  // next step (www to "both", the apex), or when www goes back to "none" for
+  // good. The runbook's table says the same.
   {
     address: "cloudflare_dns_record.site_www",
     path: "proxied",
@@ -594,6 +608,29 @@ export const DECLARED = [
     step: "#1929 step 1",
     after: KNOWN_AFTER_APPLY,
     reason: "#1929 step 1: the record's modified_on, set by Cloudflare when proxied and ttl change",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "proxied",
+    step: "#1929 step 1 back",
+    before: true,
+    after: false,
+    reason: "#1929 step 1 back: site_proxied_hosts www -> none takes www off Cloudflare's proxy again",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "ttl",
+    step: "#1929 step 1 back",
+    before: 1,
+    after: 60,
+    reason: "#1929 step 1 back: a DNS-only www goes back to ttl 60, from the switch in infra/frontend.tf",
+  },
+  {
+    address: "cloudflare_dns_record.site_www",
+    path: "modified_on",
+    step: "#1929 step 1 back",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 1 back: the record's modified_on, set by Cloudflare when proxied and ttl change",
   },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,
@@ -776,11 +813,15 @@ function checkUpdate(change, { tolerated, declared, matched, secrets }) {
   const lines = [];
   for (const difference of differences) {
     if (tolerated.get(address)?.has(difference.path)) continue;
-    const declaration = declared.find((d) =>
+    // Every declaration that covers the difference is credited, not only the
+    // first (#1929): a forward and a going-back step on one record both cover
+    // its unknown modified_on, and which of them the plan holds is settled
+    // by their declared values in checkPlan. The difference is printed once.
+    const covering = declared.filter((d) =>
       matchesDeclaration(d, address, difference),
     );
-    if (declaration) matched.add(declaration);
-    else
+    for (const declaration of covering) matched.add(declaration);
+    if (covering.length === 0)
       lines.push(
         `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`,
       );
@@ -884,15 +925,18 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
 
   // A step's declarations stand or fall together (#1929): a plan that carries
   // part of a step names the rest, rather than passing as if it were whole.
+  // A step is in the plan only when one of its declared values matched; a
+  // computed value alone (modified_on) never opens one.
   const incomplete = incompleteSteps(declared, matched);
   unexpected.push(...incomplete.map(describeIncomplete));
+  const credited = creditedDeclarations(declared, matched);
 
   return {
     ok: unexpected.length === 0 && missing.length === 0,
     unexpected,
     missing,
-    declared: declared.filter((d) => matched.has(d)),
-    unused: declared.filter((d) => !matched.has(d) && !incomplete.includes(d)),
+    declared: credited,
+    unused: declared.filter((d) => !credited.includes(d) && !incomplete.includes(d)),
   };
 }
 
