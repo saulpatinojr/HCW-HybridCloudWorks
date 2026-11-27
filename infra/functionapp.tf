@@ -530,8 +530,9 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # not absent, until both Web Analytics inputs are set and the site is
     # managed, so the timer reads "" as "not configured" rather than a missing
     # setting as a deploy fault. The run that imports the site plans it from
-    # "" to the tag, the owner's value, which tfc-plan-check cannot declare
-    # and is read by hand on that run.
+    # "" to the tag. tfc-plan-check accepts that as a declared change to the
+    # owner's value (OWNER_VALUE in scripts/assert-expected-plan.mjs), which
+    # never prints the tag, so that run checks clean like any other.
     "CF_WEB_ANALYTICS_SITE_TAG" = local.web_analytics_managed ? cloudflare_web_analytics_site.hcw[0].site_tag : ""
 
     # The account the site belongs to, the same value the workspace variable
