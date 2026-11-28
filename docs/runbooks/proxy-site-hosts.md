@@ -1,10 +1,12 @@
 # Proxying the site's own names through Cloudflare
 
-> **Status: prepared, nothing switched.** Ticket
+> **Status: `www` proxied since 2026-11-28; the apex not yet.** Ticket
 > [#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929).
-> The two records are in Terraform with the switch at `"none"`, so they stay
-> exactly as they were made: DNS-only (the grey cloud), answering straight
-> from Azure.
+> Parts 1 and 2 are done, and Part 3 steps 1 to 3 are done: `www` is behind
+> Cloudflare (the orange cloud), going back to `none` and on again was
+> rehearsed, and a frontend deploy came through with no stale page. The
+> apex is still DNS-only (the grey cloud), answering straight from Azure,
+> until step 4. The ticket's comments hold each step's checks.
 
 **Scope:** putting `hybridcloudworks.com` (the apex, the bare name) and
 `www.hybridcloudworks.com` behind Cloudflare's proxy (the orange cloud), the
