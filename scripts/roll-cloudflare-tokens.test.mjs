@@ -4,6 +4,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { parseArgs, printUsage, runRoll } from './roll-cloudflare-tokens.mjs';
+import { CLOUDFLARE_TARGETS } from '../functions/src/lib/credentials/cloudflare-roll.js';
+
+// A made-up account id of the right shape; never a real one in this public repository.
+const ACCOUNT_ID = '00000000000000000000000000000001';
 
 describe('parseArgs', () => {
   it('defaults to all targets and false flags', () => {
@@ -71,6 +75,8 @@ describe('printUsage', () => {
     expect(output).toContain('--dry-run');
     expect(output).toContain('--token-id');
     expect(output).toContain('CLOUDFLARE_ROLL_TOKEN');
+    expect(output).toContain('CLOUDFLARE_ACCOUNT_ID');
+    expect(output).toContain('CLOUDFLARE_ACCOUNT_ROLL_TOKEN');
     expect(output).toContain('TFC_TOKEN');
   });
 });
@@ -124,6 +130,7 @@ describe('runRoll', () => {
         CLOUDFLARE_AZURE_TOKEN_ID: 'duplicate-tok-id',
         CLOUDFLARE_LAB_TOKEN_ID: 'duplicate-tok-id',
         CLOUDFLARE_CADDY_TOKEN_ID: 'different-tok-id',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
         CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok',
         TFC_TOKEN: 'tfc-tok',
       },
@@ -137,7 +144,7 @@ describe('runRoll', () => {
     const stderr = [];
     const code = await runRoll({
       options: { target: 'azure', dryRun: false },
-      env: {},
+      env: { CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID },
       stderr: (m) => stderr.push(m),
     });
     expect(code).toBe(2);
@@ -148,7 +155,7 @@ describe('runRoll', () => {
     const stderr = [];
     const code = await runRoll({
       options: { target: 'azure', dryRun: false },
-      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID },
       stderr: (m) => stderr.push(m),
     });
     expect(code).toBe(2);
@@ -159,7 +166,7 @@ describe('runRoll', () => {
     const stderr = [];
     const code = await runRoll({
       options: { target: 'azure', dryRun: false },
-      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok', TFC_TOKEN: 'tfc-tok' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok', TFC_TOKEN: 'tfc-tok', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID },
       stderr: (m) => stderr.push(m),
     });
     expect(code).toBe(1);
@@ -174,14 +181,56 @@ describe('runRoll', () => {
         CLOUDFLARE_AZURE_TOKEN_ID: 'tok-azure-id',
         CLOUDFLARE_LAB_TOKEN_ID: 'tok-lab-id',
         CLOUDFLARE_CADDY_TOKEN_ID: 'tok-caddy-id',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
       },
       stdout: (m) => stdout.push(m),
     });
     expect(code).toBe(0);
     const out = stdout.join('\n');
-    expect(out).toContain('[dry-run] Would roll token tok-azure-id and update Azure HCP Terraform workspace');
-    expect(out).toContain('[dry-run] Would roll token tok-lab-id and update Lab HCP Terraform workspace');
-    expect(out).toContain('[dry-run] Would roll token tok-caddy-id and update Lab host Ansible Vault');
+    expect(out).toContain('[dry-run] Would roll token tok-azure-id (account-owned token');
+    expect(out).toContain('and update Azure HCP Terraform workspace');
+    expect(out).toContain('[dry-run] Would roll token tok-lab-id (user token');
+    expect(out).toContain('and update Lab HCP Terraform workspace');
+    expect(out).toContain('[dry-run] Would roll token tok-caddy-id (user token');
+    expect(out).toContain('and update Lab host Ansible Vault');
+    // The account id is an identifier, but it is still not printed.
+    expect(out).not.toContain(ACCOUNT_ID);
+  });
+
+  it('refuses the azure target without CLOUDFLARE_ACCOUNT_ID, even in a dry run (#1927)', async () => {
+    for (const options of [{ target: 'azure', dryRun: true }, { target: 'all', dryRun: true }, { target: 'azure', check: true }]) {
+      const stderr = [];
+      const code = await runRoll({
+        options,
+        env: { CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az', CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb', CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd' },
+        stderr: (m) => stderr.push(m),
+      });
+      expect(code, JSON.stringify(options)).toBe(2);
+      expect(stderr.join('\n')).toContain('set CLOUDFLARE_ACCOUNT_ID');
+      expect(stderr.join('\n')).toContain('(target azure)');
+    }
+  });
+
+  it('refuses a malformed CLOUDFLARE_ACCOUNT_ID without printing it', async () => {
+    const stderr = [];
+    const code = await runRoll({
+      options: { target: 'azure', dryRun: true },
+      env: { CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az', CLOUDFLARE_ACCOUNT_ID: 'Not-An-Id' },
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(2);
+    expect(stderr.join('\n')).not.toContain('Not-An-Id');
+  });
+
+  it('does not need the account id for user-token targets', async () => {
+    const stdout = [];
+    const code = await runRoll({
+      options: { target: 'lab', dryRun: true },
+      env: { CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb' },
+      stdout: (m) => stdout.push(m),
+    });
+    expect(code).toBe(0);
+    expect(stdout.join('\n')).toContain('tok-lb (user token');
   });
 
   it('performs live checks in --check mode', async () => {
@@ -190,7 +239,11 @@ describe('runRoll', () => {
 
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      // The check lists the variables too, the second read a write needs (#1927).
+      if (url.endsWith('/workspaces/ws-mock/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
       }
       throw new Error(`Unexpected URL: ${url}`);
     });
@@ -199,6 +252,7 @@ describe('runRoll', () => {
       options: { target: 'azure', check: true },
       env: {
         CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
         TFC_TOKEN: 'valid-tfc-token',
       },
       fetchImpl: mockFetch,
@@ -211,13 +265,138 @@ describe('runRoll', () => {
     expect(stdout.join('\n')).toContain("[ok] Target 'azure': verified reachable and configured");
   });
 
-  it('executes successful roll and apply across all three targets', async () => {
+  it('rolls nothing when an HCP Terraform workspace lookup is refused (403), so every old token still works (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ errors: [{ title: 'forbidden' }] }) };
+      }
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.endsWith('/workspaces/ws-lab/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'all' },
+      env: {
+        CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
+        TFC_TOKEN: 'tfc-app-token',
+        CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
+        CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb',
+        CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd',
+      },
+      fetchImpl: mockFetch,
+      execImpl: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' })),
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    const cloudflareCalls = mockFetch.mock.calls.filter(([url]) => String(url).startsWith('https://api.cloudflare.com/'));
+    expect(cloudflareCalls).toEqual([]);
+    const err = stderr.join('\n');
+    expect(err).toContain("[fail] Target 'azure': its store cannot be written, so nothing was rolled");
+    expect(err).toContain('403');
+    expect(err).toContain('Nothing was rolled');
+    expect(err).not.toContain('tfc-app-token');
+  });
+
+  it('rolls nothing when HCP Terraform says the token cannot write variables (can-update-variable false) (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: 'ws-az', attributes: { permissions: { 'can-update-variable': false } } } }),
+        };
+      }
+      if (url.endsWith('/workspaces/ws-az/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).startsWith('https://api.cloudflare.com/'))).toBe(false);
+    expect(stderr.join('\n')).toContain('the HCP Terraform token cannot write variables in hcw/hcw-azure; nothing was rolled');
+  });
+
+  it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn();
+    const execImpl = vi.fn(async () => ({ code: 1, stdout: '', stderr: 'Sorry, user may not run sudo' }));
+    const code = await runRoll({
+      options: { target: 'caddy' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd' },
+      fetchImpl: mockFetch,
+      execImpl,
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(execImpl).toHaveBeenCalledTimes(1);
+    expect(execImpl.mock.calls[0][0].args).toEqual(['-n', '-l', '/usr/local/sbin/hcw-vault-set']);
+    expect(stderr.join('\n')).toContain("[fail] Target 'caddy': its store cannot be written, so nothing was rolled");
+  });
+
+  it('rolls nothing when listing a workspace\'s variables is refused', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-az', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.endsWith('/workspaces/ws-az/vars')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: () => {},
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).startsWith('https://api.cloudflare.com/'))).toBe(false);
+  });
+
+  it('refuses a target that does not say which kind of token it holds, even in a dry run (#1927)', async () => {
+    const { owner, ...ownerless } = CLOUDFLARE_TARGETS.lab;
+    expect(owner).toBe('user');
+    const stderr = [];
+    const mockFetch = vi.fn();
+    const code = await runRoll({
+      options: { target: 'lab', dryRun: true },
+      targets: { lab: ownerless },
+      env: { CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb' },
+      fetchImpl: mockFetch,
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(stderr.join('\n')).toContain("Target 'lab' does not say which kind of Cloudflare token it holds");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('executes successful roll and apply across all three targets, each through its own route', async () => {
     const stdout = [];
     const stderr = [];
+    const rolls = [];
 
     const mockFetch = vi.fn(async (url, options) => {
       // Roll calls
       if (url.includes('/value')) {
+        rolls.push({ url, auth: options.headers.Authorization });
         const tokenId = url.split('/tokens/')[1].split('/value')[0];
         return {
           ok: true,
@@ -238,7 +417,7 @@ describe('runRoll', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-mock-id' } }),
+          json: async () => ({ data: { id: 'ws-mock-id', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       // TFC vars get
@@ -268,6 +447,8 @@ describe('runRoll', () => {
       options: { target: 'all' },
       env: {
         CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token',
+        CLOUDFLARE_ACCOUNT_ROLL_TOKEN: 'cf-account-roll-token',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
         TFC_TOKEN: 'tfc-app-token',
         CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
         CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb',
@@ -286,10 +467,75 @@ describe('runRoll', () => {
     expect(out).toContain("[ok] Target 'lab': successfully rolled token tok-lb");
     expect(out).toContain("[ok] Target 'caddy': successfully rolled token tok-cd");
 
+    // hcw-azure's account-owned token goes through the account route with the
+    // account roll token; the two user tokens through the user route.
+    expect(rolls).toEqual([
+      { url: `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/tok-az/value`, auth: 'Bearer cf-account-roll-token' },
+      { url: 'https://api.cloudflare.com/client/v4/user/tokens/tok-lb/value', auth: 'Bearer cf-roll-token' },
+      { url: 'https://api.cloudflare.com/client/v4/user/tokens/tok-cd/value', auth: 'Bearer cf-roll-token' },
+    ]);
+
     // Zero secret leakage check
     expect(out).not.toContain('secret-val-for');
     expect(out).not.toContain('cf-roll-token');
+    expect(out).not.toContain('cf-account-roll-token');
     expect(out).not.toContain('tfc-app-token');
+    expect(out).not.toContain(ACCOUNT_ID);
+  });
+
+  it('uses CLOUDFLARE_ROLL_TOKEN for the account route when no account roll token is given', async () => {
+    const auths = [];
+    const mockFetch = vi.fn(async (url, options) => {
+      if (url.includes('/value')) {
+        auths.push(options.headers.Authorization);
+        return { ok: true, status: 200, json: async () => ({ success: true, result: 'new-value' }) };
+      }
+      if (url.includes('/tokens/verify')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, result: { id: 'x', status: 'active' } }) };
+      }
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.includes('/vars') && options.method === 'GET') {
+        return { ok: true, status: 200, json: async () => ({ data: [{ id: 'var-1', attributes: { key: 'cloudflare_api_token', category: 'terraform' } }] }) };
+      }
+      if (url.includes('/vars/var-1') && options.method === 'PATCH') {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'var-1' } }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'general-roll', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(auths).toEqual(['Bearer general-roll']);
+  });
+
+  it('rolls nothing when the workspace has no variable to replace (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url, options) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.includes('/vars') && options.method === 'GET') {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'general-roll', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => url.startsWith('https://api.cloudflare.com/'))).toBe(false);
+    expect(stderr.join('\n')).toContain('has no terraform variable cloudflare_api_token to replace');
   });
 
   it('exits with 1 when a target fails to roll', async () => {
@@ -312,6 +558,8 @@ describe('runRoll', () => {
       options: { target: 'caddy', tokenId: 'tok-failing' },
       env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token' },
       fetchImpl: mockFetch,
+      // sudo allows hcw-vault-set, so the check before the roll passes.
+      execImpl: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' })),
       stdout: (m) => stdout.push(m),
       stderr: (m) => stderr.push(m),
     });

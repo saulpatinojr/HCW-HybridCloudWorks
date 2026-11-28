@@ -354,7 +354,7 @@ const KEY_VAULT_METADATA = Object.freeze({
   // of rule-bearing hand credentials (#1026) is held to eight by
   // register.test.js, and a read-only analytics token is not one of them.
   "CLOUDFLARE-ANALYTICS-TOKEN": {
-    issuer: "Cloudflare API Tokens",
+    issuer: "Cloudflare user API tokens",
     consumer: "Ambassador hub monthly audience figure (page views)",
     rotate:
       "Mint a new read-only token (Account Analytics: Read) under My Profile → API Tokens in the Cloudflare dashboard, paste it on Integrations → Keys, then revoke the old one.",
@@ -368,7 +368,7 @@ const KEY_VAULT_METADATA = Object.freeze({
       "The Cloudflare page and Claude Network Guy: read and change the settings, DNS records, rules and cache of the site's zone and the lab zone; and the daily rate limit check (checkCloudflareRateLimit, #1918), which only reads the site zone's rate limiting rules",
     lifetimeDays: CLOUDFLARE_ADMIN_TOKEN_DAYS,
     rotate:
-      "Make a new account-owned token for the site's zone and the lab zone (Manage Account → API Tokens in the Cloudflare dashboard, same permissions and the same two zones, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",
+      "Make a new account-owned token for the site's zone and the lab zone (Manage account → Account API tokens in the Cloudflare dashboard, same permissions and the same two zones, one-year expiry), paste it on Integrations → Keys, press Test on the Cloudflare card, then delete the old token there.",
   },
 });
 
@@ -535,16 +535,30 @@ const OTHER_ENTRIES = [
   },
 
   // ── HCP Terraform ───────────────────────────────────────────────────────
+  // The value is the ACCOUNT-OWNED token `hcw` (#1927: its "last used" time
+  // matched hcw-azure runs on 2026-11-27), not the user token the docs used
+  // to name. It rolls through Cloudflare's account route, which
+  // scripts/roll-cloudflare-tokens.mjs takes for the azure target
+  // (CLOUDFLARE_TARGETS.azure.owner, cloudflare-roll.js);
+  // cloudflare-token-kinds.test.js holds this row to that target.
+  // RENEWED BY HAND, on the owner's 180-day rule (#1927, decided on review):
+  // nothing schedules scripts/roll-cloudflare-tokens.mjs, and a scheduled roll
+  // would need a new stored secret able to roll tokens, which is the owner's
+  // call. Cloudflare sets no expiry on an API token unless whoever makes it
+  // picks one (`expires_on` is optional when a token is created, Cloudflare's
+  // API schema read 2026-11-27); whether this one has an end date was not read
+  // in #1927. So it takes HAND_ROTATION_DAYS and gets a reminder line.
   {
     id: "tfc-azure-cloudflare-api-token",
     name: "cloudflare_api_token",
     store: "tfc-azure",
-    consumer: "Cloudflare provider: DNS, the origin transform rule, and the Web Analytics site (#1923)",
-    issuer: "Cloudflare",
-    renewal: "automation",
-    lifetimeDays: null,
+    consumer:
+      "Cloudflare provider in infra/: the DNS records, the origin transform rule, and the Web Analytics site (#1923). The account-owned token `hcw`",
+    issuer: "Cloudflare account API tokens",
+    renewal: "hand",
+    lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
+      "Run scripts/roll-cloudflare-tokens.mjs --target azure yourself (it rolls the account-owned token `hcw` through Cloudflare's account route, so set CLOUDFLARE_ACCOUNT_ID and a roll token with Account API Tokens Write, and writes the new value to the sensitive workspace variable); or by hand: Manage account → Account API tokens → hcw → Roll, then paste it into the variable. Then record the date here.",
   },
   {
     id: "tfc-azure-cloudflare-origin-secret",
@@ -611,16 +625,28 @@ const OTHER_ENTRIES = [
     rotate:
       "Issue a new token in the Hostinger panel and update the sensitive workspace variable.",
   },
+  // Most likely the user token `hcp-terraform-cloudflare-dns` (it was last
+  // used the day #1743 changed infra-lab), NOT CONFIRMED (#1927); the check
+  // is in docs/runbooks/dns-token-stolen.md. A user token rolls through the
+  // user route, which the lab target takes.
+  // RENEWED BY HAND, on the owner's 180-day rule (#1927, decided on review):
+  // nothing schedules scripts/roll-cloudflare-tokens.mjs, and a scheduled roll
+  // would need a new stored secret able to roll tokens, which is the owner's
+  // call. Cloudflare sets no expiry on an API token unless whoever makes it
+  // picks one (`expires_on` is optional when a token is created, Cloudflare's
+  // API schema read 2026-11-27); whether this one has an end date was not read
+  // in #1927. So it takes HAND_ROTATION_DAYS and gets a reminder line.
   {
     id: "tfc-lab-cloudflare-api-token",
     name: "cloudflare_api_token",
     store: "tfc-lab",
-    consumer: "infra-lab lab DNS records",
-    issuer: "Cloudflare",
-    renewal: "automation",
-    lifetimeDays: null,
+    consumer:
+      "infra-lab lab DNS records. Most likely the user token `hcp-terraform-cloudflare-dns` (not confirmed)",
+    issuer: "Cloudflare user API tokens",
+    renewal: "hand",
+    lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
+      "Run scripts/roll-cloudflare-tokens.mjs --target lab yourself (it rolls the user token through Cloudflare's user route, with a roll token that holds API Tokens Write, and writes the new value to the sensitive workspace variable); or by hand: My Profile → API Tokens → the token → Roll, then paste it into the variable. Then record the date here.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
@@ -703,16 +729,21 @@ const OTHER_ENTRIES = [
     rotate:
       'ALTER USER first, then the vault edit and a run: lab-host/README.md, "Rotating the PostgreSQL password".',
   },
+  // A user token, as scripts/roll-cloudflare-tokens.mjs has always rolled it
+  // (the user route); not re-checked against the dashboard in #1927.
+  // RENEWED BY HAND on the owner's 180-day rule (#1927): nothing schedules the
+  // roll script. This token was made with a one-year end date
+  // (docs/standards/required-inputs.md §4.7), so 180 days comes well before it.
   {
     id: "lab-caddy-cloudflare-api-token",
     name: "Caddy CLOUDFLARE_API_TOKEN",
     store: "lab-vault",
     consumer: "Caddy’s DNS-01 certificate renewals",
-    issuer: "Cloudflare",
-    renewal: "automation",
-    lifetimeDays: null,
+    issuer: "Cloudflare user API tokens",
+    renewal: "hand",
+    lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      "Automated renewal via Cloudflare roll-token API and hcw-vault-set (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard, setting vault_cloudflare_api_token, and re-running bootstrap.sh.",
+      "Run scripts/roll-cloudflare-tokens.mjs --target caddy yourself (it rolls the user token and stores the new value with hcw-vault-set); or by hand: roll it in the Cloudflare dashboard, set vault_cloudflare_api_token, and re-run bootstrap.sh. Then record the date here.",
   },
   {
     id: "lab-addon-migration-turnstile-secret",

@@ -4,15 +4,25 @@
  * Cloudflare API tokens via the roll-token endpoint (#1027).
  *
  * Targets:
- *   azure  - HCP Terraform workspace hcw/hcw-azure (cloudflare_api_token)
- *   lab    - HCP Terraform workspace hcw/hcw-lab (cloudflare_api_token)
- *   caddy  - Lab host Ansible Vault (vault_cloudflare_api_token via hcw-vault-set)
+ *   azure  - HCP Terraform workspace hcw/hcw-azure (cloudflare_api_token):
+ *            the account-owned token `hcw`, rolled through the account route,
+ *            so CLOUDFLARE_ACCOUNT_ID must be set (#1927)
+ *   lab    - HCP Terraform workspace hcw/hcw-lab (cloudflare_api_token): a user token
+ *   caddy  - Lab host Ansible Vault (vault_cloudflare_api_token via hcw-vault-set): a user token
  *   all    - All three targets (default)
  *
  * Invariants:
  *   - Zero token secret leakage: secrets are NEVER accepted via argv (no --roll-token
  *     or --tfc-token on the command line; env vars only) and never printed.
- *   - Write before retire: new tokens are committed to stores immediately after rolling.
+ *   - Write immediately after the roll: Cloudflare retires the old value at the roll,
+ *     so the new one is written to its store at once. BEFORE any roll (#1927) every
+ *     store is checked with the credentials the write will use: each HCP Terraform
+ *     workspace must give the token `can-update-variable` and list its variables,
+ *     and sudo must allow hcw-vault-set for the caddy target. A refusal stops the
+ *     run with nothing rolled. This proves permission, not that the write will
+ *     succeed.
+ *   - Nothing schedules this script (#1927): a person runs it when the credential
+ *     register's 180-day reminder comes.
  *   - Stdin-only: vault updates pass secret strictly on standard input.
  *
  * Usage:
@@ -22,9 +32,13 @@
 import { fileURLToPath } from 'node:url';
 import {
   CLOUDFLARE_TARGETS,
+  TOKEN_OWNERS,
+  checkTfcVariablesWritable,
   rollAndApplyCloudflareToken,
+  storeFor,
 } from '../functions/src/lib/credentials/cloudflare-roll.js';
 import { parseArgs, printUsage } from './lib/cloudflare-roll-args.mjs';
+import { ownerOf, planRun } from './lib/cloudflare-roll-plan.mjs';
 // The parts below now live in their own files; they are exported from here too, so callers keep their imports.
 export { parseArgs, printUsage } from './lib/cloudflare-roll-args.mjs';
 
@@ -38,10 +52,12 @@ export { parseArgs, printUsage } from './lib/cloudflare-roll-args.mjs';
  * @param {Function} [params.execImpl]
  * @param {Function} [params.stdout]
  * @param {Function} [params.stderr]
+ * @param {Record<string, object>} [params.targets] The roll targets; CLOUDFLARE_TARGETS outside tests
  * @returns {Promise<number>} exit code
  */
 export async function runRoll({
   options,
+  targets = CLOUDFLARE_TARGETS,
   env = process.env,
   fetchImpl = globalThis.fetch,
   execImpl,
@@ -52,115 +68,48 @@ export async function runRoll({
     printUsage(stdout);
     return 0;
   }
-
-  const rollToken = env.CLOUDFLARE_ROLL_TOKEN || env.CLOUDFLARE_API_TOKEN;
-  const tfcToken = env.TFC_TOKEN || env.TFE_TOKEN;
-
-  const targetKeys =
-    options.target === 'all'
-      ? Object.keys(CLOUDFLARE_TARGETS)
-      : [options.target];
-
-  const refusal = preflightRefusal({ options, targetKeys, rollToken, tfcToken });
-  if (refusal) {
-    stderr(`[error] ${refusal.message}`);
-    return refusal.code;
-  }
-
-  const resolved = resolveTargets({ options, env, targetKeys, stderr });
-  if (resolved.code !== 0) return resolved.code;
-  const resolvedTargets = resolved.targets;
-
-  // Check mode: verifies connectivity and configuration without modifying anything
-  if (options.check) return checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stderr });
-
-  // Dry run mode, or the real execution
-  return options.dryRun
-    ? dryRunTargets(resolvedTargets, stdout)
-    : rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr });
+  const plan = planRun({ options, targets, env, stderr });
+  if (plan.code !== null) return plan.code;
+  return MODES[modeOf(options)]({ ...plan, fetchImpl, execImpl, stdout, stderr });
 }
 
-/** --dry-run: say what would be rolled and where it would be written. */
+/** Which of MODES a run is: --check, --dry-run, or a real roll. */
+function modeOf(options) {
+  if (options.check) return 'check';
+  return options.dryRun ? 'dryRun' : 'roll';
+}
+
+/** What each mode does with the plan; each resolves to the exit code. */
+const MODES = Object.freeze({
+  // Check mode: verifies connectivity and configuration without modifying anything.
+  check: (run) => checkTargets(run),
+  dryRun: ({ resolvedTargets, stdout }) => dryRunTargets(resolvedTargets, stdout),
+  roll: (run) => rollRun(run),
+});
+
+/** --dry-run: say what would be rolled, through which route, and where it would be written. */
 function dryRunTargets(resolvedTargets, stdout) {
   for (const { target, tokenId } of resolvedTargets) {
-    stdout(`[dry-run] Would roll token ${tokenId} and update ${target.name} (${target.type})`);
+    stdout(
+      `[dry-run] Would roll token ${tokenId} (${TOKEN_OWNERS[ownerOf(target)].label}) and update ${target.name} (${target.type})`
+    );
   }
   return 0;
 }
 
 /**
- * The checks made before anything is resolved, in order. Each returns
- * `{ message, code }` when the options or the environment cannot go ahead.
+ * A real roll. Before any roll, every store this run writes to is checked
+ * with the credentials the write will use (HCP Terraform's
+ * can-update-variable for the token, or sudo's permission for
+ * hcw-vault-set). A refusal stops the whole run with nothing rolled (#1927),
+ * because a roll retires the old value and a failed write would leave a dead
+ * token.
  */
-const PREFLIGHT_CHECKS = [
-  ({ options }) => (options.invalid ? { message: options.invalid, code: 2 } : null),
-  ({ targetKeys }) => {
-    const unknown = targetKeys.find((key) => !CLOUDFLARE_TARGETS[key]);
-    if (unknown === undefined) return null;
-    return { message: `Unknown target: '${unknown}'. Expected one of: ${Object.keys(CLOUDFLARE_TARGETS).join(', ')}, all`, code: 1 };
-  },
-  ({ options, targetKeys }) =>
-    targetKeys.length > 1 && options.tokenId
-      ? { message: '--token-id cannot be used when targeting multiple targets (use environment variables or run per target)', code: 1 }
-      : null,
-  ({ options, rollToken }) =>
-    !options.dryRun && !options.check && !rollToken
-      ? { message: 'Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN)', code: 2 }
-      : null,
-  ({ options, targetKeys, tfcToken }) => {
-    const needsTfc = targetKeys.some((k) => CLOUDFLARE_TARGETS[k].type === 'tfc');
-    return !options.dryRun && needsTfc && !tfcToken
-      ? { message: 'HCP Terraform token is required for TFC targets (set TFC_TOKEN or TFE_TOKEN)', code: 2 }
-      : null;
-  },
-];
-
-/** The first reason the run cannot go ahead, as `{ message, code }`, or null when it can. */
-function preflightRefusal(context) {
-  for (const check of PREFLIGHT_CHECKS) {
-    const refusal = check(context);
-    if (refusal) return refusal;
-  }
-  return null;
-}
-
-/** The token ID one target uses: --token-id, its own variable, or (for a single target only) CLOUDFLARE_TOKEN_ID. */
-function tokenIdFor(target, { options, env, targetKeys }) {
-  const tokenId = options.tokenId || env[target.envTokenId];
-  // Only allow single-target fallback to generic CLOUDFLARE_TOKEN_ID
-  if (!tokenId && targetKeys.length === 1) return env.CLOUDFLARE_TOKEN_ID;
-  return tokenId;
-}
-
-/**
- * Resolve and validate token IDs. Returns `{ code: 0, targets }`, or the exit
- * code (1) after naming every missing ID or the first repeated one.
- */
-function resolveTargets({ options, env, targetKeys, stderr }) {
-  const targets = [];
-  const seenTokenIds = new Set();
-  let missing = 0;
-
-  for (const key of targetKeys) {
-    const target = CLOUDFLARE_TARGETS[key];
-    const tokenId = tokenIdFor(target, { options, env, targetKeys });
-
-    if (!tokenId) {
-      stderr(`[error] Missing token ID for target '${key}' (${target.name}). Set ${target.envTokenId}.`);
-      missing += 1;
-      continue;
-    }
-
-    if (seenTokenIds.has(tokenId)) {
-      stderr(`[error] Duplicate token ID '${tokenId}' detected across multiple targets. Each target must have a distinct Cloudflare token.`);
-      return { code: 1 };
-    }
-    seenTokenIds.add(tokenId);
-
-    targets.push({ key, target, tokenId });
-  }
-
-  return missing > 0 ? { code: 1 } : { code: 0, targets };
+async function rollRun(run) {
+  const unwritable = await unwritableStores(run);
+  if (unwritable === 0) return rollTargets(run);
+  run.stderr(`\nNothing was rolled: ${unwritable} store(s) cannot be written with the credentials given. Every token still works.`);
+  return 1;
 }
 
 /** --check: each target's HCP Terraform workspace looked up (when there is a token), nothing changed. */
@@ -179,30 +128,41 @@ async function checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stde
   return checkFailures === 0 ? 0 : 1;
 }
 
+/**
+ * Looks a target's HCP Terraform workspace up, lists its variables and
+ * requires HCP Terraform's `can-update-variable` for the token; throws
+ * otherwise.
+ */
 async function lookUpWorkspace(target, tfcToken, fetchImpl) {
-  const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(target.organization)}/workspaces/${encodeURIComponent(target.workspace)}`;
-  const res = await fetchImpl(wsUrl, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${tfcToken}`,
-      'Content-Type': 'application/vnd.api+json',
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`HCP Terraform workspace lookup returned HTTP ${res.status}`);
+  await checkTfcVariablesWritable({ tfcToken, organization: target.organization, workspace: target.workspace, fetchImpl });
+}
+
+/** Before any roll: the number of stores the given credentials may not write, each named on stderr. */
+async function unwritableStores({ resolvedTargets, tfcToken, fetchImpl, execImpl, stderr }) {
+  let failures = 0;
+  for (const { key, target } of resolvedTargets) {
+    try {
+      // The same check the library makes before its own roll (STORES[type].check).
+      await storeFor(target).check(target, { tfcToken, fetchImpl, execImpl });
+    } catch (err) {
+      stderr(`[fail] Target '${key}': its store cannot be written, so nothing was rolled: ${err.message}`);
+      failures += 1;
+    }
   }
+  return failures;
 }
 
 /** Roll each target's token and write it back to its store; 1 when any target failed. */
-async function rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr }) {
+async function rollTargets({ resolvedTargets, rollTokens, accountId, tfcToken, fetchImpl, execImpl, stdout, stderr }) {
   let failed = 0;
   for (const { key, target, tokenId } of resolvedTargets) {
     try {
-      stdout(`[roll] Rolling token for target '${key}' (${target.name})...`);
+      stdout(`[roll] Rolling token for target '${key}' (${target.name}, ${TOKEN_OWNERS[ownerOf(target)].label})...`);
       const result = await rollAndApplyCloudflareToken({
         tokenId,
-        rollToken,
+        rollToken: rollTokens[ownerOf(target)],
         target,
+        accountId,
         tfcToken,
         fetchImpl,
         execImpl,

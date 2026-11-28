@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import {
   CLOUDFLARE_TARGETS,
+  TOKEN_OWNERS,
+  tokenOwnerRoutes,
   defaultSpawnRunner,
   rollCloudflareToken,
   verifyCloudflareToken,
@@ -9,6 +11,18 @@ import {
   updateLabVaultSecret,
   rollAndApplyCloudflareToken,
 } from './cloudflare-roll.js';
+
+// A made-up account id of the right shape; never a real one in this public repository.
+const ACCOUNT_ID = '00000000000000000000000000000001';
+
+/**
+ * A command runner that answers the `sudo -n -l` check made before a roll as
+ * allowed, and hands every other call (the vault write) to `write`.
+ */
+const vaultRunner = (write) =>
+  vi.fn(async (params) =>
+    params.args?.[1] === '-l' ? { code: 0, stdout: '/usr/local/sbin/hcw-vault-set', stderr: '' } : write(params)
+  );
 
 describe('CLOUDFLARE_TARGETS', () => {
   it('declares the three approved targets with required metadata', () => {
@@ -34,10 +48,54 @@ describe('CLOUDFLARE_TARGETS', () => {
     expect(caddy.vaultKey).toBe('vault_cloudflare_api_token');
   });
 
+  it('says which kind of token each target holds (#1927)', () => {
+    // hcw-azure holds the account-owned token `hcw` (observed 2026-11-27).
+    expect(CLOUDFLARE_TARGETS.azure).toMatchObject({ owner: 'account', tokenName: 'hcw', tokenNameConfirmed: true });
+    // hcw-lab most likely holds a user token; not confirmed.
+    expect(CLOUDFLARE_TARGETS.lab).toMatchObject({
+      owner: 'user',
+      tokenName: 'hcp-terraform-cloudflare-dns',
+      tokenNameConfirmed: false,
+    });
+    expect(CLOUDFLARE_TARGETS.caddy).toMatchObject({ owner: 'user', tokenName: null });
+    for (const [key, target] of Object.entries(CLOUDFLARE_TARGETS)) {
+      expect(Object.hasOwn(TOKEN_OWNERS, target.owner), key).toBe(true);
+    }
+  });
+
   it('is frozen', () => {
     expect(Object.isFrozen(CLOUDFLARE_TARGETS)).toBe(true);
     for (const target of Object.values(CLOUDFLARE_TARGETS)) {
       expect(Object.isFrozen(target)).toBe(true);
+    }
+  });
+});
+
+describe('tokenOwnerRoutes', () => {
+  it('knows exactly the two kinds Cloudflare has', () => {
+    expect(Object.keys(TOKEN_OWNERS).sort()).toEqual(['account', 'user']);
+    expect(Object.isFrozen(TOKEN_OWNERS)).toBe(true);
+  });
+
+  it('builds the user and account routes', () => {
+    expect(tokenOwnerRoutes({ owner: 'user' }).rollPath({ tokenId: 'tok-1' })).toBe('/user/tokens/tok-1/value');
+    expect(tokenOwnerRoutes({ owner: 'user' }).verifyPath({})).toBe('/user/tokens/verify');
+    const account = tokenOwnerRoutes({ owner: 'account', accountId: ACCOUNT_ID });
+    expect(account.rollPath({ tokenId: 'tok-1', accountId: ACCOUNT_ID })).toBe(`/accounts/${ACCOUNT_ID}/tokens/tok-1/value`);
+    expect(account.verifyPath({ accountId: ACCOUNT_ID })).toBe(`/accounts/${ACCOUNT_ID}/tokens/verify`);
+  });
+
+  it('refuses an unknown kind, and an account kind without a well-formed account id, without echoing the id', () => {
+    expect(() => tokenOwnerRoutes({ owner: 'organisation' })).toThrow(/Unknown Cloudflare token owner kind: 'organisation'/);
+    expect(() => tokenOwnerRoutes({ owner: 'toString' })).toThrow(/Unknown Cloudflare token owner kind/);
+    expect(() => tokenOwnerRoutes({ owner: 'account' })).toThrow(/needs the Cloudflare account id/);
+    const bad = 'NOT-AN-ACCOUNT-ID';
+    try {
+      tokenOwnerRoutes({ owner: 'account', accountId: bad });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect(err.message).toMatch(/set CLOUDFLARE_ACCOUNT_ID/);
+      expect(err.message).not.toContain(bad);
     }
   });
 });
@@ -84,6 +142,36 @@ describe('rollCloudflareToken', () => {
       tokenId: 'tok-1234567890abcdef',
       tokenValue: 'new-secret-token-xyz',
     });
+  });
+
+  it('rolls an account-owned token through the account route (#1927)', async () => {
+    const calls = [];
+    const mockFetch = vi.fn(async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ success: true, result: 'new-account-token-value' }) };
+    });
+
+    const res = await rollCloudflareToken({
+      tokenId: 'tok-account-1',
+      rollToken: 'operator-account-roll-token',
+      owner: 'account',
+      accountId: ACCOUNT_ID,
+      fetchImpl: mockFetch,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/tok-account-1/value`);
+    expect(calls[0].options.method).toBe('PUT');
+    expect(calls[0].options.body).toBe('{}');
+    expect(res).toEqual({ tokenId: 'tok-account-1', tokenValue: 'new-account-token-value' });
+  });
+
+  it('sends nothing for an account-owned token without the account id', async () => {
+    const mockFetch = vi.fn();
+    await expect(
+      rollCloudflareToken({ tokenId: 'tok-account-1', rollToken: 'op', owner: 'account', fetchImpl: mockFetch })
+    ).rejects.toThrow(/needs the Cloudflare account id/);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('supports result as an object with value property', async () => {
@@ -179,6 +267,19 @@ describe('verifyCloudflareToken', () => {
     });
   });
 
+  it('verifies an account-owned token against the account verify endpoint (#1927)', async () => {
+    const mockFetch = vi.fn(async (url, options) => {
+      expect(url).toBe(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/verify`);
+      expect(options.headers).toEqual({ Authorization: 'Bearer account-token-to-verify' });
+      return { ok: true, status: 200, json: async () => ({ success: true, result: { id: 'tok-a', status: 'active' } }) };
+    });
+
+    await expect(
+      verifyCloudflareToken({ tokenValue: 'account-token-to-verify', owner: 'account', accountId: ACCOUNT_ID, fetchImpl: mockFetch })
+    ).resolves.toEqual({ valid: true, id: 'tok-a', status: 'active' });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('fails if token status is not active', async () => {
     const mockFetch = vi.fn(async () => ({
       ok: true,
@@ -238,7 +339,7 @@ describe('updateTfcVariable', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-azure-123' } }),
+          json: async () => ({ data: { id: 'ws-azure-123', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       if (url.includes('/workspaces/ws-azure-123/vars') && options.method === 'GET') {
@@ -315,7 +416,7 @@ describe('updateTfcVariable', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-lab-456' } }),
+          json: async () => ({ data: { id: 'ws-lab-456', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       if (url.includes('/workspaces/ws-lab-456/vars') && options.method === 'GET') {
@@ -357,7 +458,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform PATCH fails', async () => {
     const mockFetch = vi.fn(async (url, options) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/workspaces/ws-1/vars') && (!options?.method || options?.method === 'GET')) {
         return {
@@ -394,7 +495,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform POST fails', async () => {
     const mockFetch = vi.fn(async (url, options) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/workspaces/ws-1/vars') && options.method === 'GET') {
         return { ok: true, status: 200, json: async () => ({ data: [] }) };
@@ -445,7 +546,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform list vars fails', async () => {
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       return {
         ok: false,
@@ -615,8 +716,10 @@ describe('defaultSpawnRunner', () => {
 });
 
 describe('rollAndApplyCloudflareToken', () => {
-  it('orchestrates rolling, verifying, and writing to HCP Terraform', async () => {
+  it('orchestrates rolling, verifying, and writing to HCP Terraform, through the account route for hcw-azure', async () => {
+    const cloudflareUrls = [];
     const mockFetch = vi.fn(async (url, options) => {
+      if (url.startsWith('https://api.cloudflare.com/')) cloudflareUrls.push(url);
       // 1. Roll endpoint
       if (url.includes('/tokens/tok-azure-1/value')) {
         return {
@@ -639,7 +742,7 @@ describe('rollAndApplyCloudflareToken', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-azure' } }),
+          json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       // 4. TFC list vars
@@ -669,10 +772,16 @@ describe('rollAndApplyCloudflareToken', () => {
       tokenId: 'tok-azure-1',
       rollToken: 'operator-roll-token',
       target: CLOUDFLARE_TARGETS.azure,
+      accountId: ACCOUNT_ID,
       tfcToken: 'tfc-token-xyz',
       fetchImpl: mockFetch,
     });
 
+    expect(cloudflareUrls).toEqual([
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/tok-azure-1/value`,
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/verify`,
+    ]);
+    expect(JSON.stringify(res)).not.toContain('newly-rolled-azure-token');
     expect(res).toEqual({
       ok: true,
       tokenId: 'tok-azure-1',
@@ -683,8 +792,9 @@ describe('rollAndApplyCloudflareToken', () => {
     });
   });
 
-  it('orchestrates rolling, verifying, and writing to lab host vault', async () => {
+  it('orchestrates rolling, verifying, and writing to lab host vault, through the user route', async () => {
     const mockFetch = vi.fn(async (url) => {
+      expect(url.startsWith('https://api.cloudflare.com/client/v4/user/tokens/')).toBe(true);
       if (url.includes('/tokens/tok-caddy-1/value')) {
         return {
           ok: true,
@@ -702,7 +812,7 @@ describe('rollAndApplyCloudflareToken', () => {
       throw new Error(`Unexpected URL: ${url}`);
     });
 
-    const mockExec = vi.fn(async (params) => {
+    const mockExec = vaultRunner(async (params) => {
       expect(params.stdin).toBe('newly-rolled-caddy-token');
       expect(params.args).toEqual(['-n', '/usr/local/sbin/hcw-vault-set', 'vault_cloudflare_api_token']);
       return { code: 0, stdout: 'ok', stderr: '' };
@@ -747,7 +857,7 @@ describe('rollAndApplyCloudflareToken', () => {
     });
 
     let vaultWritten = false;
-    const mockExec = vi.fn(async (params) => {
+    const mockExec = vaultRunner(async (params) => {
       expect(params.stdin).toBe('rolled-token-needs-verification-warning');
       vaultWritten = true;
       return { code: 0, stdout: 'ok', stderr: '' };
@@ -779,7 +889,7 @@ describe('rollAndApplyCloudflareToken', () => {
       throw new Error(`Unexpected URL: ${url}`);
     });
 
-    const mockExec = vi.fn(async () => {
+    const mockExec = vaultRunner(async () => {
       return { code: 2, stdout: '', stderr: 'vault permission denied' };
     });
 
@@ -793,6 +903,222 @@ describe('rollAndApplyCloudflareToken', () => {
         sleep: async () => {},
       })
     ).rejects.toThrow(/Token was rolled in Cloudflare but failed to write to target/);
+  });
+
+  it('refuses an account-owned target without the account id BEFORE rolling, so the old token still works', async () => {
+    const mockFetch = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 'tok-azure-1',
+        rollToken: 'operator-roll-token',
+        target: CLOUDFLARE_TARGETS.azure,
+        tfcToken: 'tfc-token-xyz',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/needs the Cloudflare account id/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown token kind or store BEFORE rolling', async () => {
+    const mockFetch = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { ...CLOUDFLARE_TARGETS.lab, owner: 'organisation' },
+        tfcToken: 'tfc',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/Unknown Cloudflare token owner kind/);
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: { type: 'kv' }, fetchImpl: mockFetch })
+    ).rejects.toThrow(/Unsupported target type: kv/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a target without `owner` instead of taking it for a user token (#1927)', async () => {
+    const mockFetch = vi.fn();
+    const { owner, ...ownerless } = CLOUDFLARE_TARGETS.caddy;
+    expect(owner).toBe('user');
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: ownerless, fetchImpl: mockFetch, execImpl: vi.fn() })
+    ).rejects.toThrow(/does not say which kind of Cloudflare token it holds/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tfc target without an HCP Terraform token, or without a workspace, BEFORE rolling', async () => {
+    const mockFetch = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.lab, fetchImpl: mockFetch })
+    ).rejects.toThrow(/HCP Terraform token is required/);
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { ...CLOUDFLARE_TARGETS.lab, workspace: '' },
+        tfcToken: 'tfc',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform workspace is required/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lab-vault target with a malformed vault key BEFORE rolling', async () => {
+    const mockFetch = vi.fn();
+    const execImpl = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { ...CLOUDFLARE_TARGETS.caddy, vaultKey: 'Not A Key' },
+        fetchImpl: mockFetch,
+        execImpl,
+      })
+    ).rejects.toThrow(/Invalid lab vault key name/);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(execImpl).not.toHaveBeenCalled();
+  });
+
+  it('looks the workspace up BEFORE rolling, and rolls nothing when HCP Terraform answers 403 (#1927)', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ errors: [{ title: 'forbidden' }] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 'tok-azure-1',
+        rollToken: 'operator-roll-token',
+        target: CLOUDFLARE_TARGETS.azure,
+        accountId: ACCOUNT_ID,
+        tfcToken: 'tfc-token-xyz',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform workspace hcw\/hcw-azure lookup failed \(403\)/);
+    const cloudflareCalls = mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'));
+    expect(cloudflareCalls).toEqual([]);
+  });
+
+  it('rolls nothing when HCP Terraform says the token cannot write variables (can-update-variable false) (#1927)', async () => {
+    for (const permissions of [{ 'can-update-variable': false }, {}, { 'can-update-variable': 'true' }]) {
+      const mockFetch = vi.fn(async (url) => {
+        if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+          return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-azure', attributes: { permissions } } }) };
+        }
+        if (url.endsWith('/workspaces/ws-azure/vars')) {
+          return { ok: true, status: 200, json: async () => ({ data: [] }) };
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      await expect(
+        rollAndApplyCloudflareToken({
+          tokenId: 'tok-azure-1',
+          rollToken: 'operator-roll-token',
+          target: CLOUDFLARE_TARGETS.azure,
+          accountId: ACCOUNT_ID,
+          tfcToken: 'tfc-read-only-token',
+          fetchImpl: mockFetch,
+        })
+      ).rejects.toThrow('the HCP Terraform token cannot write variables in hcw/hcw-azure; nothing was rolled');
+      expect(mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'))).toEqual([]);
+    }
+  });
+
+  it('rolls nothing when the workspace has no variable for the roll to replace (#1927)', async () => {
+    // A same-named variable in the other category does not count either.
+    for (const variables of [[], [{ id: 'var-env', attributes: { key: 'cloudflare_api_token', category: 'env' } }]]) {
+      const mockFetch = vi.fn(async (url) => {
+        if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
+          };
+        }
+        if (url.endsWith('/workspaces/ws-azure/vars')) {
+          return { ok: true, status: 200, json: async () => ({ data: variables }) };
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      await expect(
+        rollAndApplyCloudflareToken({
+          tokenId: 'tok-azure-1',
+          rollToken: 'operator-roll-token',
+          target: CLOUDFLARE_TARGETS.azure,
+          accountId: ACCOUNT_ID,
+          tfcToken: 'tfc-token-xyz',
+          fetchImpl: mockFetch,
+        })
+      ).rejects.toThrow('hcw/hcw-azure has no terraform variable cloudflare_api_token to replace');
+      expect(mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'))).toEqual([]);
+    }
+  });
+
+  it('never creates the variable after a roll, even when it disappeared after the check (#1927)', async () => {
+    const present = [{ id: 'var-1', attributes: { key: 'cloudflare_api_token', category: 'terraform' } }];
+    let listReads = 0;
+    const mockFetch = vi.fn(async (url, options = {}) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
+        };
+      }
+      if (url.endsWith('/workspaces/ws-azure/vars') && (options.method || 'GET') === 'GET') {
+        listReads += 1;
+        // The check sees the variable; every read after the roll does not.
+        return { ok: true, status: 200, json: async () => ({ data: listReads === 1 ? present : [] }) };
+      }
+      if (url.includes('/value')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, result: 'new-secret-value' }) };
+      }
+      throw new Error(`Unexpected call: ${options.method} ${url}`);
+    });
+    const error = await rollAndApplyCloudflareToken({
+      tokenId: 'tok-azure-1',
+      rollToken: 'operator-roll-token',
+      target: CLOUDFLARE_TARGETS.azure,
+      accountId: ACCOUNT_ID,
+      tfcToken: 'tfc-token-xyz',
+      fetchImpl: mockFetch,
+      sleep: async () => {},
+    }).catch((err) => err);
+    expect(error.message).toContain('no longer has the terraform variable cloudflare_api_token; the new value was not written');
+    expect(error.message).not.toContain('new-secret-value');
+    expect(mockFetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([]);
+  });
+
+  it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
+    const mockFetch = vi.fn();
+    const calls = [];
+    const execImpl = vi.fn(async (params) => {
+      calls.push(params);
+      return { code: 1, stdout: '', stderr: 'Sorry, user may not run sudo' };
+    });
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.caddy, fetchImpl: mockFetch, execImpl })
+    ).rejects.toThrow(/sudo does not allow \/usr\/local\/sbin\/hcw-vault-set without a password here .*nothing was rolled/);
+    expect(mockFetch).not.toHaveBeenCalled();
+    // Only the check ran: `sudo -n -l <helper>`, with nothing on stdin.
+    expect(calls).toEqual([{ command: 'sudo', args: ['-n', '-l', '/usr/local/sbin/hcw-vault-set'], stdin: '' }]);
+  });
+
+  it('rolls nothing when listing the workspace variables is refused', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-lab')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.endsWith('/workspaces/ws-lab/vars')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.lab, tfcToken: 'tfc', fetchImpl: mockFetch })
+    ).rejects.toThrow(/list vars failed for hcw\/hcw-lab \(403\)/);
+    expect(mockFetch.mock.calls.some(([url]) => url.startsWith('https://api.cloudflare.com/'))).toBe(false);
   });
 
   it('rejects missing target or unsupported target type', async () => {

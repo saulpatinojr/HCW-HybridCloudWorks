@@ -191,22 +191,22 @@ const SITES = [
     /^Cloudflare token verification failed \(401\): /,
   ],
   [
-    'cloudflare-roll.js: the workspace lookup',
-    'src/lib/credentials/cloudflare-roll.js',
+    'cloudflare-roll-stores.js: the workspace lookup',
+    'src/lib/credentials/cloudflare-roll-stores.js',
     404,
     () => updateTfcVariable({ ...TFC, fetchImpl: answers(404) }),
     `HCP Terraform workspace hcw/hcw-azure lookup failed (404): ${BODY_TEXT}`,
   ],
   [
-    'cloudflare-roll.js: the variable list',
-    'src/lib/credentials/cloudflare-roll.js',
+    'cloudflare-roll-stores.js: the variable list',
+    'src/lib/credentials/cloudflare-roll-stores.js',
     500,
     () => updateTfcVariable({ ...TFC, fetchImpl: inTurn(jsonOk({ data: { id: 'ws-1' } }), refused(500)) }),
     `HCP Terraform list vars failed for hcw/hcw-azure (500): ${BODY_TEXT}`,
   ],
   [
-    'cloudflare-roll.js: the variable update',
-    'src/lib/credentials/cloudflare-roll.js',
+    'cloudflare-roll-stores.js: the variable update',
+    'src/lib/credentials/cloudflare-roll-stores.js',
     422,
     () =>
       updateTfcVariable({
@@ -220,8 +220,8 @@ const SITES = [
     `HCP Terraform update variable cloudflare_api_token in hcw/hcw-azure failed (422): ${BODY_TEXT}`,
   ],
   [
-    'cloudflare-roll.js: the variable create',
-    'src/lib/credentials/cloudflare-roll.js',
+    'cloudflare-roll-stores.js: the variable create',
+    'src/lib/credentials/cloudflare-roll-stores.js',
     403,
     () =>
       updateTfcVariable({

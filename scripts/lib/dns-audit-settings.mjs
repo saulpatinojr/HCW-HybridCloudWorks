@@ -3,8 +3,13 @@
 export const API_BASE = 'https://api.cloudflare.com/client/v4';
 /** The production zone, by name. The zone id, when given, is matched too. */
 export const ZONE_NAME = 'hybridcloudworks.com';
-/** The name of the HCP Terraform workspace's token, as the dashboard shows it. */
-export const HCP_TERRAFORM_TOKEN_NAME = 'hcp-terraform-cloudflare-dns';
+/**
+ * The name of the hcw-azure workspace's token, as the dashboard shows it: the
+ * account-owned token `hcw` (#1927; it was `hcp-terraform-cloudflare-dns`
+ * here until then, a user token that is most likely hcw-lab's). The
+ * credential tests hold it to CLOUDFLARE_TARGETS.azure.tokenName.
+ */
+export const HCP_TERRAFORM_TOKEN_NAME = 'hcw';
 export const ACME_CHALLENGE_PREFIX = '_acme-challenge.';
 /** The lab's names: Caddy answers challenges for `lab` and `*.coder.lab` only. */
 export const LAB_SUFFIX = '.lab.hybridcloudworks.com';

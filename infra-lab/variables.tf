@@ -30,6 +30,10 @@ variable "hostinger_api_token" {
   }
 }
 
+# Most likely the user token hcp-terraform-cloudflare-dns in the Cloudflare
+# dashboard (My Profile → API Tokens); not confirmed (#1927). How to confirm
+# it, and to put it back to these two permissions after it was widened by
+# mistake on 2026-11-27: docs/runbooks/dns-token-stolen.md.
 variable "cloudflare_api_token" {
   description = "Cloudflare API token with Zone:Read + DNS:Edit on hybridcloudworks.com and nothing else."
   type        = string
