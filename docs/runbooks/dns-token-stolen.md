@@ -186,10 +186,18 @@ token (`CLOUDFLARE_ROLL_TOKEN`) cannot roll account-owned tokens, give one
 that can in `CLOUDFLARE_ACCOUNT_ROLL_TOKEN`. `--dry-run` shows the route each
 target would take without calling anything.
 
-Before it rolls anything, the script also looks up every HCP Terraform
-workspace it will write to and lists its variables, with the same
-`TFC_TOKEN` the write will use. If either read is refused, it stops with
-nothing rolled, and the old values keep working.
+Before it rolls anything, the script also checks that the credentials
+the write will use are allowed to write each store. For an HCP Terraform
+workspace it looks the workspace up with `TFC_TOKEN`, lists its
+variables, and requires HCP Terraform to say the token may change them
+(`can-update-variable` in the
+[Show workspace](https://developer.hashicorp.com/terraform/cloud-docs/api-docs/workspaces)
+answer). For the `caddy` target it asks `sudo -n -l` whether
+`/usr/local/sbin/hcw-vault-set` may run without a password. If any check
+says no, it stops with nothing rolled, and the old values keep working.
+These checks prove permission, not that the write itself will succeed:
+a network failure can still come between the roll and the write, which
+is what the next paragraph is for.
 
 **If it says it rolled a token but failed to write it.** The roll cannot
 be undone: the old value has stopped working, and `hcw-azure` plans fail
@@ -209,6 +217,22 @@ hand and store that value yourself:
 For the `lab` target the same steps use **My Profile → API Tokens**
 (<https://dash.cloudflare.com/profile/api-tokens/>) and
 <https://app.terraform.io/app/hcw/workspaces/hcw-lab/variables>.
+
+For the `caddy` target (the lab host's certificate token, a user token),
+as its credential register row says: roll the token on
+<https://dash.cloudflare.com/profile/api-tokens/> and copy the new value;
+set `vault_cloudflare_api_token` on the host with this PowerShell line,
+which sends the value on standard input and never on the command line
+(the same pattern as the `hcw-vault-set` line in `lab-host/README.md`,
+"The vault"):
+
+```powershell
+(Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_cloudflare_api_token"
+```
+
+then re-run `bootstrap.sh` on the host, as `lab-host/README.md` describes,
+so Caddy reads the new value. **Worked:** the line prints no error, and
+the next certificate renewal on the lab host succeeds.
 
 ---
 

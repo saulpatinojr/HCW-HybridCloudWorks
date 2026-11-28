@@ -15,9 +15,12 @@
  *   - Zero token secret leakage: secrets are NEVER accepted via argv (no --roll-token
  *     or --tfc-token on the command line; env vars only) and never printed.
  *   - Write immediately after the roll: Cloudflare retires the old value at the roll,
- *     so the new one is written to its store at once. Every HCP Terraform workspace
- *     is looked up and its variables listed BEFORE any roll (#1927), so a refused
- *     HCP Terraform token stops the run with nothing rolled.
+ *     so the new one is written to its store at once. BEFORE any roll (#1927) every
+ *     store is checked with the credentials the write will use: each HCP Terraform
+ *     workspace must give the token `can-update-variable` and list its variables,
+ *     and sudo must allow hcw-vault-set for the caddy target. A refusal stops the
+ *     run with nothing rolled. This proves permission, not that the write will
+ *     succeed.
  *   - Nothing schedules this script (#1927): a person runs it when the credential
  *     register's 180-day reminder comes.
  *   - Stdin-only: vault updates pass secret strictly on standard input.
@@ -30,7 +33,8 @@ import { fileURLToPath } from 'node:url';
 import {
   CLOUDFLARE_TARGETS,
   TOKEN_OWNERS,
-  readTfcWorkspace,
+  checkLabVaultWritable,
+  checkTfcVariablesWritable,
   rollAndApplyCloudflareToken,
   tokenOwnerRoutes,
 } from '../functions/src/lib/credentials/cloudflare-roll.js';
@@ -92,13 +96,14 @@ export async function runRoll({
 
   if (options.dryRun) return dryRunTargets(resolvedTargets, stdout);
 
-  // Before any roll: every HCP Terraform workspace this run writes to is
-  // looked up and its variables listed, with the token the write will use.
-  // A refusal stops the whole run with nothing rolled (#1927), because a
-  // roll retires the old value and a failed write would leave a dead token.
-  const unwritable = await unwritableWorkspaces({ resolvedTargets, tfcToken, fetchImpl, stderr });
+  // Before any roll: every store this run writes to is checked with the
+  // credentials the write will use (HCP Terraform's can-update-variable for
+  // the token, or sudo's permission for hcw-vault-set). A refusal stops the
+  // whole run with nothing rolled (#1927), because a roll retires the old
+  // value and a failed write would leave a dead token.
+  const unwritable = await unwritableStores({ resolvedTargets, tfcToken, fetchImpl, execImpl, stderr });
   if (unwritable > 0) {
-    stderr(`\nNothing was rolled: ${unwritable} HCP Terraform workspace(s) could not be read. Every token still works.`);
+    stderr(`\nNothing was rolled: ${unwritable} store(s) cannot be written with the credentials given. Every token still works.`);
     return 1;
   }
 
@@ -148,7 +153,7 @@ const PREFLIGHT_CHECKS = [
   },
   // Checked in every mode, dry run included: without the account id the
   // account route cannot be built, and finding that out after a roll is
-  // what "write before retire" exists to prevent.
+  // what the check before the roll exists to prevent.
   ({ targets, targetKeys, accountId }) => {
     const needsAccount = targetKeys.filter((key) => TOKEN_OWNERS[ownerOf(targets[key])].needsAccountId);
     if (needsAccount.length === 0) return null;
@@ -241,22 +246,23 @@ async function checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stde
 }
 
 /**
- * Looks a target's HCP Terraform workspace up and lists its variables (the
- * two reads a write starts with); throws when either is refused.
+ * Looks a target's HCP Terraform workspace up, lists its variables and
+ * requires HCP Terraform's `can-update-variable` for the token; throws
+ * otherwise.
  */
 async function lookUpWorkspace(target, tfcToken, fetchImpl) {
-  await readTfcWorkspace({ tfcToken, organization: target.organization, workspace: target.workspace, fetchImpl });
+  await checkTfcVariablesWritable({ tfcToken, organization: target.organization, workspace: target.workspace, fetchImpl });
 }
 
-/** Before any roll: the number of HCP Terraform workspaces that could not be read, each named on stderr. */
-async function unwritableWorkspaces({ resolvedTargets, tfcToken, fetchImpl, stderr }) {
+/** Before any roll: the number of stores the given credentials may not write, each named on stderr. */
+async function unwritableStores({ resolvedTargets, tfcToken, fetchImpl, execImpl, stderr }) {
   let failures = 0;
   for (const { key, target } of resolvedTargets) {
-    if (target.type !== 'tfc') continue;
     try {
-      await lookUpWorkspace(target, tfcToken, fetchImpl);
+      if (target.type === 'tfc') await lookUpWorkspace(target, tfcToken, fetchImpl);
+      else if (target.type === 'lab-vault') await checkLabVaultWritable({ execImpl });
     } catch (err) {
-      stderr(`[fail] Target '${key}': HCP Terraform workspace not ready to write, so nothing was rolled: ${err.message}`);
+      stderr(`[fail] Target '${key}': its store cannot be written, so nothing was rolled: ${err.message}`);
       failures += 1;
     }
   }

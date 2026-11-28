@@ -92,14 +92,14 @@ function entry({ actor, action = 'create', result = 'success', time, record, zon
   };
 }
 
-const TERRAFORM = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '203.0.113.10', token_id: 'c0ffee0123456789c0ffee0123456789', token_name: HCP_TERRAFORM_TOKEN_NAME, type: 'account' };
-const CADDY = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '198.51.100.7', token_id: 'dead00beef0123456789abcdefabcdef', token_name: CADDY_TOKEN, type: 'user' };
-const OWNER_DASH = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'dash', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
+const TERRAFORM = { id: '00000000000000000000000000000002', context: 'api_token', email: OWNER, ip_address: '203.0.113.10', token_id: 'c0ffee0123456789c0ffee0123456789', token_name: HCP_TERRAFORM_TOKEN_NAME, type: 'account' };
+const CADDY = { id: '00000000000000000000000000000002', context: 'api_token', email: OWNER, ip_address: '198.51.100.7', token_id: 'dead00beef0123456789abcdefabcdef', token_name: CADDY_TOKEN, type: 'user' };
+const OWNER_DASH = { id: '00000000000000000000000000000002', context: 'dash', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
 const STRANGER = { id: '0000000000000000000000000000beef', context: 'api_token', email: 'mallory@example.org', ip_address: '192.0.2.99', token_id: 'bad0bad0bad0bad0bad0bad0bad0bad0', token_name: 'totally-legit', type: 'user' };
 // The shapes the first live run (2026-10-18) showed: no token_name or token_id anywhere.
 const CADDY_HOST_IP = '198.51.100.7';
 const TFC_ACCOUNT_TOKEN = { id: ACCOUNT, context: 'api_token', ip_address: '54.242.151.9', type: 'account' };
-const OWNER_USER_TOKEN = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
+const OWNER_USER_TOKEN = { id: '00000000000000000000000000000002', context: 'api_token', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
 const CADDY_BY_IP = { id: ACCOUNT, context: 'api_token', ip_address: CADDY_HOST_IP, type: 'account' };
 const TERRAFORM_RAW = { user_agent: 'terraform-provider-cloudflare/5.27.0 terraform-plugin-framework/1.15.0 Terraform/1.16.0' };
 // Cloudflare renewing its own certificate, as the 2026-10-26 entries carried it (#1421):

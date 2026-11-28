@@ -15,6 +15,15 @@ import {
 // A made-up account id of the right shape; never a real one in this public repository.
 const ACCOUNT_ID = '00000000000000000000000000000001';
 
+/**
+ * A command runner that answers the `sudo -n -l` check made before a roll as
+ * allowed, and hands every other call (the vault write) to `write`.
+ */
+const vaultRunner = (write) =>
+  vi.fn(async (params) =>
+    params.args?.[1] === '-l' ? { code: 0, stdout: '/usr/local/sbin/hcw-vault-set', stderr: '' } : write(params)
+  );
+
 describe('CLOUDFLARE_TARGETS', () => {
   it('declares the three approved targets with required metadata', () => {
     expect(Object.keys(CLOUDFLARE_TARGETS).sort()).toEqual(['azure', 'caddy', 'lab']);
@@ -330,7 +339,7 @@ describe('updateTfcVariable', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-azure-123' } }),
+          json: async () => ({ data: { id: 'ws-azure-123', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       if (url.includes('/workspaces/ws-azure-123/vars') && options.method === 'GET') {
@@ -407,7 +416,7 @@ describe('updateTfcVariable', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-lab-456' } }),
+          json: async () => ({ data: { id: 'ws-lab-456', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       if (url.includes('/workspaces/ws-lab-456/vars') && options.method === 'GET') {
@@ -449,7 +458,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform PATCH fails', async () => {
     const mockFetch = vi.fn(async (url, options) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/workspaces/ws-1/vars') && (!options?.method || options?.method === 'GET')) {
         return {
@@ -486,7 +495,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform POST fails', async () => {
     const mockFetch = vi.fn(async (url, options) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/workspaces/ws-1/vars') && options.method === 'GET') {
         return { ok: true, status: 200, json: async () => ({ data: [] }) };
@@ -537,7 +546,7 @@ describe('updateTfcVariable', () => {
   it('throws error when HCP Terraform list vars fails', async () => {
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       return {
         ok: false,
@@ -733,7 +742,7 @@ describe('rollAndApplyCloudflareToken', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-azure' } }),
+          json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       // 4. TFC list vars
@@ -803,7 +812,7 @@ describe('rollAndApplyCloudflareToken', () => {
       throw new Error(`Unexpected URL: ${url}`);
     });
 
-    const mockExec = vi.fn(async (params) => {
+    const mockExec = vaultRunner(async (params) => {
       expect(params.stdin).toBe('newly-rolled-caddy-token');
       expect(params.args).toEqual(['-n', '/usr/local/sbin/hcw-vault-set', 'vault_cloudflare_api_token']);
       return { code: 0, stdout: 'ok', stderr: '' };
@@ -848,7 +857,7 @@ describe('rollAndApplyCloudflareToken', () => {
     });
 
     let vaultWritten = false;
-    const mockExec = vi.fn(async (params) => {
+    const mockExec = vaultRunner(async (params) => {
       expect(params.stdin).toBe('rolled-token-needs-verification-warning');
       vaultWritten = true;
       return { code: 0, stdout: 'ok', stderr: '' };
@@ -880,7 +889,7 @@ describe('rollAndApplyCloudflareToken', () => {
       throw new Error(`Unexpected URL: ${url}`);
     });
 
-    const mockExec = vi.fn(async () => {
+    const mockExec = vaultRunner(async () => {
       return { code: 2, stdout: '', stderr: 'vault permission denied' };
     });
 
@@ -991,10 +1000,50 @@ describe('rollAndApplyCloudflareToken', () => {
     expect(cloudflareCalls).toEqual([]);
   });
 
+  it('rolls nothing when HCP Terraform says the token cannot write variables (can-update-variable false) (#1927)', async () => {
+    for (const permissions of [{ 'can-update-variable': false }, {}, { 'can-update-variable': 'true' }]) {
+      const mockFetch = vi.fn(async (url) => {
+        if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+          return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-azure', attributes: { permissions } } }) };
+        }
+        if (url.endsWith('/workspaces/ws-azure/vars')) {
+          return { ok: true, status: 200, json: async () => ({ data: [] }) };
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      await expect(
+        rollAndApplyCloudflareToken({
+          tokenId: 'tok-azure-1',
+          rollToken: 'operator-roll-token',
+          target: CLOUDFLARE_TARGETS.azure,
+          accountId: ACCOUNT_ID,
+          tfcToken: 'tfc-read-only-token',
+          fetchImpl: mockFetch,
+        })
+      ).rejects.toThrow('the HCP Terraform token cannot write variables in hcw/hcw-azure; nothing was rolled');
+      expect(mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'))).toEqual([]);
+    }
+  });
+
+  it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
+    const mockFetch = vi.fn();
+    const calls = [];
+    const execImpl = vi.fn(async (params) => {
+      calls.push(params);
+      return { code: 1, stdout: '', stderr: 'Sorry, user may not run sudo' };
+    });
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.caddy, fetchImpl: mockFetch, execImpl })
+    ).rejects.toThrow(/sudo does not allow \/usr\/local\/sbin\/hcw-vault-set without a password here .*nothing was rolled/);
+    expect(mockFetch).not.toHaveBeenCalled();
+    // Only the check ran: `sudo -n -l <helper>`, with nothing on stdin.
+    expect(calls).toEqual([{ command: 'sudo', args: ['-n', '-l', '/usr/local/sbin/hcw-vault-set'], stdin: '' }]);
+  });
+
   it('rolls nothing when listing the workspace variables is refused', async () => {
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/hcw-lab')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.endsWith('/workspaces/ws-lab/vars')) {
         return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };

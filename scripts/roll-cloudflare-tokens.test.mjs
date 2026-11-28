@@ -239,7 +239,7 @@ describe('runRoll', () => {
 
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       // The check lists the variables too, the second read a write needs (#1927).
       if (url.endsWith('/workspaces/ws-mock/vars')) {
@@ -272,7 +272,7 @@ describe('runRoll', () => {
         return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ errors: [{ title: 'forbidden' }] }) };
       }
       if (url.includes('/organizations/hcw/workspaces/')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.endsWith('/workspaces/ws-lab/vars')) {
         return { ok: true, status: 200, json: async () => ({ data: [] }) };
@@ -290,7 +290,7 @@ describe('runRoll', () => {
         CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd',
       },
       fetchImpl: mockFetch,
-      execImpl: vi.fn(),
+      execImpl: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' })),
       stdout: () => {},
       stderr: (m) => stderr.push(m),
     });
@@ -298,16 +298,62 @@ describe('runRoll', () => {
     const cloudflareCalls = mockFetch.mock.calls.filter(([url]) => String(url).startsWith('https://api.cloudflare.com/'));
     expect(cloudflareCalls).toEqual([]);
     const err = stderr.join('\n');
-    expect(err).toContain("[fail] Target 'azure': HCP Terraform workspace not ready to write, so nothing was rolled");
+    expect(err).toContain("[fail] Target 'azure': its store cannot be written, so nothing was rolled");
     expect(err).toContain('403');
     expect(err).toContain('Nothing was rolled');
     expect(err).not.toContain('tfc-app-token');
   });
 
+  it('rolls nothing when HCP Terraform says the token cannot write variables (can-update-variable false) (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: 'ws-az', attributes: { permissions: { 'can-update-variable': false } } } }),
+        };
+      }
+      if (url.endsWith('/workspaces/ws-az/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).startsWith('https://api.cloudflare.com/'))).toBe(false);
+    expect(stderr.join('\n')).toContain('the HCP Terraform token cannot write variables in hcw/hcw-azure; nothing was rolled');
+  });
+
+  it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn();
+    const execImpl = vi.fn(async () => ({ code: 1, stdout: '', stderr: 'Sorry, user may not run sudo' }));
+    const code = await runRoll({
+      options: { target: 'caddy' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd' },
+      fetchImpl: mockFetch,
+      execImpl,
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(execImpl).toHaveBeenCalledTimes(1);
+    expect(execImpl.mock.calls[0][0].args).toEqual(['-n', '-l', '/usr/local/sbin/hcw-vault-set']);
+    expect(stderr.join('\n')).toContain("[fail] Target 'caddy': its store cannot be written, so nothing was rolled");
+  });
+
   it('rolls nothing when listing a workspace\'s variables is refused', async () => {
     const mockFetch = vi.fn(async (url) => {
       if (url.includes('/organizations/hcw/workspaces/')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-az' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-az', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.endsWith('/workspaces/ws-az/vars')) {
         return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };
@@ -371,7 +417,7 @@ describe('runRoll', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ data: { id: 'ws-mock-id' } }),
+          json: async () => ({ data: { id: 'ws-mock-id', attributes: { permissions: { 'can-update-variable': true } } } }),
         };
       }
       // TFC vars get
@@ -448,7 +494,7 @@ describe('runRoll', () => {
         return { ok: true, status: 200, json: async () => ({ success: true, result: { id: 'x', status: 'active' } }) };
       }
       if (url.includes('/organizations/hcw/workspaces/')) {
-        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws' } }) };
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/vars') && options.method === 'GET') {
         return { ok: true, status: 200, json: async () => ({ data: [] }) };
@@ -489,6 +535,8 @@ describe('runRoll', () => {
       options: { target: 'caddy', tokenId: 'tok-failing' },
       env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token' },
       fetchImpl: mockFetch,
+      // sudo allows hcw-vault-set, so the check before the roll passes.
+      execImpl: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' })),
       stdout: (m) => stdout.push(m),
       stderr: (m) => stderr.push(m),
     });

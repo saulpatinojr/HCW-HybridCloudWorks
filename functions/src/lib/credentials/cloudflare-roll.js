@@ -13,8 +13,11 @@
  *    write attempt fails, the store is left holding a retired token, and the
  *    error says so (the recovery is in docs/runbooks/dns-token-stolen.md,
  *    "Routine renewal"). To make that unlikely, the store is checked BEFORE
- *    the roll (#1927): an HCP Terraform workspace is looked up and its
- *    variables listed with the same token the write will use.
+ *    the roll (#1927), with the same credentials the write will use: an
+ *    HCP Terraform workspace must report `can-update-variable: true` for
+ *    the token and list its variables, and on the lab host `sudo -n -l`
+ *    must allow hcw-vault-set. That proves permission, not that the write
+ *    itself will succeed (a network failure can still come between).
  * 3. POST-WRITE VERIFICATION: The newly written token is verified against
  *    Cloudflare's verify endpoint for its kind (`/user/tokens/verify` or
  *    `/accounts/{account_id}/tokens/verify`). Any verification anomaly is
@@ -34,8 +37,9 @@
  *    which kind it holds (`owner`, required: a target without one is refused,
  *    never taken for a user token), and everything that can be checked
  *    without retiring the old value is checked BEFORE the roll: the kind,
- *    the account id, the target type, the HCP Terraform token, workspace and
- *    its variables list, or the vault key's shape.
+ *    the account id, the target type, the HCP Terraform token's right to
+ *    write the workspace's variables, or the vault key's shape and the
+ *    right to run hcw-vault-set.
  */
 
 import { spawn } from 'node:child_process';
@@ -165,6 +169,9 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
 
 /** The stores a rolled token can be written back to. */
 const WRITABLE_TARGET_TYPES = Object.freeze(['tfc', 'lab-vault']);
+
+/** The lab host helper that writes one vault key from stdin, run through `sudo -n`. */
+const HCW_VAULT_SET = '/usr/local/sbin/hcw-vault-set';
 
 /** The shape of a lab host Ansible Vault key `hcw-vault-set` accepts. */
 const VAULT_KEY_PATTERN = /^vault_[a-z0-9_]+$/;
@@ -335,7 +342,7 @@ export async function verifyCloudflareToken({
  * @param {string} params.organization HCP Terraform organization name
  * @param {string} params.workspace HCP Terraform workspace name
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
- * @returns {Promise<{ workspaceId: string, variables: object[], varsUrl: string, headers: object, where: string }>}
+ * @returns {Promise<{ workspaceId: string, variables: object[], varsUrl: string, headers: object, where: string, canUpdateVariable: boolean }>}
  */
 export async function readTfcWorkspace({ tfcToken, organization, workspace, fetchImpl = globalThis.fetch }) {
   if (!tfcToken) throw new Error('HCP Terraform token is required');
@@ -360,7 +367,48 @@ export async function readTfcWorkspace({ tfcToken, organization, workspace, fetc
   if (!vars.response.ok || !Array.isArray(vars.data?.data)) {
     throw tfcFailure(vars, `HCP Terraform list vars failed for ${where} (${vars.response.status})`);
   }
-  return { workspaceId, variables: vars.data.data, varsUrl, headers, where };
+  // HCP Terraform's "Show workspace" answer says what this token may do
+  // there: data.attributes.permissions['can-update-variable']
+  // (https://developer.hashicorp.com/terraform/cloud-docs/api-docs/workspaces,
+  // read 2026-11-28).
+  const canUpdateVariable = ws.data.data.attributes?.permissions?.['can-update-variable'] === true;
+  return { workspaceId, variables: vars.data.data, varsUrl, headers, where, canUpdateVariable };
+}
+
+/**
+ * Before a roll: the HCP Terraform token can read the workspace and its
+ * variables, and HCP Terraform says it may write them (`can-update-variable`
+ * exactly true). Throws otherwise, so nothing is rolled.
+ *
+ * @param {object} params Same as readTfcWorkspace
+ */
+export async function checkTfcVariablesWritable(params) {
+  const read = await readTfcWorkspace(params);
+  if (!read.canUpdateVariable) {
+    throw withStatus(
+      new Error(`the HCP Terraform token cannot write variables in ${read.where}; nothing was rolled`),
+      403
+    );
+  }
+  return read;
+}
+
+/**
+ * Before a roll: `sudo -n -l` says this user may run hcw-vault-set without a
+ * password. Throws otherwise, so nothing is rolled. Runs through the same
+ * injectable runner as the write, with nothing on stdin.
+ *
+ * @param {object} params
+ * @param {Function} [params.execImpl] Injectable command runner
+ */
+export async function checkLabVaultWritable({ execImpl } = {}) {
+  const runner = execImpl || defaultSpawnRunner;
+  const res = await runner({ command: 'sudo', args: ['-n', '-l', HCW_VAULT_SET], stdin: '' });
+  if (res?.code !== 0) {
+    throw new Error(
+      `sudo does not allow ${HCW_VAULT_SET} without a password here (sudo -n -l exit code ${res?.code}); nothing was rolled`
+    );
+  }
 }
 
 /**
@@ -535,7 +583,7 @@ export async function updateLabVaultSecret({
 
   const res = await runner({
     command: 'sudo',
-    args: ['-n', '/usr/local/sbin/hcw-vault-set', vaultKey],
+    args: ['-n', HCW_VAULT_SET, vaultKey],
     stdin: secretValue,
   });
 
@@ -587,8 +635,9 @@ export async function rollAndApplyCloudflareToken({
   }
   // Everything that can be checked without retiring the old value is
   // checked here, before the roll: the kind of token and its route, the
-  // store's type, and that the store can be written (#1927). A failure here
-  // leaves the old Cloudflare value working.
+  // store's type, and that the credentials the write will use are allowed
+  // to write that store (#1927). A failure here leaves the old Cloudflare
+  // value working.
   if (!WRITABLE_TARGET_TYPES.includes(target.type)) {
     throw new Error(`Unsupported target type: ${target.type}`);
   }
@@ -601,9 +650,10 @@ export async function rollAndApplyCloudflareToken({
   tokenOwnerRoutes({ owner, accountId });
   if (target.type === 'tfc') {
     if (!target.workspace) throw new Error('HCP Terraform workspace is required');
-    // Looks the workspace up and lists its variables with the same token the
-    // write will use; throws (nothing rolled) when either is refused.
-    await readTfcWorkspace({
+    // Looks the workspace up, lists its variables and requires HCP
+    // Terraform's can-update-variable for this token; throws (nothing
+    // rolled) otherwise.
+    await checkTfcVariablesWritable({
       tfcToken,
       organization: target.organization || 'hcw',
       workspace: target.workspace,
@@ -614,6 +664,7 @@ export async function rollAndApplyCloudflareToken({
     if (!VAULT_KEY_PATTERN.test(vaultKey)) {
       throw new Error(`Invalid lab vault key name: '${vaultKey}' (expected vault_[a-z0-9_]+)`);
     }
+    await checkLabVaultWritable({ execImpl });
   }
 
   // Step 1: Roll the token in Cloudflare.
