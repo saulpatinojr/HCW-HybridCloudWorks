@@ -1,6 +1,6 @@
 # Incident playbook — DNS token stolen
 
-**What this is for:** the Cloudflare API token Terraform uses for the site is compromised, leaked, or exposed in an un-sanitized log. That token is the **account-owned** token **`hcw`** (it belongs to the Cloudflare account rather than to a person, and lives under **Manage account → Account API tokens**), held as the sensitive variable `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. The lab host's Caddy token, the `hcw-lab` workspace's token (most likely `hcp-terraform-cloudflare-dns`, see [Which token is which](#which-token-is-which)) and the site's Cloudflare admin token (`CLOUDFLARE-ADMIN-TOKEN`, used by Claude Network Guy) are separate tokens, not covered here.
+**What this is for:** the Cloudflare API token Terraform uses for the site is compromised, leaked, or exposed in an un-sanitized log. That token is the **account-owned** token **`hcw`** (it belongs to the Cloudflare account rather than to a person, and lives under **Manage account → Account API tokens**), held as the sensitive variable `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. The lab host's Caddy token, the `hcw-lab` workspace's token (`hcp-terraform-cloudflare-dns`, see [Which token is which](#which-token-is-which)) and the site's Cloudflare admin token (`CLOUDFLARE-ADMIN-TOKEN`, used by Claude Network Guy) are separate tokens, not covered here.
 
 **Impact:** an attacker possessing the token could redirect traffic for `hybridcloudworks.com`, point records to malicious servers, or change the origin secret rule that tells the API a request came through Cloudflare.
 
@@ -20,7 +20,7 @@ to the renewal script as well as to where you look in the dashboard.
 | HCP Terraform workspace | Token (dashboard name) | Kind | How sure |
 | --- | --- | --- | --- |
 | `hcw-azure` (the site, `infra/`) | `hcw` | account-owned | **Observed** 2026-11-27 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)): its "last used" time matched `hcw-azure` runs to the second several times, and adding a permission to it is what turned the [#1926](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1926) trial plan green. The daily DNS audit also sees this workspace's DNS edits as an account-owned token ([edge DNS verification runbook](edge-dns-verification.md), the `hcp-terraform` entry). |
-| `hcw-lab` (the lab, `infra-lab/`) | most likely `hcp-terraform-cloudflare-dns` | user | **Not confirmed.** It was last used on the day [#1743](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1743) changed `infra-lab`. Until 2026-11-27 this repository wrongly named it as `hcw-azure`'s token. |
+| `hcw-lab` (the lab, `infra-lab/`) | `hcp-terraform-cloudflare-dns` | user | **Observed** 2026-11-28 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)): the owner ran the check below, and both plan-only `hcw-lab` runs moved only this token's **Last used** time into the run's window; every other token, on both tokens pages, was last used more than an hour earlier, or before the run started. Until 2026-11-27 this repository wrongly named it as `hcw-azure`'s token. |
 
 **To confirm the lab's token** (owner, about ten minutes, nothing changes). A matching time from some earlier run is not proof, because another use of the token could fall in the same minute. So the check causes two uses of its own and watches which token moves each time:
 
@@ -42,7 +42,7 @@ Revoke the token immediately in the Cloudflare dashboard:
 
 1. Sign in to [Cloudflare Dashboard](https://dash.cloudflare.com) and pick the account that owns `hybridcloudworks.com`.
 2. Go to **Manage account** -> **Account API tokens**. (Not **My Profile** -> **API Tokens**: `hcw` is account-owned, so it is not listed there.) Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
-3. Locate `hcw`. Leave the lab host's Caddy token, `hcp-terraform-cloudflare-dns` (most likely the `hcw-lab` workspace's) and the site's Cloudflare admin token alone; they are different tokens.
+3. Locate `hcw`. Leave the lab host's Caddy token, `hcp-terraform-cloudflare-dns` (the `hcw-lab` workspace's) and the site's Cloudflare admin token alone; they are different tokens.
 4. Click the three dots menu -> **Delete** (the dashboard may call it **Revoke**).
 5. Confirm. Every `hcw-azure` plan and apply now fails at sign-in until section 4 is done; nothing already in place changes.
 
@@ -300,12 +300,12 @@ adding the permission back.
    [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)
    which one it was.
 
-### Owner steps: put `hcp-terraform-cloudflare-dns` back, once it is confirmed as `hcw-lab`'s
+### Owner steps: put `hcp-terraform-cloudflare-dns` back to the `hcw-lab` token's two permissions
 
 On 2026-11-27, when it was wrongly believed to be `hcw-azure`'s token,
 `hcp-terraform-cloudflare-dns` was given Transform Rules, Account Settings
-and Account Rulesets permissions. **Only once it is confirmed as the lab's
-token** ([Which token is which](#which-token-is-which)) put it back to what
+and Account Rulesets permissions. It was confirmed as the `hcw-lab` token on
+2026-11-28 ([Which token is which](#which-token-is-which)), so put it back to what
 `infra-lab/dns.tf` needs, which is DNS records and nothing else
 (`infra-lab/variables.tf`, the `cloudflare_api_token` description):
 

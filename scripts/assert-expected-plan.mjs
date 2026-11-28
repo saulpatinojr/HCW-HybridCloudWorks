@@ -697,18 +697,11 @@ export const DECLARED = [
     after: KNOWN_AFTER_APPLY,
     reason: "#1929 step 4 back: the record's modified_on, set by Cloudflare when proxied changes",
   },
-  // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
-  // the arming plan (false -> true) stays declared until the owner arms it,
-  // because this file cannot read what has applied. Live "false" on
-  // 2026-11-27.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
-    before: "false",
-    after: "true",
-    reason:
-      "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
-  },
+  // The audience timer's arming (#1302, FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY
+  // false -> true) applied on 2026-11-28: the owner armed it at 05:14 UTC once
+  // both site hosts were proxied (#1929), and a manual trigger of the timer was
+  // accepted (202) that morning. Deleted here, as the header asks; a disarming
+  // plan (true -> false) is not declared and reads UNEXPECTED.
   // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
   // one (false -> true) until the arming apply has run too: it is the plan the
   // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this

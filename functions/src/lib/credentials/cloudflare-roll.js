@@ -129,10 +129,10 @@ export function tokenOwnerRoutes({ owner = 'user', accountId } = {}) {
  *   azure  the account-owned token `hcw`. Observed 2026-11-27: its "last
  *          used" time matched hcw-azure runs to the second, and adding a
  *          permission to it is what turned the #1926 trial plan green.
- *   lab    most likely the user token `hcp-terraform-cloudflare-dns`: it was
- *          last used the day #1743 changed infra-lab. NOT CONFIRMED
- *          (`tokenNameConfirmed: false`); how to confirm it is in
- *          docs/runbooks/dns-token-stolen.md.
+ *   lab    the user token `hcp-terraform-cloudflare-dns`. Confirmed
+ *          2026-11-28 by the runbook's check (docs/runbooks/dns-token-stolen.md):
+ *          two plan-only hcw-lab runs each moved only this token's "last
+ *          used" time into the run's window, and no account token moved.
  *   caddy  a user token, as this module has always rolled it; its name is
  *          kept out of the repository (the CLOUDFLARE_CADDY_TOKEN_NAME
  *          repository variable holds it).
@@ -158,7 +158,7 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
     name: 'Lab HCP Terraform workspace (hcw/hcw-lab)',
     owner: 'user',
     tokenName: 'hcp-terraform-cloudflare-dns',
-    tokenNameConfirmed: false,
+    tokenNameConfirmed: true,
     type: 'tfc',
     organization: 'hcw',
     workspace: 'hcw-lab',

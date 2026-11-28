@@ -1149,7 +1149,7 @@ variable "cloudflare_web_analytics_site_tag" {
 # Settings Write for the PUT. So the same token (the ACCOUNT-OWNED token hcw,
 # under Manage account → Account API tokens in the dashboard; until #1927
 # this comment named the user token hcp-terraform-cloudflare-dns, which is
-# most likely hcw-lab's) carries BOTH, as two rows (the dashboard calls Write
+# hcw-lab's, confirmed 2026-11-28) carries BOTH, as two rows (the dashboard calls Write
 # "Edit"), before the run that imports the site. Without Read, even a plan
 # fails, at the import's first read, with "Authentication error (10000)"
 # (observed 2026-11-27 on the pull request's speculative plan). Without

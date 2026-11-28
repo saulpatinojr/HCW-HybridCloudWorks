@@ -1537,13 +1537,14 @@ describe('DECLARED', () => {
       expect(paths, name).not.toContain(`app_settings.${name}`);
     }
     // The arming plans stay: "not in this plan" cannot tell them from
-    // applied, and each waits on a name the owner adds to enabled_timers. All
-    // four read "false" live on 2026-11-27. The Web Analytics site, kept here
+    // applied, and each waits on a name the owner adds to enabled_timers. The
+    // three left read "false" live on 2026-11-27; the audience read's applied
+    // on 2026-11-28 and has no declaration left. The Web Analytics site, kept here
     // on 2026-11-01 and an import since #1923, applied on 2026-11-27 and has
     // no declaration left (its own test below).
     const arming = (flag) =>
       DECLARED.filter((entry) => entry.path === `app_settings.${flag}`).map((entry) => [entry.before, entry.after]);
-    expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([['false', 'true']]);
+    expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([]);
     expect(arming('FEATURE_FLAG_SWEEP_VISITOR_SESSIONS')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_PROBE_AI_PROVIDERS')).toEqual([['false', 'true']]);
     expect(arming('FEATURE_FLAG_SYNC_SEARCH_CONSOLE')).toEqual([['false', 'true']]);
@@ -2077,7 +2078,6 @@ describe('DECLARED', () => {
       'cloudflare_dns_record.site_apex modified_on: (known after apply)',
       'cloudflare_dns_record.site_apex proxied: true -> false',
       'cloudflare_dns_record.site_apex modified_on: (known after apply)',
-      `${FUNCTION_APP} app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS: false -> true`,
       `${FUNCTION_APP} app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE: false -> true`,
     ]);
