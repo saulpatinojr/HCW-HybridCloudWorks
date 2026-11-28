@@ -558,7 +558,8 @@ export const DECLARED = [
   // were deleted here with the lookup and the import blocks in
   // infra/frontend.tf (#1937). A plan that changes either record now, a
   // proxied or ttl change before the owner sets site_proxied_hosts above
-  // all, is UNEXPECTED and is read, except www's two steps declared just below.
+  // all, is UNEXPECTED and is read, except www's two steps and the apex's two
+  // declared just below.
   //
   // #1929 step 1 (Part 3, step 1 of docs/runbooks/proxy-site-hosts.md): the
   // owner sets site_proxied_hosts from "none" to "www", and the run changes
@@ -577,8 +578,8 @@ export const DECLARED = [
   // "#1929 step 1 back" is the same run the other way (www back to "none":
   // Part 3, step 2's test, or any rollback of www): proxied true -> false,
   // ttl 1 -> 60 and modified_on, read from the same source.
-  // The apex is declared nothing: neither value proxies it, and its ttl is 1
-  // either way, so any apex change in either run is UNEXPECTED.
+  // Neither of these runs proxies the apex, and its ttl is 1 either way, so
+  // any apex change in either run is UNEXPECTED.
   // Each step's three share a `step`, so a plan that proxies www and leaves
   // its ttl at 60 (or changes ttl alone) names the missing one instead of
   // passing. modified_on alone never counts as either step, because any
@@ -586,9 +587,8 @@ export const DECLARED = [
   // Both steps stay here, so either direction checks clean, for as long as
   // www is proxied: a rollback, or the certificate procedure in the
   // runbook's "Going back", may set www back to "none" at any time, step 4
-  // included. The pull request for step 4 (www to "both", the apex) adds the
-  // apex's two steps beside these. These two are deleted only when the site
-  // goes back to "none" for good. The runbook's table says the same.
+  // included. These two are deleted only when the site goes back to "none"
+  // for good. The runbook's table says the same.
   {
     address: "cloudflare_dns_record.site_www",
     path: "proxied",
@@ -634,6 +634,68 @@ export const DECLARED = [
     step: "#1929 step 1 back",
     after: KNOWN_AFTER_APPLY,
     reason: "#1929 step 1 back: the record's modified_on, set by Cloudflare when proxied and ttl change",
+  },
+  // #1929 step 4 (Part 3, step 4 of docs/runbooks/proxy-site-hosts.md): the
+  // owner sets site_proxied_hosts from "www" to "both", and the run changes
+  // cloudflare_dns_record.site_apex in place and nothing else:
+  //   - proxied false -> true (local.site_apex_proxied in infra/frontend.tf);
+  //   - modified_on known after apply: a changed proxied leaves it unknown
+  //     (5.29.0, internal/services/dns_record/custom.go, ModifyPlan).
+  // The apex's ttl is fixed at 1 in infra/frontend.tf, so it does not change,
+  // and www stays proxied at ttl 1, so www does not change either. Read from
+  // the same source as step 1, nothing else on the apex changes:
+  //   - settings keeps its state value, although the apex CNAME is flattened
+  //     and Cloudflare says flatten_cname is unavailable on a proxied record.
+  //     The config does not set settings, so it is unknown in the plan until
+  //     UseNonNullStateForUnknown (schema.go) and then ModifyPlan ("preserve
+  //     from state if not explicitly set") copy the state's object, which Read
+  //     already filled with ipv4_only, ipv6_only and flatten_cname
+  //     (normalizeSettings), so ModifyPlan's CNAME defaults change nothing.
+  //     Whatever Cloudflare reports for a proxied apex shows only after the
+  //     apply, as a refresh, not as a planned change.
+  //   - comment_modified_on keeps its own, because the comment is unchanged;
+  //   - tags_modified_on is set to null because there are no tags, as it
+  //     already is in state;
+  //   - created_on and id are held by plan modifiers; proxiable, meta and
+  //     tags are copied from state.
+  // "#1929 step 4 back" is the same run the other way (the apex back to
+  // DNS-only, "both" to "www": any rollback of the apex): proxied
+  // true -> false and modified_on. In a run that moves both names at once
+  // ("both" to "none" and back, the certificate procedure in the runbook's
+  // "Going back"), www's step and the apex's step are each in the plan, and
+  // each is checked on its own record.
+  // Both stay here for as long as the apex is proxied, and are deleted only
+  // when the apex goes back to DNS-only for good. The runbook's table says
+  // the same.
+  {
+    address: "cloudflare_dns_record.site_apex",
+    path: "proxied",
+    step: "#1929 step 4",
+    before: false,
+    after: true,
+    reason: "#1929 step 4: site_proxied_hosts www -> both puts the apex behind Cloudflare's proxy",
+  },
+  {
+    address: "cloudflare_dns_record.site_apex",
+    path: "modified_on",
+    step: "#1929 step 4",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 4: the record's modified_on, set by Cloudflare when proxied changes",
+  },
+  {
+    address: "cloudflare_dns_record.site_apex",
+    path: "proxied",
+    step: "#1929 step 4 back",
+    before: true,
+    after: false,
+    reason: "#1929 step 4 back: site_proxied_hosts both -> www takes the apex off Cloudflare's proxy again",
+  },
+  {
+    address: "cloudflare_dns_record.site_apex",
+    path: "modified_on",
+    step: "#1929 step 4 back",
+    after: KNOWN_AFTER_APPLY,
+    reason: "#1929 step 4 back: the record's modified_on, set by Cloudflare when proxied changes",
   },
   // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
   // the arming plan (false -> true) stays declared until the owner arms it,

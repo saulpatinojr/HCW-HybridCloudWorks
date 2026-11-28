@@ -1,10 +1,12 @@
 # Proxying the site's own names through Cloudflare
 
-> **Status: prepared, nothing switched.** Ticket
+> **Status: `www` proxied since 2026-11-28; the apex not yet.** Ticket
 > [#1929](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1929).
-> The two records are in Terraform with the switch at `"none"`, so they stay
-> exactly as they were made: DNS-only (the grey cloud), answering straight
-> from Azure.
+> Parts 1 and 2 are done, and Part 3 steps 1 to 3 are done: `www` is behind
+> Cloudflare (the orange cloud), going back to `none` and on again was
+> rehearsed, and a frontend deploy came through with no stale page. The
+> apex is still DNS-only (the grey cloud), answering straight from Azure,
+> until step 4. The ticket's comments hold each step's checks.
 
 **Scope:** putting `hybridcloudworks.com` (the apex, the bare name) and
 `www.hybridcloudworks.com` behind Cloudflare's proxy (the orange cloud), the
@@ -79,8 +81,8 @@ on its own as UNEXPECTED.
 | Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply. Step `#1929 step 1`, **declared in the same pull request as the next row** (see the CHANGELOG). |
 | Part 3, step 2 (test) and any rollback of `www` | `www` to `none` | `cloudflare_dns_record.site_www`: `proxied` `true` -> `false`, `ttl` `1` -> `60`, `modified_on` known after apply. Step `#1929 step 1 back`, **declared in the same pull request as step 1**. |
 | Part 3, step 2 (back on) | `none` to `www` | the step 1 row, still on `main` (both `www` rows stay for as long as `www` is proxied) |
-| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. The same pull request declares the next row; the two `www` rows stay. |
-| Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply |
+| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. Its `ttl` is already 1 and does not change, and `www` does not change at all. Step `#1929 step 4`, **declared in the same pull request as the next row** (see the CHANGELOG); the two `www` rows stay. |
+| Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply. Step `#1929 step 4 back`, **declared in the same pull request as step 4**. |
 
 Then, for every run:
 
