@@ -100,7 +100,7 @@ describe('the form', () => {
   const doc = {
     title: 'Cover letter',
     category: 'Letter',
-    tags: ['outreach', 'mvp'],
+    tags: ['outreach', 'program'],
     body: 'Dear team',
     relatedLink: 'https://example.com/role',
   };
@@ -117,7 +117,7 @@ describe('the form', () => {
     expect(formFromDocument(doc)).toEqual({
       title: 'Cover letter',
       category: 'Letter',
-      tags: 'outreach, mvp',
+      tags: 'outreach, program',
       body: 'Dear team',
       relatedLink: 'https://example.com/role',
     });
@@ -143,7 +143,7 @@ describe('the form', () => {
     expect(payload).toEqual({
       title: 'Cover letter',
       category: 'Letter',
-      tags: ['outreach', 'mvp'],
+      tags: ['outreach', 'program'],
       body: 'Dear team',
       relatedLink: null,
     });
@@ -183,8 +183,8 @@ describe('the form', () => {
 
 describe('filterDocuments', () => {
   const docs = [
-    { id: '1', title: 'Cover letter', category: 'Letter', tags: ['outreach', 'MVP'] },
-    { id: '2', title: 'MVP application', category: 'Application', tags: ['mvp'] },
+    { id: '1', title: 'Cover letter', category: 'Letter', tags: ['outreach', 'PROGRAM'] },
+    { id: '2', title: 'Example Program application', category: 'Application', tags: ['program'] },
     { id: '3', title: 'Notes on Azure', category: 'Notes', tags: [] },
   ];
   const ids = (filters) => filterDocuments(docs, filters).map((doc) => doc.id);
@@ -193,14 +193,14 @@ describe('filterDocuments', () => {
     expect(ids({ q: 'azure' })).toEqual(['3']);
     expect(ids({ q: 'APPLIC' })).toEqual(['2']);
     expect(ids({ q: 'outreach' })).toEqual(['1']);
-    expect(ids({ q: 'mvp' })).toEqual(['1', '2']);
+    expect(ids({ q: 'program' })).toEqual(['1', '2']);
     expect(ids({ q: '  ' })).toEqual(['1', '2', '3']);
     expect(ids({})).toEqual(['1', '2', '3']);
   });
 
   it('filters by category and by tag exactly, and the three together', () => {
     expect(ids({ category: 'Notes' })).toEqual(['3']);
-    expect(ids({ tag: 'mvp' })).toEqual(['1', '2']);
+    expect(ids({ tag: 'program' })).toEqual(['1', '2']);
     expect(ids({ tag: 'mv' })).toEqual([]);
     expect(ids({ category: 'Letter', tag: 'outreach', q: 'cover' })).toEqual(['1']);
     expect(ids({ category: 'Letter', tag: 'azure' })).toEqual([]);

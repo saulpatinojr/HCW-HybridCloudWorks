@@ -339,12 +339,12 @@ describe('legacy badge references (#868)', () => {
     `https://firebasestorage.googleapis.com/v0/b/b.appspot.com/o/${encodeURIComponent(`certifications/${path}`)}?alt=media`;
   const rows = () => [
     {
-      id: 'mct',
-      name: 'MCT',
+      id: 'cert-example',
+      name: 'Example Certification',
       display: true,
       _etag: 'etag-1',
-      credentialImage: FIREBASE('mct/images/badge-image.png'),
-      image: [{ downloadURL: FIREBASE('mct/images/badge-image.png') }],
+      credentialImage: FIREBASE('cert-example/images/badge-image.png'),
+      image: [{ downloadURL: FIREBASE('cert-example/images/badge-image.png') }],
     },
     {
       id: 'gone',
@@ -363,10 +363,10 @@ describe('legacy badge references (#868)', () => {
   const conflict = () => Object.assign(new Error('precondition failed'), { code: 412 });
   const storage = {
     headBlobForDelivery: vi.fn(async (_c, path) =>
-      path === 'mct/images/badge-image.png' ? { contentType: 'image/png' } : null
+      path === 'cert-example/images/badge-image.png' ? { contentType: 'image/png' } : null
     ),
   };
-  const MEDIA = '/api/public/media/certifications/mct/images/badge-image.png';
+  const MEDIA = '/api/public/media/certifications/cert-example/images/badge-image.png';
 
   it('publishes the media URL for a badge whose blob exists, persists it, and names the missing one', async () => {
     const store = makeStore();
@@ -375,10 +375,10 @@ describe('legacy badge references (#868)', () => {
     expect(body.legacyBadges).toEqual({ repointed: 1, missing: ['Gone: gone/images/badge-1.png'] });
 
     const snap = store.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    const mct = snap.items.find((i) => i.id === 'mct');
-    expect(mct.credentialImage).toBe(MEDIA);
-    expect(mct.image[0].downloadURL).toBe(MEDIA);
-    expect(JSON.stringify(mct)).not.toContain('firebasestorage');
+    const cert = snap.items.find((i) => i.id === 'cert-example');
+    expect(cert.credentialImage).toBe(MEDIA);
+    expect(cert.image[0].downloadURL).toBe(MEDIA);
+    expect(JSON.stringify(cert)).not.toContain('firebasestorage');
     // The missing one is left exactly as stored: the page already skips it.
     const gone = snap.items.find((i) => i.id === 'gone');
     expect(gone.credentialImage).toContain('firebasestorage');
@@ -387,11 +387,11 @@ describe('legacy badge references (#868)', () => {
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
     expect(store.patchDoc).toHaveBeenCalledWith(
       'certifications',
-      'mct',
+      'cert-example',
       { imageUrl: MEDIA, credentialImage: MEDIA, image: [{ downloadURL: MEDIA }] },
       { ifMatch: 'etag-1' }
     );
-    expect(storage.headBlobForDelivery).toHaveBeenCalledWith('certifications', 'mct/images/badge-image.png');
+    expect(storage.headBlobForDelivery).toHaveBeenCalledWith('certifications', 'cert-example/images/badge-image.png');
   });
 
   it('the persisted URL is a reference the nightly cleanup recognises, so the badge is never a deletion candidate', async () => {
@@ -400,7 +400,7 @@ describe('legacy badge references (#868)', () => {
     const [, , changes] = store.patchDoc.mock.calls[0];
     for (const url of [changes.imageUrl, changes.credentialImage, changes.image[0].downloadURL]) {
       const name = blobNameFromUrl(url);
-      expect(name).toBe('mct/images/badge-image.png');
+      expect(name).toBe('cert-example/images/badge-image.png');
       expect(isImageBlobName(name)).toBe(true);
     }
   });
@@ -410,7 +410,7 @@ describe('legacy badge references (#868)', () => {
     const edited = {
       ...rows()[0],
       _etag: 'etag-2',
-      imageUrl: '/api/public/media/certifications/mct/images/badge-1759600000000.png',
+      imageUrl: '/api/public/media/certifications/cert-example/images/badge-1759600000000.png',
     };
     store.readDoc = vi.fn(async () => edited);
     store.patchDoc = vi.fn(async () => {
@@ -422,14 +422,14 @@ describe('legacy badge references (#868)', () => {
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
     expect(body.legacyBadges.repointed).toBe(0);
     const snap = store.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    const mct = snap.items.find((i) => i.id === 'mct');
+    const cert = snap.items.find((i) => i.id === 'cert-example');
     // The fresh row is what is published, and its selected badge is the plain URL.
-    expect(mct.credentialImage).toBe('/api/public/media/certifications/mct/images/badge-1759600000000.png');
+    expect(cert.credentialImage).toBe('/api/public/media/certifications/cert-example/images/badge-1759600000000.png');
   });
 
   it('a 412 on a row that still needs the rewrite writes it once more on the fresh ETag; a second 412 publishes the fresh row as stored', async () => {
     const store = makeStore();
-    const fresh = { ...rows()[0], _etag: 'etag-2', name: 'MCT (renamed)' };
+    const fresh = { ...rows()[0], _etag: 'etag-2', name: 'Example Certification (renamed)' };
     store.readDoc = vi.fn(async () => fresh);
     let calls = 0;
     store.patchDoc = vi.fn(async () => {
@@ -445,7 +445,7 @@ describe('legacy badge references (#868)', () => {
     ]);
     expect(body.legacyBadges.repointed).toBe(1);
     let snap = store.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    expect(snap.items.find((i) => i.id === 'mct')).toMatchObject({ name: 'MCT (renamed)', credentialImage: MEDIA });
+    expect(snap.items.find((i) => i.id === 'cert-example')).toMatchObject({ name: 'Example Certification (renamed)', credentialImage: MEDIA });
 
     // Twice: give up on the write, publish the fresh row exactly as stored, say so.
     const log = { warn: vi.fn() };
@@ -459,13 +459,13 @@ describe('legacy badge references (#868)', () => {
     );
     expect(body.legacyBadges.repointed).toBe(0);
     snap = store2.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    expect(snap.items.find((i) => i.id === 'mct').credentialImage).toContain('firebasestorage');
+    expect(snap.items.find((i) => i.id === 'cert-example').credentialImage).toContain('firebasestorage');
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('changed twice'));
   });
 
   it('an edited row keeps its selected badge: imageUrl wins over a legacy credentialImage and the old upload is not revived', async () => {
     const store = makeStore();
-    const selected = '/api/public/media/certifications/mct/images/badge-1759600000000.png';
+    const selected = '/api/public/media/certifications/cert-example/images/badge-1759600000000.png';
     store.queryDocs = vi.fn(async (container) =>
       container === 'certifications' ? [{ ...rows()[0], imageUrl: selected }] : []
     );
@@ -473,10 +473,10 @@ describe('legacy badge references (#868)', () => {
     await h.publishSnapshot(makeRequest(), context);
     expect(store.patchDoc).not.toHaveBeenCalled();
     const snap = store.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    const mct = snap.items.find((i) => i.id === 'mct');
-    expect(mct.credentialImage).toBe(selected);
+    const cert = snap.items.find((i) => i.id === 'cert-example');
+    expect(cert.credentialImage).toBe(selected);
     // The old upload object is published as it was: dead, and skipped by the page.
-    expect(mct.image[0].downloadURL).toContain('firebasestorage');
+    expect(cert.image[0].downloadURL).toContain('firebasestorage');
   });
 
   it('asks blob storage once per distinct path, never for a non-legacy URL', async () => {
@@ -484,8 +484,8 @@ describe('legacy badge references (#868)', () => {
     storage.headBlobForDelivery.mockClear();
     await createSnapshotPublishHandlers({ guard: guardAs('editor'), store, storage, now: () => NOW }).publishSnapshots();
     expect(storage.headBlobForDelivery.mock.calls.map(([, p]) => p).sort()).toEqual([
+      'cert-example/images/badge-image.png',
       'gone/images/badge-1.png',
-      'mct/images/badge-image.png',
     ]);
   });
 
@@ -508,6 +508,6 @@ describe('legacy badge references (#868)', () => {
     expect(body.legacyBadges.repointed).toBe(1);
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('could not persist'));
     const snap = store.upsertDoc.mock.calls.find(([, d]) => d.id === 'certifications')[1];
-    expect(snap.items.find((i) => i.id === 'mct').credentialImage).toBe(MEDIA);
+    expect(snap.items.find((i) => i.id === 'cert-example').credentialImage).toBe(MEDIA);
   });
 });

@@ -5,7 +5,7 @@
  * Cloudflare Web Analytics and the show's downloads from Podbean, and file
  * one evidence row per programme that asks for reach in the Ambassador hub
  * (lib/timers/ambassador-audience.js has the reads, the row and why the
- * Docker Captain and Microsoft MVP seeds list `manual` under `reach`).
+ * seeds of the programs it files under list `manual` under `reach`).
  * Nothing is shown to visitors; the figure is evidence for an application,
  * not decoration.
  *

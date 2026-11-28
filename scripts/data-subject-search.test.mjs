@@ -19,7 +19,7 @@ describe('searchRecordFields', () => {
   it('locates substring in simple and nested properties case-insensitively', () => {
     const doc = {
       id: 'app-1',
-      title: 'Azure MVP Application for John Doe',
+      title: 'Example Program Application for John Doe',
       notes: 'Reviewed candidate John Doe email jdoe@example.com',
       responses: [
         { questionId: 'q1', text: 'Spoke at Cloud Summit with John Doe' },
@@ -66,7 +66,7 @@ describe('extractDocAttachments', () => {
         { invalid: true },
       ],
       images: [
-        { name: 'badge.png', path: 'badges/mvp.png' },
+        { name: 'badge.png', path: 'badges/example.png' },
       ],
     };
 
@@ -109,7 +109,7 @@ describe('extractDocAttachments', () => {
       kind: 'image',
       name: 'badge.png',
       container: DEFAULT_ATTACHMENT_CONTAINER,
-      path: 'badges/mvp.png',
+      path: 'badges/example.png',
       url: null,
     });
   });
@@ -121,16 +121,16 @@ describe('scanDocuments', () => {
       {
         id: 'prog-1',
         type: 'program',
-        name: 'MCT Program',
+        name: 'Example Trainer Program',
         description: 'Trainer program managed by coordinator test@example.com',
-        files: [{ name: 'guide.pdf', path: 'mct/guide.pdf' }],
+        files: [{ name: 'guide.pdf', path: 'example/guide.pdf' }],
       },
       {
         id: 'prog-2',
         type: 'program',
-        name: 'MVP Program',
+        name: 'Second Example Program',
         description: 'Community program',
-        images: [{ name: 'mvp.jpg', path: 'mvp.jpg' }],
+        images: [{ name: 'example.jpg', path: 'example.jpg' }],
       },
     ];
 
@@ -140,7 +140,7 @@ describe('scanDocuments', () => {
     expect(result.matches[0].hits[0].path).toBe('description');
 
     expect(result.attachments).toHaveLength(2);
-    expect(result.attachments.map((a) => a.name)).toEqual(['guide.pdf', 'mvp.jpg']);
+    expect(result.attachments.map((a) => a.name)).toEqual(['guide.pdf', 'example.jpg']);
   });
 });
 

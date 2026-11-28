@@ -135,7 +135,7 @@ export const CSV_IMPORT_MAX_CHARS = 1_000_000;
 export const CSV_IMPORTS = Object.freeze([
   {
     reader: 'mct-classes',
-    label: 'MCT classes (Metrics That Matter CSV)',
+    label: 'Delivered classes (Metrics That Matter CSV)',
     sourceModule: 'manual',
     hint: 'The classes-delivered export: class id, course, learning method, instructor, start and end date, location. One evidence row per class, once per class id.',
   },
@@ -309,8 +309,9 @@ export function evidenceForApplication(application, evidence) {
 
 /**
  * Evidence relevant to a program: names it, names no program at all, or —
- * for a program additional to another — names the parent (an MCT's record
- * is the Regional Lead's record too; the API's readiness.js agrees).
+ * for a program additional to another — names the parent (the parent
+ * membership's record is the child role's record too; the API's
+ * readiness.js agrees).
  */
 export function evidenceRelevant(item, programId, parentProgramId = null) {
   const ids = Array.isArray(item.programIds) ? item.programIds : [];
@@ -336,11 +337,12 @@ export function evidenceCountsToward(item, requirement) {
 }
 
 /**
- * A program additional to another (`parentProgramId`; MCT Regional Lead to
- * MCT, owner request 2026-10-05) is shown, and may start an application,
- * only while the parent's membership is this status. The API refuses the
- * application otherwise (409 PARENT_NOT_ACTIVE); the tabs hide the card and
- * disable the controls so the refusal is never the first thing seen.
+ * A program additional to another (`parentProgramId`; a role open only to
+ * the parent's members, owner request 2026-10-05) is shown, and may start
+ * an application, only while the parent's membership is this status. The
+ * API refuses the application otherwise (409 PARENT_NOT_ACTIVE); the tabs
+ * hide the card and disable the controls so the refusal is never the first
+ * thing seen.
  */
 export const UNLOCKING_MEMBERSHIP = 'active';
 
@@ -393,7 +395,7 @@ export function programsInPlay(programs) {
  * requirements, and the attached evidence with snapshots. Private records,
  * so the export is a file the owner keeps — never a public page.
  */
-// ── upkeep: what keeps a held membership active ─────────────────────────────
+// ── upkeep: a held membership's activity requirement ─────────────────────────────
 
 /** The periods an upkeep rule counts in, as the API's UPKEEP_PERIODS. */
 export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);

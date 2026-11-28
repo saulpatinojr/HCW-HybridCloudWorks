@@ -44,13 +44,13 @@ const alert = (over = {}) => ({
   ...over,
 });
 
-const docker = alert({
-  id: 'docker-dsos-application',
-  title: 'Submit the Docker-Sponsored Open Source application',
+const starter = alert({
+  id: 'example-program-application',
+  title: 'Submit the Example Program application',
   dueDate: '2026-10-30',
   daysUntilDue: 4,
-  link: 'https://www.docker.com/community/open-source/application/',
-  note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
+  link: 'https://www.example.com/program/application/',
+  note: 'Text is ready to paste in the Doc Vault note: Example Program application',
 });
 const overdue = alert({
   id: 'late',
@@ -108,7 +108,7 @@ afterEach(() => resetPromptMemory());
 
 describe('when it opens', () => {
   it('lists the open alerts due within a week and the overdue ones, soonest first', async () => {
-    getJSON.mockResolvedValue(answer([docker, later, snoozed, done, overdue]));
+    getJSON.mockResolvedValue(answer([starter, later, snoozed, done, overdue]));
     renderPrompt();
 
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
@@ -116,10 +116,7 @@ describe('when it opens', () => {
     const titles = within(box)
       .getAllByRole('heading', { level: 3 })
       .map((heading) => heading.textContent);
-    expect(titles).toEqual([
-      'Pay the invoice',
-      'Submit the Docker-Sponsored Open Source application',
-    ]);
+    expect(titles).toEqual(['Pay the invoice', 'Submit the Example Program application']);
     expect(within(box).getByText('2 days overdue')).toBeInTheDocument();
     expect(within(box).getByText('Due in 4 days')).toBeInTheDocument();
     expect(
@@ -132,22 +129,19 @@ describe('when it opens', () => {
   });
 
   it('is a dialog with a name and a description', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
     expect(box).toHaveAccessibleDescription('1 alert is overdue or due within 7 days.');
   });
 
   it("opens the alert's web link in a new tab, safely", async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     const link = await screen.findByRole('link', {
-      name: /Open link \(docker\.com\) for “Submit the Docker/,
+      name: /Open link \(example\.com\) for “Submit the Example/,
     });
-    expect(link).toHaveAttribute(
-      'href',
-      'https://www.docker.com/community/open-source/application/'
-    );
+    expect(link).toHaveAttribute('href', 'https://www.example.com/program/application/');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
@@ -170,7 +164,7 @@ describe('when it opens', () => {
   });
 
   it('asks nothing of the server, and shows nothing, below the editor role', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt({ role: 'viewer' });
     await act(async () => {});
     expect(getJSON).not.toHaveBeenCalled();
@@ -181,7 +175,7 @@ describe('when it opens', () => {
   it('opens for a publisher and a super admin as well', async () => {
     for (const role of ['publisher', 'super_admin']) {
       resetPromptMemory();
-      getJSON.mockResolvedValue(answer([docker]));
+      getJSON.mockResolvedValue(answer([starter]));
       const { unmount } = renderPrompt({ role });
       expect(await screen.findByRole('dialog', { name: 'Calendar alerts' })).toBeInTheDocument();
       unmount();
@@ -191,7 +185,7 @@ describe('when it opens', () => {
 
 describe('once per session and once per day', () => {
   it('does not open a second time in the same session', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     const first = renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
     first.unmount();
@@ -205,7 +199,7 @@ describe('once per session and once per day', () => {
   });
 
   it('does not open in a new session on the same day', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     const first = renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
     first.unmount();
@@ -220,14 +214,14 @@ describe('once per session and once per day', () => {
   });
 
   it('opens again in a new session on the next day', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     const first = renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
     first.unmount();
     simulatePageReload();
 
     window.sessionStorage.removeItem(PROMPT_SESSION_KEY);
-    getJSON.mockResolvedValue(answer([docker], '2026-10-27'));
+    getJSON.mockResolvedValue(answer([starter], '2026-10-27'));
     renderPrompt();
     expect(await screen.findByRole('dialog', { name: 'Calendar alerts' })).toBeInTheDocument();
     expect(window.localStorage.getItem(PROMPT_DAY_KEY)).toBe('2026-10-27');
@@ -241,7 +235,7 @@ describe('once per session and once per day', () => {
     simulatePageReload();
     expect(window.localStorage.getItem(PROMPT_DAY_KEY)).toBeNull();
 
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     expect(await screen.findByRole('dialog', { name: 'Calendar alerts' })).toBeInTheDocument();
   });
@@ -249,7 +243,7 @@ describe('once per session and once per day', () => {
 
 describe('Done and Snooze', () => {
   it('marks an alert done and takes it off the list', async () => {
-    getJSON.mockResolvedValue(answer([docker, overdue]));
+    getJSON.mockResolvedValue(answer([starter, overdue]));
     sendJSON.mockResolvedValue({ ok: true, alert: { ...overdue, status: 'done', state: 'done' } });
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
@@ -264,11 +258,11 @@ describe('Done and Snooze', () => {
   });
 
   it('says so when the last one is dealt with', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
-    sendJSON.mockResolvedValue({ ok: true, alert: { ...docker, status: 'done', state: 'done' } });
+    getJSON.mockResolvedValue(answer([starter]));
+    sendJSON.mockResolvedValue({ ok: true, alert: { ...starter, status: 'done', state: 'done' } });
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
-    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Docker.*” done/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Example.*” done/ }));
     expect(
       await screen.findByText('Nothing else is due. You are all caught up.')
     ).toBeInTheDocument();
@@ -279,20 +273,20 @@ describe('Done and Snooze', () => {
     ['3 days', /for 3 days$/, 3],
     ['next week', /until next week$/, 7],
   ])('snoozes for %s', async (_label, name, days) => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     sendJSON.mockResolvedValue({
       ok: true,
-      alert: { ...docker, status: 'snoozed', state: 'snoozed', snoozedUntil: '2026-11-02' },
+      alert: { ...starter, status: 'snoozed', state: 'snoozed', snoozedUntil: '2026-11-02' },
     });
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
 
-    const group = screen.getByRole('group', { name: /Snooze “Submit the Docker/ });
+    const group = screen.getByRole('group', { name: /Snooze “Submit the Example/ });
     fireEvent.click(within(group).getByRole('button', { name }));
 
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         { snoozeDays: days }
       )
@@ -303,12 +297,12 @@ describe('Done and Snooze', () => {
   });
 
   it('keeps the alert and says why when the server refuses the change', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     sendJSON.mockRejectedValue(new Error('That alert no longer exists.'));
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
 
-    const button = screen.getByRole('button', { name: /Mark “Submit the Docker.*” done/ });
+    const button = screen.getByRole('button', { name: /Mark “Submit the Example.*” done/ });
     fireEvent.click(button);
 
     await waitFor(() => expect(toast).toHaveBeenCalled());
@@ -317,33 +311,31 @@ describe('Done and Snooze', () => {
       description: 'That alert no longer exists.',
       variant: 'destructive',
     });
-    expect(
-      screen.getByText('Submit the Docker-Sponsored Open Source application')
-    ).toBeInTheDocument();
+    expect(screen.getByText('Submit the Example Program application')).toBeInTheDocument();
     await waitFor(() => expect(button).toBeEnabled());
   });
 
   it('cannot be pressed twice while a change is on its way', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     let finish;
     sendJSON.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
 
-    const button = screen.getByRole('button', { name: /Mark “Submit the Docker.*” done/ });
+    const button = screen.getByRole('button', { name: /Mark “Submit the Example.*” done/ });
     fireEvent.click(button);
     await waitFor(() => expect(button).toBeDisabled());
     fireEvent.click(button);
     expect(sendJSON).toHaveBeenCalledTimes(1);
     await act(async () =>
-      finish({ ok: true, alert: { ...docker, state: 'done', status: 'done' } })
+      finish({ ok: true, alert: { ...starter, state: 'done', status: 'done' } })
     );
   });
 });
 
 describe('moving on from the pop-up', () => {
   it('"Close for today" closes it, and nothing is changed', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
     fireEvent.click(screen.getByRole('button', { name: 'Close for today' }));
@@ -352,7 +344,7 @@ describe('moving on from the pop-up', () => {
   });
 
   it('Escape closes it', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
     fireEvent.keyDown(box, { key: 'Escape', code: 'Escape' });
@@ -360,7 +352,7 @@ describe('moving on from the pop-up', () => {
   });
 
   it('"All alerts" opens the alerts panel on the Calendar page and closes the pop-up', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     await screen.findByRole('dialog', { name: 'Calendar alerts' });
     fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
@@ -393,7 +385,7 @@ describe('the keyboard', () => {
     );
 
   it('moves focus to the dialog itself when it opens, not to a button that changes something', async () => {
-    getJSON.mockResolvedValue(answer([docker, overdue]));
+    getJSON.mockResolvedValue(answer([starter, overdue]));
     renderPrompt();
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
     await waitFor(() => expect(document.activeElement).toBe(box));
@@ -402,7 +394,7 @@ describe('the keyboard', () => {
   });
 
   it('does not let Enter or Space typed as it opens finish an alert', async () => {
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
     await waitFor(() => expect(document.activeElement).toBe(box));
@@ -412,7 +404,7 @@ describe('the keyboard', () => {
   });
 
   it('keeps Tab and Shift+Tab inside the dialog, wrapping at both ends', async () => {
-    getJSON.mockResolvedValue(answer([docker, overdue]));
+    getJSON.mockResolvedValue(answer([starter, overdue]));
     renderPrompt();
     const box = await screen.findByRole('dialog', { name: 'Calendar alerts' });
     await waitFor(() => expect(box.contains(document.activeElement)).toBe(true));
@@ -453,7 +445,7 @@ describe('when the read fails', () => {
 
   it('tries again on request, and opens if something is due then', async () => {
     getJSON.mockRejectedValueOnce(new Error('503'));
-    getJSON.mockResolvedValue(answer([docker]));
+    getJSON.mockResolvedValue(answer([starter]));
     renderPrompt();
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('dialog', { name: 'Calendar alerts' })).toBeInTheDocument();

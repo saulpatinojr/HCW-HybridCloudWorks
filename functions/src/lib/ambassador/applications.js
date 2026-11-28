@@ -11,9 +11,10 @@ import { KINDS, byUpdatedDesc, json, loadCreate, loadPatch, stamped } from './st
 import { str } from './fields.js';
 
 /**
- * An application for a program additional to another (MCT Regional Lead to
- * MCT) may start only while the parent's membership is Active: the 409 to
- * answer otherwise, naming the Settings step that opens it, or null.
+ * An application for a program additional to another (a role open only to
+ * the parent's members) may start only while the parent's membership is
+ * Active: the 409 to answer otherwise, naming the Settings step that opens
+ * it, or null.
  */
 async function parentLocked(ctx, program) {
   if (!program.parentProgramId) return null;

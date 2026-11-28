@@ -199,7 +199,7 @@ function cleanScoring(value) {
 }
 
 /**
- * What keeps a membership active: at least `minCount` items of evidence filed
+ * A held membership's activity requirement: `minCount` items of evidence filed
  * under the program in every `period` (a calendar quarter or year), of
  * `evidenceTypes` (none means any source), and the program's own words on
  * where to log them. Null or empty clears it.

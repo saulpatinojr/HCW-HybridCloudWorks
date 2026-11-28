@@ -26,20 +26,20 @@ vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 
 const TODAY = new Date(2026, 9, 26, 12); // 26 October 2026, local noon
 
-const docker = {
-  id: 'alert:docker-dsos-application',
+const starter = {
+  id: 'alert:example-program-application',
   kind: 'alert',
-  title: 'Submit the Docker-Sponsored Open Source application',
+  title: 'Submit the Example Program application',
   start: '2026-10-30T00:00:00.000Z',
   end: null,
   allDay: true,
   status: 'open',
   href: '/admin/calendar#alerts',
-  sourceId: 'docker-dsos-application',
+  sourceId: 'example-program-application',
   sourceCollection: 'admin_config',
   meta: {
-    note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
-    link: 'https://www.docker.com/community/open-source/application/',
+    note: 'Text is ready to paste in the Doc Vault note: Example Program application',
+    link: 'https://www.example.com/program/application/',
     dueTime: null,
     snoozedUntil: null,
   },
@@ -83,15 +83,15 @@ function renderCalendar(props = {}) {
 const calendarCalls = () =>
   getJSON.mock.calls.map(([route]) => route).filter((route) => route.startsWith('cms/calendar?'));
 const chip = () =>
-  screen.findByRole('button', { name: /Alert: Submit the Docker-Sponsored.*All day/ });
+  screen.findByRole('button', { name: /Alert: Submit the Example Program.*All day/ });
 
 beforeEach(() => {
   getJSON.mockReset();
   postJSON.mockReset();
   sendJSON.mockReset();
   toast.mockReset();
-  getJSON.mockResolvedValue({ ok: true, items: [docker, content], warnings: [] });
-  sendJSON.mockResolvedValue({ ok: true, alert: docker });
+  getJSON.mockResolvedValue({ ok: true, items: [starter, content], warnings: [] });
+  sendJSON.mockResolvedValue({ ok: true, alert: starter });
 });
 
 describe('the alert kind', () => {
@@ -108,15 +108,15 @@ describe('the alert kind', () => {
   });
 
   it('is never rescheduled by a drag, and never collides with a publish', () => {
-    expect(isReschedulable({ ...docker })).toBe(false);
-    expect(isReschedulable({ ...docker, status: 'scheduled' })).toBe(false);
-    const timedAlert = { ...docker, allDay: false, start: content.start };
+    expect(isReschedulable({ ...starter })).toBe(false);
+    expect(isReschedulable({ ...starter, status: 'scheduled' })).toBe(false);
+    const timedAlert = { ...starter, allDay: false, start: content.start };
     expect(findConflicts([content, timedAlert]).size).toBe(0);
   });
 
   it('is not counted as sharing a slot when content is scheduled at its time', () => {
     const when = new Date(content.start);
-    const timedAlert = { ...docker, allDay: false, start: content.start };
+    const timedAlert = { ...starter, allDay: false, start: content.start };
     expect(sameSlotItems([timedAlert], when, null)).toEqual([]);
     expect(
       sameSlotItems([timedAlert, content], when, 'someone-else').map((entry) => entry.kind)
@@ -141,8 +141,8 @@ describe('the alert kind', () => {
   });
 
   it('draws as a button that cannot be dragged', () => {
-    render(<CalendarItemChip item={docker} onSelect={() => {}} />);
-    const button = screen.getByRole('button', { name: /Alert: Submit the Docker/ });
+    render(<CalendarItemChip item={starter} onSelect={() => {}} />);
+    const button = screen.getByRole('button', { name: /Alert: Submit the Example/ });
     expect(button).toHaveAttribute('draggable', 'false');
     expect(button).toHaveAttribute('data-kind', 'alert');
   });
@@ -175,8 +175,8 @@ describe('on the grid', () => {
     getJSON.mockResolvedValue({
       ok: true,
       items: [
-        docker,
-        { ...docker, id: 'alert:d2', sourceId: 'd2', title: 'Finished thing', status: 'done' },
+        starter,
+        { ...starter, id: 'alert:d2', sourceId: 'd2', title: 'Finished thing', status: 'done' },
       ],
       warnings: [],
     });
@@ -184,7 +184,7 @@ describe('on the grid', () => {
     await chip();
     fireEvent.change(screen.getByLabelText(/Status/i), { target: { value: 'done' } });
     expect(
-      screen.queryByRole('button', { name: /Alert: Submit the Docker/ })
+      screen.queryByRole('button', { name: /Alert: Submit the Example/ })
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Alert: Finished thing/ })).toBeInTheDocument();
   });
@@ -212,16 +212,16 @@ describe('opening an alert', () => {
       within(dialog).getByText(/Text is ready to paste in the Doc Vault note/)
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole('button', { name: /Mark “Submit the Docker.*” done/ })
+      within(dialog).getByRole('button', { name: /Mark “Submit the Example.*” done/ })
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole('group', { name: /Snooze “Submit the Docker/ })
+      within(dialog).getByRole('group', { name: /Snooze “Submit the Example/ })
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole('button', { name: /Edit “Submit the Docker/ })
+      within(dialog).getByRole('button', { name: /Edit “Submit the Example/ })
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole('button', { name: /Delete “Submit the Docker/ })
+      within(dialog).getByRole('button', { name: /Delete “Submit the Example/ })
     ).toBeInTheDocument();
     for (const forbidden of [
       /Reschedule/,
@@ -240,11 +240,8 @@ describe('opening an alert', () => {
     renderCalendar();
     fireEvent.click(await chip());
     const dialog = await screen.findByRole('dialog');
-    const link = within(dialog).getByRole('link', { name: /Open link \(docker\.com\)/ });
-    expect(link).toHaveAttribute(
-      'href',
-      'https://www.docker.com/community/open-source/application/'
-    );
+    const link = within(dialog).getByRole('link', { name: /Open link \(example\.com\)/ });
+    expect(link).toHaveAttribute('href', 'https://www.example.com/program/application/');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
@@ -252,12 +249,12 @@ describe('opening an alert', () => {
   it('goes to a portal page through the router and closes', async () => {
     getJSON.mockResolvedValue({
       ok: true,
-      items: [{ ...docker, meta: { ...docker.meta, link: '/admin/health' } }],
+      items: [{ ...starter, meta: { ...starter.meta, link: '/admin/health' } }],
       warnings: [],
     });
     renderCalendar();
     fireEvent.click(await chip());
-    fireEvent.click(await screen.findByRole('button', { name: /Open page: “Submit the Docker/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open page: “Submit the Example/ }));
     expect(screen.getByTestId('where')).toHaveTextContent('/admin/health');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
@@ -266,10 +263,12 @@ describe('opening an alert', () => {
     const onChanged = vi.fn();
     renderCalendar({ onChanged });
     fireEvent.click(await chip());
-    fireEvent.click(await screen.findByRole('button', { name: /Mark “Submit the Docker.*” done/ }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Mark “Submit the Example.*” done/ })
+    );
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         {
           done: true,
@@ -289,11 +288,11 @@ describe('opening an alert', () => {
   ])('snoozes through the alerts route (%s)', async (name, days) => {
     renderCalendar();
     fireEvent.click(await chip());
-    const group = await screen.findByRole('group', { name: /Snooze “Submit the Docker/ });
+    const group = await screen.findByRole('group', { name: /Snooze “Submit the Example/ });
     fireEvent.click(within(group).getByRole('button', { name }));
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         {
           snoozeDays: days,
@@ -304,15 +303,15 @@ describe('opening an alert', () => {
   });
 
   it('reopens a finished alert, and offers it no snooze', async () => {
-    getJSON.mockResolvedValue({ ok: true, items: [{ ...docker, status: 'done' }], warnings: [] });
+    getJSON.mockResolvedValue({ ok: true, items: [{ ...starter, status: 'done' }], warnings: [] });
     renderCalendar();
     fireEvent.click(await chip());
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByRole('group', { name: /Snooze/ })).not.toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: /Reopen “Submit the Docker/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Reopen “Submit the Example/ }));
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         {
           done: false,
@@ -324,7 +323,7 @@ describe('opening an alert', () => {
   it('edits it in the same form and reads again', async () => {
     renderCalendar();
     fireEvent.click(await chip());
-    fireEvent.click(await screen.findByRole('button', { name: /Edit “Submit the Docker/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Edit “Submit the Example/ }));
     const form = screen.getByRole('form', { name: 'Edit alert' });
     expect(within(form).getByLabelText('Due date (UTC day)')).toHaveValue('2026-10-30');
     fireEvent.change(within(form).getByLabelText('Note (optional)'), {
@@ -333,13 +332,13 @@ describe('opening an alert', () => {
     fireEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         {
-          title: 'Submit the Docker-Sponsored Open Source application',
+          title: 'Submit the Example Program application',
           dueDate: '2026-10-30',
           dueTime: null,
-          link: 'https://www.docker.com/community/open-source/application/',
+          link: 'https://www.example.com/program/application/',
           note: 'Pasted.',
         }
       )
@@ -350,13 +349,16 @@ describe('opening an alert', () => {
   it('deletes it only after asking, then reads again', async () => {
     renderCalendar();
     fireEvent.click(await chip());
-    fireEvent.click(await screen.findByRole('button', { name: /Delete “Submit the Docker/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Delete “Submit the Example/ }));
     const confirm = (await screen.findAllByRole('dialog')).at(-1);
     expect(within(confirm).getByText('Delete this alert?')).toBeInTheDocument();
     expect(sendJSON).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete alert' }));
     await waitFor(() =>
-      expect(sendJSON).toHaveBeenCalledWith('cms/calendar-alerts/docker-dsos-application', 'DELETE')
+      expect(sendJSON).toHaveBeenCalledWith(
+        'cms/calendar-alerts/example-program-application',
+        'DELETE'
+      )
     );
     await waitFor(() => expect(calendarCalls()).toHaveLength(2));
   });
@@ -365,7 +367,9 @@ describe('opening an alert', () => {
     sendJSON.mockRejectedValue(new Error('That alert no longer exists.'));
     renderCalendar();
     fireEvent.click(await chip());
-    fireEvent.click(await screen.findByRole('button', { name: /Mark “Submit the Docker.*” done/ }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Mark “Submit the Example.*” done/ })
+    );
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast.mock.calls[0][0]).toMatchObject({
       title: 'That change was not saved',

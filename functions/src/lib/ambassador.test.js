@@ -5,6 +5,7 @@
  * explains its arithmetic and never promises acceptance, an absent container
  * is a 503 NOT_PROVISIONED and not a 500, and the role per verb holds.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
 import { MAX_PATCH_OPERATIONS } from './cosmos-client.js';
@@ -12,6 +13,7 @@ import {
   APPLICATION_STATUSES,
   APPLICATION_TRANSITIONS,
   CSV_IMPORT_MAX_CHARS,
+  CSV_READERS,
   DEFAULT_PROGRAMS,
   UNLOCKING_MEMBERSHIP,
   canTransition,
@@ -33,6 +35,43 @@ import {
 
 const context = { log: vi.fn(), error: vi.fn() };
 const NOW = new Date('2026-10-03T12:00:00.000Z');
+
+// Seeded programs are picked from the catalogue by a trait only they have,
+// never by name: this repository is public and names no real program outside
+// the catalogue itself (programs.test.js checks the catalogue's own content).
+const seedWith = (label, test) => {
+  const found = DEFAULT_PROGRAMS.filter(test);
+  if (found.length !== 1) throw new Error(`expected one seed ${label}, found ${found.length}`);
+  return found[0];
+};
+const has = (program, requirementId) => program.requirements.some((r) => r.id === requirementId);
+/** The one seed that is additional to another, and the seed it is additional to. */
+const CHILD = seedWith('with a parent', (p) => p.parentProgramId);
+const PARENT = seedWith('that is a parent', (p) => p.id === CHILD.parentProgramId);
+/** The seed whose questions include a nominator's section; it has a `reach` requirement. */
+const NOMINATED = seedWith('with a nomination section', (p) =>
+  (p.applicationQuestions ?? []).some((q) => q.section.startsWith('Nomination ('))
+);
+/** The seed with a `reach` requirement and a `labs` one, its hands-on track. */
+const FOUR_TRACKS = seedWith('with reach and labs', (p) => has(p, 'reach') && has(p, 'labs'));
+/** The seed with a frequency grid among its questions (the child has a scale too). */
+const GRID = seedWith('with a grid', (p) =>
+  !p.parentProgramId && (p.applicationQuestions ?? []).some((q) => q.kind === 'scale')
+);
+const CREDITS = seedWith('scored in credits', (p) => p.scoring?.unit === 'credits');
+const QUARTERLY = seedWith('with upkeep', (p) => p.upkeep);
+const WAITLISTED = seedWith('with a waitlist', (p) => /waitlist/.test(p.applicationWindow?.note ?? ''));
+/** Seeds with no parent, for the tests that need any program at all. */
+const OPEN_SEED_IDS = DEFAULT_PROGRAMS.filter((p) => !p.parentProgramId).map((p) => p.id);
+const [SEED_A, SEED_B, SEED_C] = OPEN_SEED_IDS.filter((id) => id !== PARENT.id);
+/** The one CSV reader, a trainer's delivered classes; its id is product data. */
+const [CLASS_READER] = Object.keys(CSV_READERS);
+/**
+ * The SHA-256 of a value's JSON: pins a published seed value that names a
+ * program without this public file repeating it (programs.test.js does the
+ * same). After a deliberate catalogue change, recompute it from the new value.
+ */
+const digestOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 let counter = 0;
 const fixed = { now: () => NOW, uuid: () => `id-${++counter}`, log: { error: vi.fn() } };
 
@@ -239,23 +278,12 @@ describe('not provisioned', () => {
 });
 
 describe('programs', () => {
-  const SEED_NAMES = [
-    'Microsoft MVP',
-    'Microsoft Certified Trainer',
-    'AWS Community Hero',
-    'AWS Ambassador',
-    'GitHub Star',
-    'Docker Captain',
-    'VMware vExpert',
-    'Microsoft Elevate Educator – Expert (MIEE)',
-    'GitKraken Ambassador',
-    'Microsoft Management Community',
-    'MCT Regional Lead',
-    'AWS Community Builders',
-    'Docker-Sponsored Open Source',
-    'HashiCorp Ambassador',
-    'Coder Champion',
-  ];
+  const SEED_NAMES = DEFAULT_PROGRAMS.map((p) => p.name);
+
+  it('ships the seed names exactly as published, in catalogue order', () => {
+    expect(SEED_NAMES).toHaveLength(15);
+    expect(digestOf(SEED_NAMES)).toBe('7c1c61d7bf878e2a9e8d18272b9c74941a9a0622f153d52f423e83d898cbfa34');
+  });
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
     const store = memStore();
@@ -287,8 +315,7 @@ describe('programs', () => {
       expect(validateProgram(body).error, program.id).toBeUndefined();
       expect(program.responses).toBeUndefined();
     }
-    const mvp = DEFAULT_PROGRAMS.find((p) => p.id === 'program-microsoft-mvp');
-    const sections = mvp.applicationQuestions.map((q) => q.section);
+    const sections = NOMINATED.applicationQuestions.map((q) => q.section);
     expect(sections.filter((s, i) => sections.indexOf(s) === i)).toEqual([
       'Profile Information',
       'Online Influence & Network',
@@ -297,15 +324,14 @@ describe('programs', () => {
       'Technical Expertise',
       'Nomination (filled in by your nominator)',
     ]);
-    expect(mvp.applicationQuestions.find((q) => q.id === 'mvp-activities')).toMatchObject({
+    expect(NOMINATED.applicationQuestions.find((q) => q.kind === 'activities')).toMatchObject({
       kind: 'activities',
       maxItems: 24,
     });
-    const miee = DEFAULT_PROGRAMS.find((p) => p.id === 'program-microsoft-elevate-educator-expert');
-    const grid = miee.applicationQuestions.find((q) => q.kind === 'scale');
+    const grid = GRID.applicationQuestions.find((q) => q.kind === 'scale');
     expect(grid.rows).toHaveLength(15);
     expect(grid.options).toEqual(['Daily', 'Weekly', 'Monthly', 'Rarely', 'Never']);
-    expect(miee.applicationWindow).toEqual({
+    expect(GRID.applicationWindow).toEqual({
       opens: '2027-05-01',
       closes: '2027-07-31',
       note: expect.stringMatching(/^Applications May to 31 July 2027/),
@@ -319,7 +345,7 @@ describe('programs', () => {
       docType: 'program',
       enabled: index !== 4,
       order: index + 1,
-      name: index === 0 ? 'MVP (my edit)' : program.name,
+      name: index === 0 ? 'First seed (my edit)' : program.name,
       createdAt: stamp,
       updatedAt: stamp,
     }));
@@ -335,19 +361,15 @@ describe('programs', () => {
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     const body = parse(await h.listPrograms(makeRequest(), context));
     expect(body.items.map((p) => p.name)).toEqual([
-      'MVP (my edit)',
-      ...SEED_NAMES.slice(1, 7),
-      'Microsoft Elevate Educator – Expert (MIEE)',
-      'Microsoft Management Community',
-      'MCT Regional Lead',
-      'AWS Community Builders',
-      'Docker-Sponsored Open Source',
-      'HashiCorp Ambassador',
-      'Coder Champion',
+      'First seed (my edit)',
+      ...SEED_NAMES.slice(1, 8),
+      // The ninth seed is the soft-deleted one.
+      ...SEED_NAMES.slice(9),
     ]);
+    expect(SEED_NAMES).toHaveLength(15);
     // Appended after the highest stored order (7), in seed order.
     expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11, 12, 13, 14]);
-    expect(body.items.find((p) => p.id === 'program-github-star').enabled).toBe(false);
+    expect(body.items.find((p) => p.id === stored[4].id).enabled).toBe(false);
     expect(store.createDoc).toHaveBeenCalledTimes(7);
     expect(store.data.get('ambassador').get(gone.id).softDeletedAt).toBe(stamp);
     // Nothing more on the next read.
@@ -359,20 +381,19 @@ describe('programs', () => {
     const stamp = NOW.toISOString();
     const base = { docType: 'program', enabled: true, createdAt: stamp, updatedAt: stamp };
     const stored = DEFAULT_PROGRAMS.slice(0, 7).map((p, i) => ({ ...p, ...base, order: i + 1 }));
-    const miee = DEFAULT_PROGRAMS.find((p) => p.id === 'program-microsoft-elevate-educator-expert');
-    const gitkraken = DEFAULT_PROGRAMS.find((p) => p.id === 'program-gitkraken-ambassador');
+    const [eighth, ninth] = DEFAULT_PROGRAMS.slice(7, 9);
     // What the first read inserted and the owner then edited, and what it
     // inserted and the owner then soft-deleted — both present in the store
     // while this (second) read's list and first readDoc predate them.
-    const edited = { ...miee, ...base, seeded: true, order: 8, name: 'MIEE (my edit)' };
-    const deleted = { ...gitkraken, ...base, seeded: true, order: 9, softDeletedAt: stamp };
+    const edited = { ...eighth, ...base, seeded: true, order: 8, name: 'Eighth seed (my edit)' };
+    const deleted = { ...ninth, ...base, seeded: true, order: 9, softDeletedAt: stamp };
     const store = memStore({ ambassador: [...stored, edited, deleted] });
     const listRows = store.queryDocs.getMockImplementation();
     store.queryDocs.mockImplementationOnce(async (name, query, params) =>
-      (await listRows(name, query, params)).filter((r) => ![miee.id, gitkraken.id].includes(r.id))
+      (await listRows(name, query, params)).filter((r) => ![eighth.id, ninth.id].includes(r.id))
     );
     const readRows = store.readDoc.getMockImplementation();
-    const stale = new Set([miee.id, gitkraken.id]);
+    const stale = new Set([eighth.id, ninth.id]);
     store.readDoc.mockImplementation(async (name, id) => {
       if (stale.has(id)) {
         stale.delete(id);
@@ -382,52 +403,43 @@ describe('programs', () => {
     });
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     const body = parse(await h.listPrograms(makeRequest(), context));
-    expect(body.items.find((p) => p.id === miee.id).name).toBe('MIEE (my edit)');
-    expect(body.items.find((p) => p.id === gitkraken.id)).toBeUndefined();
-    expect(store.data.get('ambassador').get(miee.id).name).toBe('MIEE (my edit)');
-    expect(store.data.get('ambassador').get(gitkraken.id).softDeletedAt).toBe(stamp);
+    expect(body.items.find((p) => p.id === eighth.id).name).toBe('Eighth seed (my edit)');
+    expect(body.items.find((p) => p.id === ninth.id)).toBeUndefined();
+    expect(store.data.get('ambassador').get(eighth.id).name).toBe('Eighth seed (my edit)');
+    expect(store.data.get('ambassador').get(ninth.id).softDeletedAt).toBe(stamp);
     expect(store.upsertDoc).not.toHaveBeenCalledWith(
       'ambassador',
       expect.objectContaining({ docType: 'program' })
     );
     // The two seeds the first read never inserted are created once each.
-    expect(store.createDoc.mock.calls.map(([, doc]) => doc.id)).toEqual([
-      miee.id,
-      gitkraken.id,
-      'program-microsoft-management-community',
-      'program-microsoft-mct-regional-lead',
-      'program-aws-community-builders',
-      'program-docker-sponsored-oss',
-      'program-hashicorp-ambassador',
-      'program-coder-champion',
-    ]);
+    expect(store.createDoc.mock.calls.map(([, doc]) => doc.id)).toEqual(
+      DEFAULT_PROGRAMS.slice(7).map((p) => p.id)
+    );
   });
 
   it('backfills a stored seed with the questions and scoring it gained, and nothing else', async () => {
     const stamp = NOW.toISOString();
-    const [mvpSeed, mctSeed] = DEFAULT_PROGRAMS;
-    const management = DEFAULT_PROGRAMS.find(
-      (p) => p.id === 'program-microsoft-management-community'
-    );
+    const [firstSeed, secondSeed] = DEFAULT_PROGRAMS;
+    const management = CREDITS;
     const without = (program, ...keys) =>
       Object.fromEntries(Object.entries(program).filter(([key]) => !keys.includes(key)));
     const base = { docType: 'program', enabled: true, createdAt: stamp, updatedAt: '2026-01-01' };
-    // A stored seeded MVP the owner edited, from before the questions existed.
-    const storedMvp = {
-      ...without(mvpSeed, 'applicationQuestions'),
+    // A stored first seed the owner edited, from before the questions existed.
+    const storedFirst = {
+      ...without(firstSeed, 'applicationQuestions'),
       ...base,
       seeded: true,
       order: 1,
-      name: 'MVP (my edit)',
+      name: 'First seed (my edit)',
       description: 'My own words.',
-      requirements: [mvpSeed.requirements[0]],
+      requirements: [firstSeed.requirements[0]],
       enabled: false,
       membershipStatus: 'working',
-      _etag: '"etag-mvp"',
+      _etag: '"etag-first"',
     };
     // A stored seeded program carrying its own questions already.
     const own = [{ id: 'mine', section: 'S', prompt: 'My question', kind: 'text' }];
-    const storedMct = { ...mctSeed, ...base, seeded: true, order: 2, applicationQuestions: own };
+    const storedSecond = { ...secondSeed, ...base, seeded: true, order: 2, applicationQuestions: own };
     // The owner's own program under a seed's id: not seeded, left alone.
     const ownManagement = {
       ...without(management, 'scoring', 'applicationQuestions'),
@@ -438,7 +450,7 @@ describe('programs', () => {
     // A seeded program whose scoring was never stored. Each is stamped at its
     // seed's current revision, as seededDoc stamps a fresh one.
     const otherSeeds = DEFAULT_PROGRAMS.filter(
-      (p) => ![mvpSeed.id, mctSeed.id, management.id].includes(p.id)
+      (p) => ![firstSeed.id, secondSeed.id, management.id].includes(p.id)
     ).map((p, i) => ({
       ...p,
       ...base,
@@ -446,37 +458,37 @@ describe('programs', () => {
       order: 10 + i,
       ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: currentSeedRevision(p.id) } : {}),
     }));
-    const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
+    const store = memStore({ ambassador: [storedFirst, storedSecond, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed, log });
     const body = parse(await h.listPrograms(makeRequest(), context));
 
-    const mvp = body.items.find((p) => p.id === mvpSeed.id);
-    expect(mvp.applicationQuestions).toEqual(mvpSeed.applicationQuestions);
-    expect(mvp).toMatchObject({
-      name: 'MVP (my edit)',
+    const first = body.items.find((p) => p.id === firstSeed.id);
+    expect(first.applicationQuestions).toEqual(firstSeed.applicationQuestions);
+    expect(first).toMatchObject({
+      name: 'First seed (my edit)',
       description: 'My own words.',
-      requirements: [mvpSeed.requirements[0]],
+      requirements: [firstSeed.requirements[0]],
       enabled: false,
       membershipStatus: 'working',
       order: 1,
       updatedAt: stamp,
     });
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
-    // The owner edited the requirements, so revisions 2 and 3 of the MVP
+    // The owner edited the requirements, so revisions 2 and 3 of the first
     // seed (#1302, #1543) replace nothing — but the row takes the stamp, once, as
     // SUPERSEDED_SEED_VALUES says every stored seed below its revision does.
     expect(store.patchDoc).toHaveBeenCalledWith(
       'ambassador',
-      mvpSeed.id,
-      { applicationQuestions: mvpSeed.applicationQuestions, seedRevision: 3, updatedAt: stamp },
-      { ifMatch: '"etag-mvp"' }
+      firstSeed.id,
+      { applicationQuestions: firstSeed.applicationQuestions, seedRevision: 3, updatedAt: stamp },
+      { ifMatch: '"etag-first"' }
     );
     expect(log.info).toHaveBeenCalledWith(
       '[ambassador] seed backfill: applicationQuestions, seedRevision'
     );
     // Its own questions stay; the owner's program is untouched; the management seed is absent, so added whole.
-    expect(body.items.find((p) => p.id === mctSeed.id).applicationQuestions).toEqual(own);
+    expect(body.items.find((p) => p.id === secondSeed.id).applicationQuestions).toEqual(own);
     const mine = body.items.find((p) => p.id === management.id);
     expect(mine.name).toBe('My community');
     expect(mine.seeded).toBeUndefined();
@@ -492,9 +504,7 @@ describe('programs', () => {
   });
 
   it('backfills scoring on a stored seed that has none, through a store without ETags', async () => {
-    const management = DEFAULT_PROGRAMS.find(
-      (p) => p.id === 'program-microsoft-management-community'
-    );
+    const management = CREDITS;
     const stored = Object.fromEntries(Object.entries(management).filter(([k]) => k !== 'scoring'));
     const store = memStore({
       ambassador: [{ ...stored, docType: 'program', enabled: true, seeded: true, order: 1 }],
@@ -511,7 +521,7 @@ describe('programs', () => {
   });
 
   it('scores a credits program by summing metrics.credits against each tier', () => {
-    const program = DEFAULT_PROGRAMS.find((p) => p.id === 'program-microsoft-management-community');
+    const program = CREDITS;
     expect(program.scoring).toMatchObject({ unit: 'credits' });
     expect(program.requirements.map((r) => r.minCount)).toEqual([10, 20, 25, 50, 75, 100]);
     const evidence = [
@@ -544,7 +554,7 @@ describe('programs', () => {
     expect(
       (
         await editor.patchProgram(
-          makeRequest({ params: { id: 'program-github-star' }, body: { enabled: false } }),
+          makeRequest({ params: { id: SEED_A }, body: { enabled: false } }),
           context
         )
       ).status
@@ -552,17 +562,17 @@ describe('programs', () => {
 
     const admin = createAmbassadorHandlers({ guard: guardAs('super_admin'), store, ...fixed });
     const res = await admin.patchProgram(
-      makeRequest({ params: { id: 'program-github-star' }, body: { enabled: false, order: 9 } }),
+      makeRequest({ params: { id: SEED_A }, body: { enabled: false, order: 9 } }),
       context
     );
     expect(parse(res).item).toMatchObject({ enabled: false, order: 9 });
-    expect(store.data.get('ambassador').get('program-github-star').softDeletedAt).toBeUndefined();
+    expect(store.data.get('ambassador').get(SEED_A).softDeletedAt).toBeUndefined();
     const audit = store.upsertDoc.mock.calls.find(
       ([c, d]) => c === 'admin_audit_logs' && d.action === 'ambassador_program_updated'
     );
     expect(audit[1]).toMatchObject({
       userEmail: 'owner@example.test',
-      details: { programId: 'program-github-star' },
+      details: { programId: SEED_A },
     });
   });
 });
@@ -578,14 +588,14 @@ describe('applications', () => {
   it('creates as interested with an opening history row, private by default', async () => {
     const { h } = await seeded();
     const res = await h.createApplication(
-      makeRequest({ body: { programId: 'program-microsoft-mvp' } }),
+      makeRequest({ body: { programId: SEED_A } }),
       context
     );
     expect(res.status).toBe(200);
     expect(parse(res).item).toMatchObject({
       status: 'interested',
       private: true,
-      programId: 'program-microsoft-mvp',
+      programId: SEED_A,
       history: [{ from: null, to: 'interested', by: 'owner@example.test' }],
     });
     expect(parse(res).item).not.toHaveProperty('statusNote');
@@ -598,7 +608,7 @@ describe('applications', () => {
     const { h, store } = await seeded();
     const id = parse(
       await h.createApplication(
-        makeRequest({ body: { programId: 'program-aws-ambassador' } }),
+        makeRequest({ body: { programId: SEED_B } }),
         context
       )
     ).id;
@@ -639,7 +649,7 @@ describe('applications', () => {
     const { h: editor } = await seeded('editor');
     const id = parse(
       await editor.createApplication(
-        makeRequest({ body: { programId: 'program-microsoft-mct' } }),
+        makeRequest({ body: { programId: SEED_C } }),
         context
       )
     ).id;
@@ -652,7 +662,7 @@ describe('applications', () => {
     const { h: admin, store } = await seeded('super_admin');
     const adminId = parse(
       await admin.createApplication(
-        makeRequest({ body: { programId: 'program-microsoft-mct' } }),
+        makeRequest({ body: { programId: SEED_C } }),
         context
       )
     ).id;
@@ -684,14 +694,14 @@ describe('applications', () => {
   it('refuses statusOverride on a create, and answers 409 when the record changed under a patch', async () => {
     const { h, store } = await seeded('super_admin');
     const refused = await h.createApplication(
-      makeRequest({ body: { programId: 'program-microsoft-mct', statusOverride: true } }),
+      makeRequest({ body: { programId: SEED_C, statusOverride: true } }),
       context
     );
     expect(refused.status).toBe(400);
 
     const id = parse(
       await h.createApplication(
-        makeRequest({ body: { programId: 'program-microsoft-mct' } }),
+        makeRequest({ body: { programId: SEED_C } }),
         context
       )
     ).id;
@@ -716,7 +726,7 @@ describe('applications', () => {
       await h.createApplication(
         makeRequest({
           body: {
-            programId: 'program-microsoft-mct',
+            programId: SEED_C,
             files: [
               { name: 'agreement.pdf', path: 'ambassador/app-1/1-agreement.pdf', container: 'speakerevents', bytes: 10 },
               { name: 'no-reference-at-all' },
@@ -774,7 +784,7 @@ describe('applications', () => {
     const { h, store } = await seeded();
     const id = parse(
       await h.createApplication(
-        makeRequest({ body: { programId: 'program-docker-captain' } }),
+        makeRequest({ body: { programId: SEED_B } }),
         context
       )
     ).id;
@@ -931,7 +941,7 @@ describe('evidence', () => {
     const header = 'MTM Class ID,Course,Start Date\n';
     const text = header + 'x'.repeat(CSV_IMPORT_MAX_CHARS + 1 - header.length);
     const res = await h.importEvidence(
-      makeRequest({ body: { reader: 'mct-classes', text } }),
+      makeRequest({ body: { reader: CLASS_READER, text } }),
       context
     );
     expect(res.status).toBe(413);
@@ -943,12 +953,12 @@ describe('evidence', () => {
     // Exactly at the limit is taken.
     const atLimit = header + 'y'.repeat(CSV_IMPORT_MAX_CHARS - header.length);
     expect(
-      (await h.importEvidence(makeRequest({ body: { reader: 'mct-classes', text: atLimit } }), context))
+      (await h.importEvidence(makeRequest({ body: { reader: CLASS_READER, text: atLimit } }), context))
         .status
     ).toBe(200);
   });
 
-  it('imports MCT classes from a pasted Metrics That Matter CSV, once per class id, skipping rows without one', async () => {
+  it('imports delivered classes from a pasted Metrics That Matter CSV, once per class id, skipping rows without one', async () => {
     const store = memStore();
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     const text = [
@@ -962,7 +972,7 @@ describe('evidence', () => {
     const first = parse(
       await h.importEvidence(
         makeRequest({
-          body: { reader: 'mct-classes', text, programIds: ['program-microsoft-mct'] },
+          body: { reader: CLASS_READER, text, programIds: [PARENT.id] },
         }),
         context
       )
@@ -973,8 +983,8 @@ describe('evidence', () => {
     ]);
     expect(first.created[0]).toMatchObject({
       sourceModule: 'manual',
-      programIds: ['program-microsoft-mct'],
-      tags: ['mct-classes'],
+      programIds: [PARENT.id],
+      tags: [CLASS_READER],
       metrics: { attendees: 14 },
       description:
         'MCT class delivered: Virtual ILT · Instructor J. Doe · 2026-03-02 to 2026-03-05 · Remote',
@@ -987,7 +997,7 @@ describe('evidence', () => {
     expect(first.skippedReasons).toEqual({ 'missing-class-id': 2, 'missing-course-or-date': 1 });
 
     const again = parse(
-      await h.importEvidence(makeRequest({ body: { reader: 'mct-classes', text } }), context)
+      await h.importEvidence(makeRequest({ body: { reader: CLASS_READER, text } }), context)
     );
     expect(again.created).toEqual([]);
     expect(again.existing).toEqual([
@@ -999,7 +1009,7 @@ describe('evidence', () => {
       (await h.importEvidence(makeRequest({ body: { reader: 'nope', text } }), context)).status
     ).toBe(400);
     expect(
-      (await h.importEvidence(makeRequest({ body: { reader: 'mct-classes', text: '' } }), context))
+      (await h.importEvidence(makeRequest({ body: { reader: CLASS_READER, text: '' } }), context))
         .status
     ).toBe(400);
   });
@@ -1019,7 +1029,7 @@ describe('evidence', () => {
           date: '2026-06-01',
           sourceModule: 'certifications',
           verificationStatus: 'verified',
-          programIds: ['program-microsoft-mct'],
+          programIds: [PARENT.id],
         },
       }),
       context
@@ -1038,7 +1048,7 @@ describe('evidence', () => {
     expect(
       parse(
         await h.listEvidence(
-          makeRequest({ query: { programId: 'program-aws-ambassador' } }),
+          makeRequest({ query: { programId: SEED_A } }),
           context
         )
       ).items.map((e) => e.title)
@@ -1046,7 +1056,7 @@ describe('evidence', () => {
 
     const res = parse(
       await h.readiness(
-        makeRequest({ params: { programId: 'program-microsoft-mct' }, query: { period: '2026' } }),
+        makeRequest({ params: { programId: PARENT.id }, query: { period: '2026' } }),
         context
       )
     );
@@ -1061,9 +1071,9 @@ describe('evidence', () => {
   });
 });
 
-describe('additional programs (owner request 2026-10-05): MCT Regional Lead under MCT', () => {
-  const RL = 'program-microsoft-mct-regional-lead';
-  const MCT = 'program-microsoft-mct';
+describe('additional programs (owner request 2026-10-05): the seeded child under its parent', () => {
+  const CHILD_ID = CHILD.id;
+  const PARENT_ID = PARENT.id;
 
   async function seeded(role = 'super_admin') {
     const store = memStore();
@@ -1072,14 +1082,14 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
     return { store, h };
   }
 
-  it('seeds the Regional Lead additional to MCT, with the role requirements as questions', () => {
-    const rl = DEFAULT_PROGRAMS.find((p) => p.id === RL);
-    expect(rl.parentProgramId).toBe(MCT);
-    expect(DEFAULT_PROGRAMS.find((p) => p.id === MCT).parentProgramId).toBeUndefined();
+  it('seeds the child additional to its parent, with the role requirements as questions', () => {
+    const rl = DEFAULT_PROGRAMS.find((p) => p.id === CHILD_ID);
+    expect(rl.parentProgramId).toBe(PARENT_ID);
+    expect(DEFAULT_PROGRAMS.find((p) => p.id === PARENT_ID).parentProgramId).toBeUndefined();
     const sections = rl.applicationQuestions.map((q) => q.section);
     expect(sections.filter((s, i) => sections.indexOf(s) === i)).toEqual([
       'Nomination and eligibility',
-      'MCT community support',
+      expect.stringMatching(/community support$/),
       'Role expectations',
     ]);
     expect(rl.applicationQuestions.find((q) => q.id === 'rl-commitments')).toMatchObject({
@@ -1096,55 +1106,55 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
   });
 
   it('programGate: shut without a parent or while the parent is not Active, open when it is', () => {
-    const child = { id: RL, parentProgramId: MCT };
-    expect(programGate({ id: MCT }, null)).toEqual({ gated: false, unlocked: true, parent: null });
+    const child = { id: CHILD_ID, parentProgramId: PARENT_ID };
+    expect(programGate({ id: PARENT_ID }, null)).toEqual({ gated: false, unlocked: true, parent: null });
     expect(programGate(child, null)).toEqual({
       gated: true,
       unlocked: false,
-      parent: { id: MCT, name: null, membershipStatus: 'none' },
+      parent: { id: PARENT_ID, name: null, membershipStatus: 'none' },
     });
-    expect(programGate(child, { id: MCT, name: 'MCT', membershipStatus: 'working' })).toMatchObject(
-      { gated: true, unlocked: false, parent: { name: 'MCT', membershipStatus: 'working' } }
+    expect(programGate(child, { id: PARENT_ID, name: 'Parent', membershipStatus: 'working' })).toMatchObject(
+      { gated: true, unlocked: false, parent: { name: 'Parent', membershipStatus: 'working' } }
     );
-    expect(programGate(child, { id: MCT, name: 'MCT', membershipStatus: 'active' }).unlocked).toBe(
+    expect(programGate(child, { id: PARENT_ID, name: 'Parent', membershipStatus: 'active' }).unlocked).toBe(
       true
     );
     expect(UNLOCKING_MEMBERSHIP).toBe('active');
   });
 
-  it('refuses a Regional Lead application until the MCT membership is Active, then takes it', async () => {
+  it('refuses an application to the child until the parent membership is Active, then takes it', async () => {
     const { h } = await seeded();
-    const refused = await h.createApplication(makeRequest({ body: { programId: RL } }), context);
+    const refused = await h.createApplication(makeRequest({ body: { programId: CHILD_ID } }), context);
     expect(refused.status).toBe(409);
-    expect(parse(refused)).toMatchObject({ code: 'PARENT_NOT_ACTIVE', parentProgramId: MCT });
-    expect(parse(refused).error).toMatch(/additional to Microsoft Certified Trainer/);
+    expect(parse(refused)).toMatchObject({ code: 'PARENT_NOT_ACTIVE', parentProgramId: PARENT_ID });
+    expect(parse(refused).error).toContain(`additional to ${PARENT.name}`);
     expect(parse(refused).error).toMatch(/Active on Settings/);
 
     // The Settings row's "Application state" starts an application the same way: refused too.
     const fromSettings = await h.createApplication(
-      makeRequest({ body: { programId: RL, status: 'preparing' } }),
+      makeRequest({ body: { programId: CHILD_ID, status: 'preparing' } }),
       context
     );
     expect(fromSettings.status).toBe(409);
 
     await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { membershipStatus: 'active' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { membershipStatus: 'active' } }),
       context
     );
-    const taken = await h.createApplication(makeRequest({ body: { programId: RL } }), context);
+    const taken = await h.createApplication(makeRequest({ body: { programId: CHILD_ID } }), context);
     expect(taken.status).toBe(200);
-    expect(parse(taken).item.programId).toBe(RL);
+    expect(parse(taken).item.programId).toBe(CHILD_ID);
 
     // Moving an existing application onto a locked child is refused the same way.
     await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { membershipStatus: 'working' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { membershipStatus: 'working' } }),
       context
     );
-    const mvp = parse(
-      await h.createApplication(makeRequest({ body: { programId: 'program-microsoft-mvp' } }), context)
+    const other = parse(
+      await h.createApplication(makeRequest({ body: { programId: SEED_A } }), context)
     );
     const moved = await h.patchApplication(
-      makeRequest({ params: { id: mvp.id }, body: { programId: RL } }),
+      makeRequest({ params: { id: other.id }, body: { programId: CHILD_ID } }),
       context
     );
     expect(moved.status).toBe(409);
@@ -1161,54 +1171,54 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
       programIds,
       ...extra,
     });
-    store.data.get('ambassador').set('e-mct', evidence('e-mct', [MCT]));
-    store.data.get('ambassador').set('e-rl', evidence('e-rl', [RL]));
-    store.data.get('ambassador').set('e-mvp', evidence('e-mvp', ['program-microsoft-mvp']));
+    store.data.get('ambassador').set('e-parent', evidence('e-parent', [PARENT_ID]));
+    store.data.get('ambassador').set('e-child', evidence('e-child', [CHILD_ID]));
+    store.data.get('ambassador').set('e-other', evidence('e-other', [SEED_A]));
     store.data.get('ambassador').set('e-any', evidence('e-any', []));
 
-    const locked = parse(await h.readiness(makeRequest({ params: { programId: RL } }), context));
+    const locked = parse(await h.readiness(makeRequest({ params: { programId: CHILD_ID } }), context));
     const lounge = locked.readiness.requirements.find((r) => r.id === 'lounge');
-    expect(lounge.items.map((i) => i.id).sort()).toEqual(['e-any', 'e-mct', 'e-rl']);
+    expect(lounge.items.map((i) => i.id).sort()).toEqual(['e-any', 'e-child', 'e-parent']);
     expect(locked.readiness.gate).toEqual({
       gated: true,
       unlocked: false,
-      parent: { id: MCT, name: 'Microsoft Certified Trainer', membershipStatus: 'none' },
+      parent: { id: PARENT_ID, name: PARENT.name, membershipStatus: 'none' },
     });
 
     await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { membershipStatus: 'active' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { membershipStatus: 'active' } }),
       context
     );
-    const open = parse(await h.readiness(makeRequest({ params: { programId: RL } }), context));
+    const open = parse(await h.readiness(makeRequest({ params: { programId: CHILD_ID } }), context));
     expect(open.readiness.gate.unlocked).toBe(true);
     // The parent's own readiness is ungated and does not read the child's evidence.
-    const mct = parse(await h.readiness(makeRequest({ params: { programId: MCT } }), context));
-    expect(mct.readiness.gate).toEqual({ gated: false, unlocked: true, parent: null });
-    const teaching = mct.readiness.requirements.find((r) => r.id === 'teaching');
-    expect(teaching.items.map((i) => i.id).sort()).toEqual(['e-any', 'e-mct']);
+    const parent = parse(await h.readiness(makeRequest({ params: { programId: PARENT_ID } }), context));
+    expect(parent.readiness.gate).toEqual({ gated: false, unlocked: true, parent: null });
+    const teaching = parent.readiness.requirements.find((r) => r.id === 'teaching');
+    expect(teaching.items.map((i) => i.id).sort()).toEqual(['e-any', 'e-parent']);
   });
 
   it('a program parent must exist, be another program, and have no parent of its own; empty clears', async () => {
     const { h, store } = await seeded();
     const patch = (id, body) => h.patchProgram(makeRequest({ params: { id }, body }), context);
-    expect(parse(await patch(MCT, { parentProgramId: 'program-nope' }))).toEqual({
+    expect(parse(await patch(PARENT_ID, { parentProgramId: 'program-nope' }))).toEqual({
       error: 'Unknown parentProgramId program-nope',
     });
-    expect(parse(await patch(MCT, { parentProgramId: MCT })).error).toMatch(/to itself/);
-    // Two levels: MCT under the Regional Lead, which is already under MCT.
-    expect(parse(await patch(MCT, { parentProgramId: RL })).error).toMatch(/one level only/);
-    expect(store.data.get('ambassador').get(MCT).parentProgramId).toBeUndefined();
+    expect(parse(await patch(PARENT_ID, { parentProgramId: PARENT_ID })).error).toMatch(/to itself/);
+    // Two levels: the parent under the child, which is already under the parent.
+    expect(parse(await patch(PARENT_ID, { parentProgramId: CHILD_ID })).error).toMatch(/one level only/);
+    expect(store.data.get('ambassador').get(PARENT_ID).parentProgramId).toBeUndefined();
 
-    const cleared = await patch(RL, { parentProgramId: '' });
+    const cleared = await patch(CHILD_ID, { parentProgramId: '' });
     expect(cleared.status).toBe(200);
-    expect(store.data.get('ambassador').get(RL).parentProgramId).toBeNull();
+    expect(store.data.get('ambassador').get(CHILD_ID).parentProgramId).toBeNull();
 
     const created = await h.createProgram(
-      makeRequest({ body: { name: 'MCT Mentor', parentProgramId: MCT } }),
+      makeRequest({ body: { name: 'Example Mentor', parentProgramId: PARENT_ID } }),
       context
     );
     expect(created.status).toBe(200);
-    expect(parse(created).item.parentProgramId).toBe(MCT);
+    expect(parse(created).item.parentProgramId).toBe(PARENT_ID);
     expect(
       parse(
         await h.createProgram(
@@ -1222,35 +1232,35 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
   it('refuses a parent when the child is a seed not yet stored, or stored without its parent (#883 review)', async () => {
     const stamp = NOW.toISOString();
     const base = { docType: 'program', enabled: true, seeded: true, createdAt: stamp, updatedAt: stamp };
-    // A catalogue stored before the Regional Lead seed existed: it is inserted on the next read.
-    const withoutRl = DEFAULT_PROGRAMS.filter((p) => p.id !== RL).map((p, i) => ({ ...p, ...base, order: i + 1 }));
+    // A catalogue stored before the child seed existed: it is inserted on the next read.
+    const withoutRl = DEFAULT_PROGRAMS.filter((p) => p.id !== CHILD_ID).map((p, i) => ({ ...p, ...base, order: i + 1 }));
     let store = memStore({ ambassador: withoutRl });
     let h = createAmbassadorHandlers({ guard: guardAs('super_admin'), store, ...fixed });
     let res = await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { parentProgramId: 'program-microsoft-mvp' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { parentProgramId: SEED_A } }),
       context
     );
     expect(res.status).toBe(400);
-    expect(parse(res).error).toMatch(/MCT Regional Lead is already additional/);
-    // A stored Regional Lead from before it had a parent: backfilled on the same read.
-    const rlSeed = DEFAULT_PROGRAMS.find((p) => p.id === RL);
+    expect(parse(res).error).toContain(`${CHILD.name} is already additional`);
+    // A stored child from before it had a parent: backfilled on the same read.
+    const rlSeed = DEFAULT_PROGRAMS.find((p) => p.id === CHILD_ID);
     const storedRl = { ...rlSeed, ...base, order: 11 };
     delete storedRl.parentProgramId;
     store = memStore({ ambassador: [...withoutRl, storedRl] });
     h = createAmbassadorHandlers({ guard: guardAs('super_admin'), store, ...fixed });
     res = await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { parentProgramId: 'program-microsoft-mvp' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { parentProgramId: SEED_A } }),
       context
     );
     expect(res.status).toBe(400);
-    expect(store.data.get('ambassador').get(MCT).parentProgramId).toBeUndefined();
+    expect(store.data.get('ambassador').get(PARENT_ID).parentProgramId).toBeUndefined();
   });
 
-  it('backfills parentProgramId onto a stored Regional Lead from before it was additional', () => {
-    const seed = DEFAULT_PROGRAMS.find((p) => p.id === RL);
+  it('backfills parentProgramId onto a stored child from before it was additional', () => {
+    const seed = DEFAULT_PROGRAMS.find((p) => p.id === CHILD_ID);
     const stored = { ...seed, seeded: true };
     delete stored.parentProgramId;
-    expect(seedBackfillFor(stored, seed)).toEqual({ parentProgramId: MCT });
+    expect(seedBackfillFor(stored, seed)).toEqual({ parentProgramId: PARENT_ID });
     expect(seedBackfillFor({ ...seed, seeded: true }, seed)).toBeNull();
     expect(seedBackfillFor({ ...stored, parentProgramId: 'program-other' }, seed)).toBeNull();
     // An explicit clear (null) is the owner's edit, not a gap: never refilled.
@@ -1260,51 +1270,51 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
   it('a cleared parent stays cleared on the next catalogue read (#881 review)', async () => {
     const { h, store } = await seeded();
     const cleared = await h.patchProgram(
-      makeRequest({ params: { id: RL }, body: { parentProgramId: '' } }),
+      makeRequest({ params: { id: CHILD_ID }, body: { parentProgramId: '' } }),
       context
     );
     expect(cleared.status).toBe(200);
     const listed = parse(await h.listPrograms(makeRequest(), context)).items;
-    expect(listed.find((p) => p.id === RL).parentProgramId).toBeNull();
-    expect(store.data.get('ambassador').get(RL).parentProgramId).toBeNull();
+    expect(listed.find((p) => p.id === CHILD_ID).parentProgramId).toBeNull();
+    expect(store.data.get('ambassador').get(CHILD_ID).parentProgramId).toBeNull();
   });
 
   it('refuses a parent on a program that already has children (#881 review)', async () => {
     const { h, store } = await seeded();
-    // Regional Lead is under MCT, so MCT cannot go under the MVP.
+    // The child is under the parent, so the parent cannot go under another seed.
     const res = await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { parentProgramId: 'program-microsoft-mvp' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { parentProgramId: SEED_A } }),
       context
     );
     expect(res.status).toBe(400);
     expect(parse(res).error).toBe(
-      'MCT Regional Lead is already additional to this program; one level only'
+      `${CHILD.name} is already additional to this program; one level only`
     );
-    expect(store.data.get('ambassador').get(MCT).parentProgramId).toBeUndefined();
+    expect(store.data.get('ambassador').get(PARENT_ID).parentProgramId).toBeUndefined();
     // Once the child is detached, the same move is allowed.
-    await h.patchProgram(makeRequest({ params: { id: RL }, body: { parentProgramId: null } }), context);
+    await h.patchProgram(makeRequest({ params: { id: CHILD_ID }, body: { parentProgramId: null } }), context);
     const moved = await h.patchProgram(
-      makeRequest({ params: { id: MCT }, body: { parentProgramId: 'program-microsoft-mvp' } }),
+      makeRequest({ params: { id: PARENT_ID }, body: { parentProgramId: SEED_A } }),
       context
     );
     expect(moved.status).toBe(200);
   });
 });
 
-describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
-  const GITKRAKEN = 'program-gitkraken-ambassador';
-  const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
+describe('membership upkeep, and a seed with a waitlist (2026-10-11)', () => {
+  const QUARTERLY_ID = QUARTERLY.id;
+  const seed = QUARTERLY;
   // The first step of the history records what #873 seeded; the stamp is the last.
-  const old = SUPERSEDED_SEED_VALUES[GITKRAKEN].revisions[0].fields;
-  const revision = currentSeedRevision(GITKRAKEN);
-  /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
+  const old = SUPERSEDED_SEED_VALUES[QUARTERLY_ID].revisions[0].fields;
+  const revision = currentSeedRevision(QUARTERLY_ID);
+  /** The quarterly seed's row as #873 stored it: the first seed, before upkeep existed. */
   const storedFirstSeed = () => {
     const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };
     delete row.upkeep;
     return row;
   };
 
-  it('seeds GitKraken with the quarterly rule from its check-in: 2 pieces a quarter', () => {
+  it('seeds the quarterly upkeep rule from the program’s own check-in', () => {
     expect(seed.upkeep).toEqual({
       period: 'quarter',
       minCount: 2,
@@ -1331,15 +1341,16 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     ]);
   });
 
-  it('seeds AWS Community Builders from its program page, waitlist and all', () => {
-    const builders = DEFAULT_PROGRAMS.find((p) => p.id === 'program-aws-community-builders');
-    expect(builders).toMatchObject({
-      name: 'AWS Community Builders',
-      provider: 'AWS',
-      applicationUrl: 'https://builder.aws.com/community/community-builders',
-    });
-    expect(builders.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
-    expect(builders.applicationQuestions).toBeUndefined();
+  it('seeds a program from its program page, waitlist and all', () => {
+    const waitlisted = WAITLISTED;
+    expect(waitlisted.provider).toBe('AWS');
+    // The program's name and application page, exactly as published.
+    expect(digestOf(waitlisted.name)).toBe('253c493ffe28333b04275b533c2c20ce9da617e138e0cb93e5cbfcf44aa500d9');
+    expect(digestOf(waitlisted.applicationUrl)).toBe(
+      '80d3fef77634c284abadc4ca1c6adf9012780f11c550d89532080e50e2bb5b07'
+    );
+    expect(waitlisted.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
+    expect(waitlisted.applicationQuestions).toBeUndefined();
   });
 
   // The repository is public; a program's tracker is often private to its members.
@@ -1349,7 +1360,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(source).not.toMatch(/docs\.google\.com|spreadsheets|sharepoint\.com/i);
   });
 
-  it('brings a never-edited first GitKraken seed up to date, upkeep included, in one patch Cosmos takes', () => {
+  it('brings a never-edited first quarterly seed up to date, upkeep included, in one patch Cosmos takes', () => {
     const patch = seedBackfillFor(storedFirstSeed(), seed);
     const fields = Object.keys(old);
     expect(Object.keys(patch).sort()).toEqual([...fields, 'seedRevision', 'upkeep'].sort());
@@ -1374,7 +1385,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(patch.membershipStatus).toBeUndefined();
   });
 
-  it('leaves a current GitKraken seed alone, and never refills a cleared upkeep', () => {
+  it('leaves a current quarterly seed alone, and never refills a cleared upkeep', () => {
     const current = { ...seed, seeded: true, seedRevision: revision };
     expect(seedBackfillFor(current, seed)).toBeNull();
     expect(seedBackfillFor({ ...current, upkeep: null }, seed)).toBeNull();
@@ -1393,28 +1404,30 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(seedBackfillFor(edited, seed)).toEqual({ seedRevision: revision });
   });
 
-  it('stamps a freshly seeded GitKraken at the current revision', async () => {
+  it('stamps a freshly seeded quarterly program at the current revision', async () => {
     const store = memStore();
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
-    expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    // The MVP (revision 3, #1543 on top of #1302) and Docker Captain
-    // (revision 4, #1313 on top of #1302 and the 2026-10-20 rules) carry
+    expect(store.data.get('ambassador').get(QUARTERLY_ID).seedRevision).toBe(revision);
+    // The two seeds with a `reach` requirement (revision 3, #1543 on top of
+    // #1302; revision 4, #1313 on top of #1302 and the 2026-10-20 rules) carry
     // stamps of their own; a seed with no history carries none.
-    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(3);
-    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(4);
-    expect(store.data.get('ambassador').get('program-microsoft-mct').seedRevision).toBeUndefined();
+    expect(store.data.get('ambassador').get(NOMINATED.id).seedRevision).toBe(3);
+    expect(store.data.get('ambassador').get(FOUR_TRACKS.id).seedRevision).toBe(4);
+    expect(SUPERSEDED_SEED_VALUES[PARENT.id]).toBeUndefined();
+    expect(store.data.get('ambassador').get(PARENT.id).seedRevision).toBeUndefined();
   });
 
-  // #1302, #1313: a stored MVP or Docker Captain seed whose requirements are
-  // still the previous revision's takes the current list — `manual` under
-  // `reach`, and `manual` back on Docker's `labs` — in one patch, stamped at
-  // the seed's current revision (the MVP's is 3 since #1543 added the
-  // nomination form); the edited case is proven on the MVP earlier in this file.
+  // #1302, #1313: a stored seed with a `reach` requirement whose requirements
+  // are still the previous revision's takes the current list — `manual` under
+  // `reach`, and `manual` back on the four-track seed's `labs` — in one patch,
+  // stamped at the seed's current revision (the nominated seed's is 3 since
+  // #1543 added the nomination form); the edited case is proven on the first
+  // seed earlier in this file.
   it.each([
-    ['program-microsoft-mvp', 2, 3],
-    ['program-docker-captain', 4, 4],
-  ])('replaces an unedited requirements list on %s with revision %i', (id, rev, target) => {
+    ['nominated', NOMINATED.id, 2, 3],
+    ['four-track', FOUR_TRACKS.id, 4, 4],
+  ])('replaces an unedited requirements list on the %s seed with revision %i', (_label, id, rev, target) => {
     const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
     const step = SUPERSEDED_SEED_VALUES[id].revisions.find((s) => s.revision === rev);
     expect(Object.keys(step.fields)).toEqual(['requirements']);
@@ -1426,30 +1439,30 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(seedBackfillFor({ ...stored, ...patch }, current)).toBeNull();
   });
 
-  // #1313: the audience rows are manual evidence that name Docker's `reach`.
+  // #1313: the audience rows are manual evidence that name the program's `reach`.
   // `community` and `labs` also accept `manual` (the owner files hands-on
   // material and Discord help by hand), and two audience months must meet
   // neither; a hand-filed manual row that names no requirement counts where it
   // always did.
   describe('a row that names a requirement', () => {
-    const docker = DEFAULT_PROGRAMS.find((p) => p.id === 'program-docker-captain');
+    const fourTracks = FOUR_TRACKS;
     const audience = {
       id: 'e-audience',
       title: 'Audience, September 2026',
       date: '2026-09-30',
       sourceModule: 'manual',
-      programIds: ['program-docker-captain'],
+      programIds: [FOUR_TRACKS.id],
       requirementId: 'reach',
     };
     const countsOf = (rows) =>
-      Object.fromEntries(computeReadiness(docker, rows).requirements.map((r) => [r.id, r]));
+      Object.fromEntries(computeReadiness(fourTracks, rows).requirements.map((r) => [r.id, r]));
 
-    it('restores manual on Docker Captain’s labs through revision 4, keeping revision 3’s list for the compare', () => {
-      const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
+    it('restores manual on the four-track seed’s labs through revision 4, keeping revision 3’s list for the compare', () => {
+      const types = Object.fromEntries(fourTracks.requirements.map((r) => [r.id, r.evidenceTypes]));
       expect(types.labs).toEqual(['labs', 'manual']);
       expect(types.community).toEqual(['manual', 'speaking']);
       expect(types.reach).toEqual(['manual']);
-      const step = SUPERSEDED_SEED_VALUES['program-docker-captain'].revisions.at(-1);
+      const step = SUPERSEDED_SEED_VALUES[FOUR_TRACKS.id].revisions.at(-1);
       expect(step.revision).toBe(4);
       expect(step.fields.requirements.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs']);
     });
@@ -1502,7 +1515,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     });
 
     it('is explained in the readiness sentence', () => {
-      expect(computeReadiness(docker, [audience]).explanation).toContain(
+      expect(computeReadiness(fourTracks, [audience]).explanation).toContain(
         'an item filed under a requirement counts toward that requirement only'
       );
     });

@@ -1220,3 +1220,16 @@ Revisit when:
   [Blob rehydration from the archive tier](https://learn.microsoft.com/azure/storage/blobs/archive-rehydrate-overview),
   [Rehydrate an archived blob to an online tier](https://learn.microsoft.com/azure/storage/blobs/archive-rehydrate-to-online-tier),
   [Azure Blob Storage monitoring data reference](https://learn.microsoft.com/azure/storage/blobs/monitor-blob-storage-reference#metrics).
+
+## Addendum, 2026-11-28: program names in this record
+
+Owner rule of 2026-11-25, in `.claude/CLAUDE.md` under "Public text about
+Ambassador and community programs"
+([#1924](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1924)):
+public text names no real community program outside the Ambassador Page's
+seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
+accepted before that rule. Decision 2 gives the reason the cycle is the
+calendar year by naming a community program's award cycle. Its accepted text
+is left as it was; anything written from now on that repeats it uses general
+terms, such as "a community program's yearly cycle". Whether the accepted
+wording itself is changed is left to the owner (#1924).

@@ -51,8 +51,12 @@ describe('statuses', () => {
 
 describe('dates on the dashboard', () => {
   const programs = [
-    { id: 'p1', name: 'MVP', applicationWindow: { opens: null, closes: null } },
-    { id: 'p2', name: 'vExpert', applicationWindow: { opens: '2026-11-01', closes: '2026-12-15' } },
+    { id: 'p1', name: 'Example Program', applicationWindow: { opens: null, closes: null } },
+    {
+      id: 'p2',
+      name: 'Second Example Program',
+      applicationWindow: { opens: '2026-11-01', closes: '2026-12-15' },
+    },
     {
       id: 'p3',
       name: 'Off',
@@ -116,9 +120,9 @@ describe('dates on the dashboard', () => {
       today: TODAY,
     });
     expect(actions).toEqual([
-      'MVP: 2 more talks needed.',
-      'MVP: attach evidence from the Evidence tab.',
-      'MVP: submission closes in 17 days.',
+      'Example Program: 2 more talks needed.',
+      'Example Program: attach evidence from the Evidence tab.',
+      'Example Program: submission closes in 17 days.',
       '1 evidence item still unverified.',
     ]);
   });
@@ -128,11 +132,16 @@ describe('export and relevance', () => {
   it('carries the application, the program outline and only the attached evidence', () => {
     const out = applicationExport(
       { id: 'a1', programId: 'p1', evidenceIds: ['e1'] },
-      { id: 'p1', name: 'MVP', provider: 'Microsoft', requirements: [], secret: 'no' },
+      { id: 'p1', name: 'Example Program', provider: 'Microsoft', requirements: [], secret: 'no' },
       [{ id: 'e1' }, { id: 'e2' }]
     );
     expect(out.evidence).toEqual([{ id: 'e1' }]);
-    expect(out.program).toEqual({ id: 'p1', name: 'MVP', provider: 'Microsoft', requirements: [] });
+    expect(out.program).toEqual({
+      id: 'p1',
+      name: 'Example Program',
+      provider: 'Microsoft',
+      requirements: [],
+    });
     expect(out.exportedAt).toMatch(/^\d{4}-/);
   });
 
@@ -142,9 +151,9 @@ describe('export and relevance', () => {
   });
 
   it('counts evidence filed under the parent program for the program additional to it', () => {
-    expect(evidenceRelevant({ programIds: ['mct'] }, 'rl', 'mct')).toBe(true);
-    expect(evidenceRelevant({ programIds: ['mvp'] }, 'rl', 'mct')).toBe(false);
-    expect(evidenceRelevant({ programIds: ['mct'] }, 'rl')).toBe(false);
+    expect(evidenceRelevant({ programIds: ['base'] }, 'child', 'base')).toBe(true);
+    expect(evidenceRelevant({ programIds: ['other'] }, 'child', 'base')).toBe(false);
+    expect(evidenceRelevant({ programIds: ['base'] }, 'child')).toBe(false);
   });
 });
 
@@ -216,53 +225,57 @@ describe('evidenceCountsToward', () => {
 });
 
 describe('additional programs (owner request 2026-10-05)', () => {
-  const mct = { id: 'mct', name: 'MCT', order: 2, membershipStatus: 'working' };
-  const rl = { id: 'rl', name: 'MCT Regional Lead', order: 3, parentProgramId: 'mct' };
-  const mvp = { id: 'mvp', name: 'MVP', order: 1 };
+  const base = { id: 'base', name: 'Base Program', order: 2, membershipStatus: 'working' };
+  const child = { id: 'child', name: 'Child Role', order: 3, parentProgramId: 'base' };
+  const other = { id: 'other', name: 'Example Program', order: 1 };
 
   it('programGate is shut until the parent membership is Active, and names the parent', () => {
     expect(UNLOCKING_MEMBERSHIP).toBe('active');
-    const byId = programById([mvp, mct, rl]);
-    expect(programGate(mvp, byId)).toEqual({ gated: false, unlocked: true, parent: null });
-    expect(programGate(rl, byId)).toEqual({
+    const byId = programById([other, base, child]);
+    expect(programGate(other, byId)).toEqual({ gated: false, unlocked: true, parent: null });
+    expect(programGate(child, byId)).toEqual({
       gated: true,
       unlocked: false,
-      parent: { id: 'mct', name: 'MCT', membershipStatus: 'working' },
+      parent: { id: 'base', name: 'Base Program', membershipStatus: 'working' },
     });
     expect(
-      programGate(rl, programById([mvp, { ...mct, membershipStatus: 'active' }, rl]))
+      programGate(child, programById([other, { ...base, membershipStatus: 'active' }, child]))
     ).toMatchObject({ unlocked: true });
     // A parent that is gone keeps the gate shut rather than opening it.
-    expect(programGate(rl, programById([mvp, rl]))).toMatchObject({
+    expect(programGate(child, programById([other, child]))).toMatchObject({
       unlocked: false,
-      parent: { id: 'mct', name: null, membershipStatus: 'none' },
+      parent: { id: 'base', name: null, membershipStatus: 'none' },
     });
   });
 
   it('lists the programs in play: top level, each followed by the children its membership opened', () => {
-    expect(programsInPlay([rl, mct, mvp]).map((p) => p.id)).toEqual(['mct', 'mvp']);
-    const active = { ...mct, membershipStatus: 'active' };
-    expect(programsInPlay([rl, active, mvp]).map((p) => p.id)).toEqual(['mct', 'rl', 'mvp']);
-    expect(childProgramsOf([rl, mct, mvp], 'mct')).toEqual([rl]);
-    expect(childProgramsOf([rl, mct, mvp], 'mvp')).toEqual([]);
+    expect(programsInPlay([child, base, other]).map((p) => p.id)).toEqual(['base', 'other']);
+    const active = { ...base, membershipStatus: 'active' };
+    expect(programsInPlay([child, active, other]).map((p) => p.id)).toEqual([
+      'base',
+      'child',
+      'other',
+    ]);
+    expect(childProgramsOf([child, base, other], 'base')).toEqual([child]);
+    expect(childProgramsOf([child, base, other], 'other')).toEqual([]);
   });
 
   it('shows a program whose parent is itself parented at top level rather than hiding it (#881 review)', () => {
-    // A chain the API did not catch in a race: rl → mct → mvp. Nothing vanishes.
-    const chained = { ...mct, parentProgramId: 'mvp', membershipStatus: 'active' };
-    const activeMvp = { ...mvp, membershipStatus: 'active' };
+    // A chain the API did not catch in a race: child → base → other. Nothing vanishes.
+    const chained = { ...base, parentProgramId: 'other', membershipStatus: 'active' };
+    const activeOther = { ...other, membershipStatus: 'active' };
     expect(
-      programsInPlay([rl, chained, activeMvp])
+      programsInPlay([child, chained, activeOther])
         .map((p) => p.id)
         .sort()
-    ).toEqual(['mct', 'mvp', 'rl']);
+    ).toEqual(['base', 'child', 'other']);
     // The same chain with the root membership inactive: the middle program
     // has a parent and children, so it is promoted too — nothing hidden.
     expect(
-      programsInPlay([rl, chained, mvp])
+      programsInPlay([child, chained, other])
         .map((p) => p.id)
         .sort()
-    ).toEqual(['mct', 'mvp', 'rl']);
+    ).toEqual(['base', 'child', 'other']);
     // A two-program cycle: both at top level.
     const a = { id: 'a', name: 'A', parentProgramId: 'b', membershipStatus: 'active' };
     const b = { id: 'b', name: 'B', parentProgramId: 'a', membershipStatus: 'active' };
@@ -274,11 +287,11 @@ describe('additional programs (owner request 2026-10-05)', () => {
   });
 
   it('carries parentProgramId through the program form both ways, empty as null', () => {
-    expect(programForm({ name: 'X', parentProgramId: 'mct' }).parentProgramId).toBe('mct');
+    expect(programForm({ name: 'X', parentProgramId: 'base' }).parentProgramId).toBe('base');
     expect(programForm({ name: 'X' }).parentProgramId).toBe('');
     expect(
-      programPayload(programForm({ name: 'X', parentProgramId: 'mct' })).value.parentProgramId
-    ).toBe('mct');
+      programPayload(programForm({ name: 'X', parentProgramId: 'base' })).value.parentProgramId
+    ).toBe('base');
     expect(programPayload(programForm({ name: 'X' })).value.parentProgramId).toBeNull();
   });
 });
@@ -286,7 +299,7 @@ describe('additional programs (owner request 2026-10-05)', () => {
 describe('program form', () => {
   it('round-trips a program through the form and refuses a missing name or label', () => {
     const form = programForm({
-      name: 'MVP',
+      name: 'Example Program',
       eligibility: ['A', 'B'],
       requirements: [
         {
@@ -302,7 +315,7 @@ describe('program form', () => {
     expect(form.eligibility).toBe('A\nB');
     const payload = programPayload(form).value;
     expect(payload).toMatchObject({
-      name: 'MVP',
+      name: 'Example Program',
       eligibility: ['A', 'B'],
       applicationWindow: { opens: '2026-01-01', closes: null, note: '' },
       requirements: [
@@ -313,7 +326,9 @@ describe('program form', () => {
     expect(programPayload({ ...form, requirements: [{ label: '' }] }).error).toMatch(
       /Requirement 1/
     );
-    expect(programPayload({ ...form, applicationUrl: 'mvp.microsoft.com' }).error).toMatch(/http/);
+    expect(programPayload({ ...form, applicationUrl: 'program.example.com' }).error).toMatch(
+      /http/
+    );
   });
 });
 
@@ -341,7 +356,7 @@ describe('membership status (owner request 2026-10-05)', () => {
   });
 });
 
-describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
+describe('upkeep: a held membership’s activity requirement (2026-10-11)', () => {
   it('names the calendar quarter or year a day falls in, and the one before', () => {
     expect(upkeepWindow('2026-10-11', 'quarter')).toEqual({
       start: '2026-10-01',
@@ -364,24 +379,24 @@ describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
 
   it('counts only evidence filed under the program, of its types, in each period', () => {
     const program = {
-      id: 'gk',
+      id: 'quarterly',
       upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'Log it.' },
     };
     const evidence = [
-      { id: 'a', programIds: ['gk'], sourceModule: 'content', date: '2026-10-02' },
-      { id: 'b', programIds: ['gk', 'mvp'], sourceModule: 'content', date: '2026-11-20' },
-      { id: 'c', programIds: ['gk'], sourceModule: 'content', date: '2026-09-30' },
+      { id: 'a', programIds: ['quarterly'], sourceModule: 'content', date: '2026-10-02' },
+      { id: 'b', programIds: ['quarterly', 'other'], sourceModule: 'content', date: '2026-11-20' },
+      { id: 'c', programIds: ['quarterly'], sourceModule: 'content', date: '2026-09-30' },
       // General evidence says nothing about this program.
       { id: 'd', programIds: [], sourceModule: 'content', date: '2026-10-05' },
       {
         id: 'e',
-        programIds: ['gk'],
+        programIds: ['quarterly'],
         sourceModule: 'content',
         date: '2026-10-06',
         softDeletedAt: 'x',
       },
-      { id: 'f', programIds: ['gk'], sourceModule: 'speaking', date: '2026-10-07' },
-      { id: 'g', programIds: ['mvp'], sourceModule: 'content', date: '2026-10-08' },
+      { id: 'f', programIds: ['quarterly'], sourceModule: 'speaking', date: '2026-10-07' },
+      { id: 'g', programIds: ['other'], sourceModule: 'content', date: '2026-10-08' },
     ];
     expect(upkeepProgress(program, evidence, '2026-10-11')).toEqual({
       period: 'quarter',
@@ -400,12 +415,12 @@ describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
     // No types means any source.
     const anySource = { ...program, upkeep: { ...program.upkeep, evidenceTypes: [] } };
     expect(upkeepProgress(anySource, evidence, '2026-10-11').current.count).toBe(3);
-    expect(upkeepProgress({ id: 'mvp' }, evidence, '2026-10-11')).toBeNull();
+    expect(upkeepProgress({ id: 'other' }, evidence, '2026-10-11')).toBeNull();
   });
 
   it('round-trips the tracker and the rule through the form, and refuses a bad one', () => {
     const form = programForm({
-      name: 'GitKraken Ambassador',
+      name: 'Example Program',
       contributionTrackerUrl: 'https://example.com/tracker',
       upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'Log it.' },
     });
@@ -420,15 +435,15 @@ describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
       /Contribution tracker URL/
     );
     expect(programPayload({ ...form, upkeep: { ...form.upkeep, minCount: '0' } }).error).toMatch(
-      /minimum of at least 1/
+      /at least 1 item each period/
     );
   });
 });
 
 describe('the date scope sent to readiness', () => {
-  it('keeps GitKraken quarterly counts inside the current quarter', () => {
+  it('keeps a quarterly program’s counts inside the current quarter', () => {
     const program = {
-      id: 'gitkraken',
+      id: 'quarterly',
       upkeep: { period: 'quarter' },
       requirements: [
         {

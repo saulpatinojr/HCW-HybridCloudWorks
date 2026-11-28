@@ -12,9 +12,8 @@
  * emits nothing. The text below describes how it was meant to work.
  *
  * WHY A BUILD STEP AND NOT A LINE IN index.html. The site must be able to
- * state a monthly audience figure (owner decision 2026-10-20: the Docker
- * Captain application goes in on the Thought Leader track, 5,000 monthly
- * views, and the Microsoft MVP form asks for impact metrics). The beacon is
+ * state a monthly audience figure (owner decision 2026-10-20: community
+ * program applications ask for the reach of published work). The beacon is
  * how page loads are counted, and its token is the one value in it that is
  * per-site: `cloudflare_web_analytics_site` in infra/ produces it, the owner
  * copies it into the `CF_WEB_ANALYTICS_TOKEN` repository variable, and

@@ -203,7 +203,7 @@ After this, no pull requests or issues are open in either repository.
 
 | Work | Merged PR | Result |
 | --- | --- | --- |
-| AI Engine and Ambassadors | [#1438](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1438) | Bounded model refresh, accurate routing/cost states, reviewed pricing and TTS recommendations, removal of the public GitKraken footer link, responsive Ambassador layouts, and qualification-period readiness fixes. |
+| AI Engine and Ambassadors | [#1438](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1438) | Bounded model refresh, accurate routing/cost states, reviewed pricing and TTS recommendations, removal of a public footer credit link, responsive Ambassador layouts, and qualification-period readiness fixes. |
 | Blogs | [#1446](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1446) | Official Kiro AWS RSS source and Blogs hub below Coder Corner; editable sources/articles, fallback images, filters, limits, pause/resume, manual intake, and run status. |
 
 Both PRs are merged. Their required checks passed, including browser checks on
@@ -297,7 +297,7 @@ reviews. Its section "Lines a session does not cross" gathers the ones that used
 A few notes that are about this handoff rather than standing rules:
 
 - The merge signal is the first bullet of "Pull requests open ready for review" in `.claude/CLAUDE.md`. Copilot reviews only when the author has Copilot code review and AI credits; that file says how long to wait for one and when not to wait at all.
-- The Docker-Sponsored Open Source application is tracked only by the admin calendar alert for 2026-10-30. Do not list it as waiting.
+- The community program application due 2026-10-30 is tracked only by the admin calendar alert of that date. Do not list it as waiting.
 - Obsidian and the Second Brain work are not part of this workstream.
 
 ### Done on 2026-10-27 (details in the changelog and the ticket comments)

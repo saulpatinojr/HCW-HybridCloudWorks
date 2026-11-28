@@ -245,7 +245,7 @@ function mctRowToEvidence(read) {
  */
 export const CSV_READERS = Object.freeze({
   'mct-classes': {
-    label: 'MCT classes (Metrics That Matter CSV)',
+    label: 'Delivered classes (Metrics That Matter CSV)',
     sourceModule: 'manual',
     toEvidence: mctClassesToEvidence,
   },

@@ -22,9 +22,9 @@ const parse = (text, extra = {}) => parseVaultFile({ filename: 'note.md', text, 
 
 const FULL = [
   '---',
-  'title: "Cover letter: Azure MVP"',
+  'title: "Cover letter: Example Program"',
   'category: letter',
-  'tags: [Outreach, "#mvp", azure]',
+  'tags: [Outreach, "#program", azure]',
   'link: https://example.com/role',
   '---',
   '',
@@ -64,9 +64,9 @@ describe('front matter', () => {
     const result = parse(FULL);
     expect(result).toMatchObject({ ok: true, titleFrom: 'front matter' });
     expect(result.fields).toEqual({
-      title: 'Cover letter: Azure MVP',
+      title: 'Cover letter: Example Program',
       category: 'Letter',
-      tags: ['Outreach', 'mvp', 'azure'],
+      tags: ['Outreach', 'program', 'azure'],
       body: 'Dear team,\n\nI would like to apply.',
       relatedLink: 'https://example.com/role',
     });
@@ -75,9 +75,9 @@ describe('front matter', () => {
 
   it('reads Obsidian\'s one-per-line tags, with or without a leading #', () => {
     const result = parse(
-      ['---', 'title: Notes', 'tags:', '  - outreach', '  - "#mvp"', '  -   azure ', 'aliases:', '  - nope', '---', 'Body'].join('\n')
+      ['---', 'title: Notes', 'tags:', '  - outreach', '  - "#program"', '  -   azure ', 'aliases:', '  - nope', '---', 'Body'].join('\n')
     );
-    expect(result.fields.tags).toEqual(['outreach', 'mvp', 'azure']);
+    expect(result.fields.tags).toEqual(['outreach', 'program', 'azure']);
     expect(result.fields.body).toBe('Body');
     expect(result.warnings.join(' ')).toContain('aliases');
   });

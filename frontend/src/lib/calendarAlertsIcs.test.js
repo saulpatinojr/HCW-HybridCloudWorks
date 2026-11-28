@@ -14,12 +14,12 @@ import {
 const NOW = new Date('2026-10-26T09:05:07.123Z');
 
 const alert = (over = {}) => ({
-  id: 'docker-dsos-application',
-  title: 'Submit the Docker-Sponsored Open Source application',
+  id: 'example-program-application',
+  title: 'Submit the Example Program application',
   dueDate: '2026-10-30',
   dueTime: null,
-  link: 'https://www.docker.com/community/open-source/application/',
-  note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
+  link: 'https://www.example.com/program/application/',
+  note: 'Text is ready to paste in the Doc Vault note: Example Program application',
   state: 'open',
   ...over,
 });
@@ -38,12 +38,12 @@ describe('buildIcs', () => {
 
   it('makes an all-day event for an alert with no time, ending the next day', () => {
     const text = unfold(buildIcs([alert()], NOW));
-    expect(text).toContain('UID:docker-dsos-application@calendar-alerts.hybridcloudworks.com');
+    expect(text).toContain('UID:example-program-application@calendar-alerts.hybridcloudworks.com');
     expect(text).toContain('DTSTAMP:20261026T090507Z');
     expect(text).toContain('DTSTART;VALUE=DATE:20261030');
     expect(text).toContain('DTEND;VALUE=DATE:20261031');
-    expect(text).toContain('SUMMARY:Submit the Docker-Sponsored Open Source application');
-    expect(text).toContain('URL:https://www.docker.com/community/open-source/application/');
+    expect(text).toContain('SUMMARY:Submit the Example Program application');
+    expect(text).toContain('URL:https://www.example.com/program/application/');
   });
 
   it('ends an all-day event on the first of the next month and the next year', () => {
@@ -100,7 +100,7 @@ describe('buildIcs', () => {
   it('puts the note and the link in the description, and a URL only for an https link', () => {
     const text = unfold(buildIcs([alert()], NOW));
     expect(text).toContain(
-      'DESCRIPTION:Text is ready to paste in the Doc Vault note: Docker DSOS application\\nhttps://www.docker.com/community/open-source/application/'
+      'DESCRIPTION:Text is ready to paste in the Doc Vault note: Example Program application\\nhttps://www.example.com/program/application/'
     );
     const portal = buildIcs([alert({ link: '/admin/health', note: '' })], NOW);
     expect(portal).toContain('DESCRIPTION:/admin/health');

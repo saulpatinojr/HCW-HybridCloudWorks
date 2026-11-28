@@ -186,7 +186,7 @@ function UpkeepSection({ program, progress }) {
   return (
     <div className="rounded-md border border-border p-3" data-testid="program-upkeep-details">
       <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Keeping the membership active
+        Activity requirement
       </h4>
       <p className="text-sm">
         At least {program.upkeep.minCount} every {program.upkeep.period}. {program.upkeep.note}

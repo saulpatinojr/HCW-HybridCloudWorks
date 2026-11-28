@@ -329,8 +329,8 @@ describe('list', () => {
   async function seeded() {
     const s = setup();
     const rows = [
-      { title: 'Cover letter', category: 'Letter', tags: ['outreach', 'mvp'] },
-      { title: 'MVP application', category: 'Application', tags: ['mvp'] },
+      { title: 'Cover letter', category: 'Letter', tags: ['outreach', 'program'] },
+      { title: 'Example Program application', category: 'Application', tags: ['program'] },
       { title: 'Notes on Azure', category: 'Notes', tags: ['azure'] },
       { title: 'Template: thank you', category: 'Template', tags: [] },
     ];
@@ -348,7 +348,7 @@ describe('list', () => {
     expect(res.body.documents.map((d) => d.title)).toEqual([
       'Template: thank you',
       'Notes on Azure',
-      'MVP application',
+      'Example Program application',
       'Cover letter',
     ]);
     expect(JSON.stringify(res.body)).not.toContain('SECRET');
@@ -360,18 +360,18 @@ describe('list', () => {
       truncated: false,
       counts: { Template: 1, Application: 1, Letter: 1, Notes: 1, Reference: 0, Other: 0 },
     });
-    expect(res.body.tags[0]).toEqual({ tag: 'mvp', count: 2 });
+    expect(res.body.tags[0]).toEqual({ tag: 'program', count: 2 });
   });
 
   it('searches title, tag and category, without regard to case', async () => {
     const { call } = await seeded();
     const titles = async (query) => (await call('list', request({ query }))).body.documents.map((d) => d.title);
     expect(await titles({ q: 'AZURE' })).toEqual(['Notes on Azure']);
-    expect(await titles({ q: 'applic' })).toEqual(['MVP application']);
+    expect(await titles({ q: 'applic' })).toEqual(['Example Program application']);
     expect(await titles({ q: 'letter' })).toEqual(['Cover letter']);
     expect(await titles({ q: 'nothing like it' })).toEqual([]);
     expect(await titles({ category: 'notes' })).toEqual(['Notes on Azure']);
-    expect(await titles({ tag: 'MVP' })).toEqual(['MVP application', 'Cover letter']);
+    expect(await titles({ tag: 'PROGRAM' })).toEqual(['Example Program application', 'Cover letter']);
     expect(await titles({ tag: 'mv' })).toEqual([]);
     expect(await titles({ category: 'Letter', tag: 'outreach', q: 'cover' })).toEqual(['Cover letter']);
   });
@@ -829,7 +829,7 @@ describe('upload', () => {
     'category: Letter',
     'tags:',
     '  - outreach',
-    '  - "#mvp"',
+    '  - "#program"',
     'status: sent',
     '---',
     '',
@@ -845,7 +845,7 @@ describe('upload', () => {
     expect(res.body).toMatchObject({
       ok: true,
       outcome: 'created',
-      document: { title: 'Cover letter', category: 'Letter', tags: ['outreach', 'mvp'], source: 'uploaded', version: 1 },
+      document: { title: 'Cover letter', category: 'Letter', tags: ['outreach', 'program'], source: 'uploaded', version: 1 },
     });
     expect(res.body.document).not.toHaveProperty('body');
     expect(res.body.warnings.join(' ')).toContain('status');

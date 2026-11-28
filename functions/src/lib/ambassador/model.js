@@ -61,12 +61,12 @@ export function canTransition(from, to) {
 export const MEMBERSHIP_STATUSES = Object.freeze(['none', 'working', 'active', 'denied']);
 
 /**
- * A program may be additional to another (`parentProgramId`): MCT Regional
- * Lead to Microsoft Certified Trainer (owner request 2026-10-05). The child's
- * requirements and questions are the extra ones, and they apply — its card
- * shows, its application may start — only while the parent's membership is
- * this status. A Regional Lead is an MCT first; nothing about the role makes
- * sense before that.
+ * A program may be additional to another (`parentProgramId`): a role open
+ * only to the parent program's members (owner request 2026-10-05). The
+ * child's requirements and questions are the extra ones, and they apply —
+ * its card shows, its application may start — only while the parent's
+ * membership is this status. The role needs the parent membership first;
+ * nothing about it makes sense before that.
  */
 export const UNLOCKING_MEMBERSHIP = 'active';
 
@@ -126,7 +126,7 @@ export const SCORING_UNITS = Object.freeze(['credits']);
 
 /**
  * The periods a program's `upkeep` counts in: a calendar quarter or a
- * calendar year. Upkeep is what keeps a membership active once it is held,
+ * calendar year. Upkeep is a held membership's activity requirement,
  * apart from the requirements an application is scored against.
  */
 export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);

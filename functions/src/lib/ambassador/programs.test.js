@@ -10,6 +10,47 @@ const rule = (req) => [req.id, req.minCount, req.weight, req.evidenceTypes];
 /** A program's history as [revision, fields] steps, oldest first. */
 const stepsOf = (id) => SUPERSEDED_SEED_VALUES[id].revisions.map((s) => [s.revision, s.fields]);
 
+/**
+ * The SHA-256 of a value's JSON. A published seed value that names a program
+ * is pinned by its digest, so an edit to it (a figure, a word, an id, the
+ * order) fails here without this public file repeating it. If one of these
+ * fails after a deliberate catalogue change, recompute the digest from the
+ * new value and say in the pull request what changed.
+ */
+const digestOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+// The seeds checked by hand below are picked by a trait only they have, and
+// the tests describe them by that shape: this repository is public and names
+// no real program outside the catalogue itself.
+const seedWith = (label, test) => {
+  const found = DEFAULT_PROGRAMS.filter(test);
+  if (found.length !== 1) throw new Error(`expected one seed ${label}, found ${found.length}`);
+  return found[0];
+};
+const has = (program, requirementId) => program.requirements.some((r) => r.id === requirementId);
+/** The seed with an audience (`reach`) track and a hands-on (`labs`) one. */
+const FOUR_TRACKS = seedWith('with reach and labs', (p) => has(p, 'reach') && has(p, 'labs'));
+/** The seed whose questions end with a nominator's section; it has `reach` too. */
+const NOMINATED = seedWith('with a nomination section', (p) =>
+  (p.applicationQuestions ?? []).some((q) => q.section.startsWith('Nomination ('))
+);
+/** The open-source sponsorship: published images and project activity. */
+const SPONSORSHIP = seedWith('with images and activity', (p) => has(p, 'images') && has(p, 'activity'));
+/** The seed with mentorship, events and feedback asks. */
+const MENTORSHIP = seedWith('with mentorship', (p) => has(p, 'mentorship'));
+/** The seed that counts chats and people helped apart. */
+const CHATS = seedWith('with chats', (p) => has(p, 'chats'));
+/** The seed with a quarterly upkeep rule. */
+const QUARTERLY = seedWith('with upkeep', (p) => p.upkeep);
+/** The seed with a frequency grid among its questions (the child's scale aside). */
+const GRID = seedWith('with a grid', (p) =>
+  !p.parentProgramId && (p.applicationQuestions ?? []).some((q) => q.kind === 'scale')
+);
+/** The one seed additional to another, and that other. */
+const CHILD = seedWith('with a parent', (p) => p.parentProgramId);
+const PARENT = seedWith('that is a parent', (p) => p.id === CHILD.parentProgramId);
+const WAITLISTED = seedWith('with a waitlist', (p) => /waitlist/.test(p.applicationWindow?.note ?? ''));
+
 describe('ambassador seed programs (ADR 0033 §4)', () => {
   it('exports a frozen list of default programs', () => {
     expect(Array.isArray(DEFAULT_PROGRAMS)).toBe(true);
@@ -70,12 +111,11 @@ describe('ambassador seed programs (ADR 0033 §4)', () => {
     expect(typeof SUPERSEDED_SEED_VALUES).toBe('object');
     expect(Object.isFrozen(SUPERSEDED_SEED_VALUES)).toBe(true);
 
-    const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
-    expect(gk).toBeDefined();
-    expect(currentSeedRevision('program-gitkraken-ambassador')).toBe(3);
-    expect(currentSeedRevision('program-docker-captain')).toBe(4);
-    expect(currentSeedRevision('program-microsoft-mvp')).toBe(3);
-    expect(currentSeedRevision('program-microsoft-mct')).toBeNull();
+    expect(SUPERSEDED_SEED_VALUES[QUARTERLY.id]).toBeDefined();
+    expect(currentSeedRevision(QUARTERLY.id)).toBe(3);
+    expect(currentSeedRevision(FOUR_TRACKS.id)).toBe(4);
+    expect(currentSeedRevision(NOMINATED.id)).toBe(3);
+    expect(currentSeedRevision(PARENT.id)).toBeNull();
     // Each program's history: ascending revisions from 2, each step a
     // non-empty record of the fields it replaced, every one a seed field.
     for (const [id, { revisions }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
@@ -115,7 +155,7 @@ describe('the published rules read on 2026-10-20', () => {
     }
   });
 
-  it('counts Docker Captain against its tracks: the audience figure, content, community, labs', () => {
+  it('counts the four-track seed against its tracks: the audience figure, content, community, labs', () => {
     const captain = byId('program-docker-captain');
     expect(captain.applicationUrl).toBe('https://app.advocu.com/dockercaptains/join');
     expect(captain.requirements.map(rule)).toEqual([
@@ -124,12 +164,13 @@ describe('the published rules read on 2026-10-20', () => {
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
-    expect(captain.requirements[0].description).toMatch(/5,000 or more monthly views/);
-    expect(captain.criteria).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^Docker Thought Leader: 5,000/),
-        expect.stringMatching(/^Sail the extra mile/),
-      ])
+    // The audience requirement's published wording, its figure included.
+    expect(digestOf(FOUR_TRACKS.requirements[0].description)).toBe(
+      'eed861fe58d4552ec4cc7b7cf1418ced9826cc71880fa4cd119e1676b5c334e7'
+    );
+    // The tracks and exceptions as published, every figure included, in order.
+    expect(digestOf(FOUR_TRACKS.criteria)).toBe(
+      '6f01ea3018f1b3f9c6d123d931eb4e42f749db708e95628403a100693853fe7f'
     );
     expect(captain.eligibility).toContain('18 or older; open internationally');
     expect(captain.expirationRule).toMatch(/^One-year term/);
@@ -140,80 +181,78 @@ describe('the published rules read on 2026-10-20', () => {
     });
   });
 
-  it('seeds Docker-Sponsored Open Source as a yearly sponsorship with two counted asks', () => {
-    const dsos = byId('program-docker-sponsored-oss');
-    expect(dsos).toMatchObject({
+  it('seeds the open-source sponsorship as a yearly sponsorship with two counted asks', () => {
+    const sponsorship = SPONSORSHIP;
+    expect(sponsorship).toMatchObject({
       provider: 'Docker',
       category: 'partner',
       applicationUrl: 'https://www.docker.com/community/open-source/application/',
       renewalCadence: 'annual',
     });
-    expect(dsos.requirements.map(rule)).toEqual([
+    expect(sponsorship.requirements.map(rule)).toEqual([
       ['images', 1, 3, ['labs', 'manual']],
       ['activity', 1, 2, ['manual']],
     ]);
-    expect(dsos.eligibility).toEqual(
+    expect(sponsorship.eligibility).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/Open Source Initiative definition/),
         expect.stringMatching(/updates within the past 6 months/),
         expect.stringMatching(/Accepting donations to sustain the effort is permissible/i),
       ])
     );
-    expect(dsos.description).toMatch(/paid Docker subscription and DSOS are mutually exclusive/);
+    // The description as published, the paid-subscription exclusion included.
+    expect(digestOf(sponsorship.description)).toBe(
+      '7a108192e7516c410cc78e48262e2e00c8ca9631c70c23ee480c17f9b69942ca'
+    );
   });
 
-  it('seeds HashiCorp Ambassador with the December window and its four contribution asks', () => {
-    const hashi = byId('program-hashicorp-ambassador');
-    expect(hashi).toMatchObject({
+  it('seeds the mentorship program with the December window and its four contribution asks', () => {
+    const mentorship = MENTORSHIP;
+    expect(mentorship).toMatchObject({
       provider: 'HashiCorp',
       applicationUrl: 'https://www.hashicorp.com/en/ambassador',
       renewalCadence: 'annual',
     });
-    expect(hashi.applicationWindow).toEqual({
+    expect(mentorship.applicationWindow).toEqual({
       opens: '2026-12-01',
       closes: '2027-01-05',
       note: expect.stringMatching(/^Submissions open annually 1 December to 5 January/),
     });
-    expect(hashi.requirements.map(rule)).toEqual([
+    expect(mentorship.requirements.map(rule)).toEqual([
       ['content', 3, 3, ['content', 'newsletter', 'listen-and-learn']],
       ['mentorship', 1, 2, ['manual', 'speaking', 'labs']],
       ['events', 1, 1, ['speaking']],
       ['feedback', 1, 1, ['manual']],
     ]);
-    expect(hashi.criteria).toEqual(
+    expect(mentorship.criteria).toEqual(
       expect.arrayContaining(['Knowledge sharing', 'Mentorship', 'Kindness'])
     );
-    expect(hashi.eligibility).toEqual(
+    expect(mentorship.eligibility).toEqual(
       expect.arrayContaining([expect.stringMatching(/preceding twelve months/)])
     );
   });
 
-  it('models Coder Champion as the chats and the people helped, counted apart, plus the star and the templates', () => {
-    const coder = byId('program-coder-champion');
-    expect(coder).toMatchObject({
+  it('models the chats program as the chats and the people helped, counted apart, plus the star and the templates', () => {
+    const chats = CHATS;
+    expect(chats).toMatchObject({
       provider: 'Coder',
       applicationUrl: 'https://coder.com/coder-champions',
       renewalCadence: 'annual',
       expirationRule: 'Year-long programme; quarterly activity audits after the first year.',
     });
-    expect(coder.requirements.map(rule)).toEqual([
+    expect(chats.requirements.map(rule)).toEqual([
       ['chats', 5, 2, ['manual']],
       ['help', 2, 3, ['manual']],
       ['star', 1, 1, ['manual']],
       ['templates', 1, 2, ['labs']],
     ]);
-    expect(coder.applicationWindow).toEqual({ opens: null, closes: null, note: 'Rolling; no cohort dates.' });
+    expect(chats.applicationWindow).toEqual({ opens: null, closes: null, note: 'Rolling; no cohort dates.' });
   });
 
-  it('words GitKraken as the published tiers, keeping the quarterly upkeep and its one counted rule', () => {
-    const gk = byId('program-gitkraken-ambassador');
-    expect(gk.criteria).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^Content Creator: 2\+ pieces of content per quarter/),
-        expect.stringMatching(/^Event Host: events for 30\+ developers/),
-        expect.stringMatching(/^Programme-wide: follow the brand guidelines, show the GitKraken logo/),
-      ])
-    );
+  it('words the quarterly seed as the published tiers, keeping the quarterly upkeep and its one counted rule', () => {
+    const gk = QUARTERLY;
+    // The published tiers and programme-wide asks, every figure included, in order.
+    expect(digestOf(gk.criteria)).toBe('fe2097e693b12e82b43db437c0166c434dab18cf767a8d39b67454a70be3542c');
     expect(gk.upkeep).toMatchObject({ period: 'quarter', minCount: 2, evidenceTypes: [] });
     expect(gk.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
     expect(gk.recommendedActivities).toEqual(
@@ -232,8 +271,8 @@ describe('the published rules read on 2026-10-20', () => {
         expect(JSON.stringify(seed[field]), `${id}.${field}`).not.toBe(JSON.stringify(old));
       }
     }
-    const [[, first], [, second]] = stepsOf('program-gitkraken-ambassador');
-    expect(stepsOf('program-gitkraken-ambassador').map(([r]) => r)).toEqual([2, 3]);
+    const [[, first], [, second]] = stepsOf(QUARTERLY.id);
+    expect(stepsOf(QUARTERLY.id).map(([r]) => r)).toEqual([2, 3]);
     // Revision 2 replaced #873's guess.
     expect(first.description).toMatch(/As published 2026; edit to match\.$/);
     expect(first.criteria).toEqual(['Content', 'Speaking', 'Supporting users']);
@@ -254,7 +293,7 @@ describe('the published rules read on 2026-10-20', () => {
     expect(second.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
 
     const [[captainRevision, captain], [captainLabsRevision, captainLabs], [captainBackRevision, captainBack]] =
-      stepsOf('program-docker-captain');
+      stepsOf(FOUR_TRACKS.id);
     expect(captainRevision).toBe(2);
     expect(captain.description).toBe(
       'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.'
@@ -275,7 +314,7 @@ describe('the published rules read on 2026-10-20', () => {
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
     expect(captainLabs.requirements.map((r) => [r.label, r.description])).toEqual(
-      byId('program-docker-captain').requirements.map((r) => [r.label, r.description])
+      FOUR_TRACKS.requirements.map((r) => [r.label, r.description])
     );
     // Revision 4 (#1313) put `manual` back on `labs` once the audience rows name
     // `reach`, and records the list it replaced: revision 3's, without it.
@@ -287,48 +326,47 @@ describe('the published rules read on 2026-10-20', () => {
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs']],
     ]);
-    expect(byId('program-docker-captain').requirements.map(rule)).toEqual([
+    expect(FOUR_TRACKS.requirements.map(rule)).toEqual([
       ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
 
-    // The MVP's revision 2 (#1302) added `manual` to `reach`, for the monthly audience rows.
-    const [[mvpRevision, mvp], [mvpQuestionsRevision, mvpQuestions]] =
-      stepsOf('program-microsoft-mvp');
+    // The nominated seed's revision 2 (#1302) added `manual` to `reach`, for the monthly audience rows.
+    const [[nominatedRevision, nominated], [questionsRevision, questions]] = stepsOf(NOMINATED.id);
     // Revision 3 (#1543) appended the nomination form and changed nothing else.
-    expect(mvpQuestionsRevision).toBe(3);
-    expect(Object.keys(mvpQuestions)).toEqual(['applicationQuestions']);
-    expect(mvpRevision).toBe(2);
-    expect(Object.keys(mvp)).toEqual(['requirements']);
-    expect(mvp.requirements.map(rule)).toEqual([
+    expect(questionsRevision).toBe(3);
+    expect(Object.keys(questions)).toEqual(['applicationQuestions']);
+    expect(nominatedRevision).toBe(2);
+    expect(Object.keys(nominated)).toEqual(['requirements']);
+    expect(nominated.requirements.map(rule)).toEqual([
       ['talks', 4, 3, ['speaking']],
       ['articles', 6, 3, ['content', 'newsletter']],
       ['depth', 1, 1, ['certifications', 'labs']],
       ['reach', 2, 1, ['listen-and-learn']],
     ]);
-    expect(byId('program-microsoft-mvp').requirements.map(rule)).toEqual([
+    expect(NOMINATED.requirements.map(rule)).toEqual([
       ['talks', 4, 3, ['speaking']],
       ['articles', 6, 3, ['content', 'newsletter']],
       ['depth', 1, 1, ['certifications', 'labs']],
       ['reach', 2, 1, ['listen-and-learn', 'manual']],
     ]);
 
-    const [[mieeRevision, miee]] = stepsOf('program-microsoft-elevate-educator-expert');
-    expect(mieeRevision).toBe(2);
-    expect(Object.keys(miee).sort()).toEqual(['applicationWindow', 'description', 'recommendedActivities']);
-    expect(miee.applicationWindow).toEqual({
+    const [[gridRevision, grid]] = stepsOf(GRID.id);
+    expect(gridRevision).toBe(2);
+    expect(Object.keys(grid).sort()).toEqual(['applicationWindow', 'description', 'recommendedActivities']);
+    expect(grid.applicationWindow).toEqual({
       opens: '2026-05-01',
       closes: '2026-07-31',
       note: 'Applications May to 31 July 2026; announcements September 2026.',
     });
-    expect(miee.description).toMatch(/opens in May 2026 and closes 31 July 2026/);
-    expect(miee.recommendedActivities).toContain('Apply before 31 July 2026');
+    expect(grid.description).toMatch(/opens in May 2026 and closes 31 July 2026/);
+    expect(grid.recommendedActivities).toContain('Apply before 31 July 2026');
     // The October 2026 window is open until 2026-10-31; it moves in November.
-    expect(SUPERSEDED_SEED_VALUES['program-microsoft-mct-regional-lead']).toBeUndefined();
-    const [[, builders]] = stepsOf('program-aws-community-builders');
-    expect(builders.applicationWindow.note).toMatch(/^Waitlist open now/);
+    expect(SUPERSEDED_SEED_VALUES[CHILD.id]).toBeUndefined();
+    const [[, waitlisted]] = stepsOf(WAITLISTED.id);
+    expect(waitlisted.applicationWindow.note).toMatch(/^Waitlist open now/);
   });
 
   it('brings a stored row still holding each replaced value up to the current seed, once', () => {
@@ -350,9 +388,9 @@ describe('the published rules read on 2026-10-20', () => {
 
   // CodeRabbit on #1304: a row that missed a revision is matched against the
   // values it actually holds, not only against the last step's.
-  it('corrects a GitKraken row from #873 that never saw revision 2, and a revision-2 row alike, and keeps an edit at either', () => {
-    const id = 'program-gitkraken-ambassador';
-    const seed = byId(id);
+  it('corrects a quarterly row from #873 that never saw revision 2, and a revision-2 row alike, and keeps an edit at either', () => {
+    const id = QUARTERLY.id;
+    const seed = QUARTERLY;
     const [[, guess], [, checkIn]] = stepsOf(id);
 
     // The first seed stored no revision; a row from #873 holds the guess.
@@ -389,19 +427,18 @@ describe('the published rules read on 2026-10-20', () => {
       }
       if (opens && closes) expect(opens <= closes, program.id).toBe(true);
     }
-    const miee = byId('program-microsoft-elevate-educator-expert');
-    expect(miee.applicationWindow).toMatchObject({ opens: '2027-05-01', closes: '2027-07-31' });
+    expect(GRID.applicationWindow).toMatchObject({ opens: '2027-05-01', closes: '2027-07-31' });
     // Rolled with the window, so the seed does not contradict itself.
-    expect(miee.description).toMatch(/open in May 2027 and close 31 July 2027/);
-    expect(miee.description).not.toMatch(/July 2026/);
-    expect(miee.recommendedActivities).toContain('Apply before 31 July 2027');
+    expect(GRID.description).toMatch(/open in May 2027 and close 31 July 2027/);
+    expect(GRID.description).not.toMatch(/July 2026/);
+    expect(GRID.recommendedActivities).toContain('Apply before 31 July 2027');
     // Open until 2026-10-31, so left as it is; it rolls to October 2027 in November.
-    expect(byId('program-microsoft-mct-regional-lead').applicationWindow).toEqual({
+    expect(CHILD.applicationWindow).toEqual({
       opens: '2026-10-01',
       closes: '2026-10-31',
       note: 'Nominations in September; application form in October; team announced 1 December.',
     });
-    expect(byId('program-aws-community-builders').applicationWindow).toEqual({
+    expect(WAITLISTED.applicationWindow).toEqual({
       opens: null,
       closes: null,
       note: 'Annual cycle; the 2026 applications closed 2026-01-21; the next cycle opens in January 2027 (waitlist on builder.aws.com)',
@@ -418,11 +455,18 @@ describe('the published rules read on 2026-10-20', () => {
 
 // #1543: the nomination form, filled in by the nominator, follows the
 // application the nominee completes. Revision 3 records the list before it.
-describe('the Microsoft MVP nomination form (#1543)', () => {
-  const MVP = 'program-microsoft-mvp';
-  const seed = byId(MVP);
-  const nomination = seed.applicationQuestions.filter((q) => q.id.startsWith('mvp-nom-'));
-  const [, [, before]] = stepsOf(MVP);
+describe('the nomination form (#1543)', () => {
+  const seed = NOMINATED;
+  const nominationPrefix = `${seed.applicationQuestions.at(-1).id.split('-nom-')[0]}-nom-`;
+  const nomination = seed.applicationQuestions.filter((q) => q.id.startsWith(nominationPrefix));
+  const [, [, before]] = stepsOf(seed.id);
+
+  it('keeps the nomination question ids, in order: answers are stored by questionId', () => {
+    expect(nomination).toHaveLength(11);
+    expect(digestOf(nomination.map((q) => q.id))).toBe(
+      '270fb10a3a4ee185549ef42b034e023eff942683f32b49c89b609595c1141eb4'
+    );
+  });
 
   it('appends the form after the application, with its labels, kinds and limits', () => {
     expect(seed.applicationQuestions.slice(-nomination.length)).toEqual(nomination);
@@ -453,7 +497,10 @@ describe('the Microsoft MVP nomination form (#1543)', () => {
       ],
     ]);
     // The process is explained where the section starts; every text area carries its advice.
-    expect(nomination[0].hint).toMatch(/full-time employee or a current MVP/);
+    // Who may nominate, as the program's own FAQ words it.
+    expect(digestOf(nomination[0].hint)).toBe(
+      '19ecb125a9e3aa98568964432a4b6768041b1a36de2ecaa5a18d676d671b3176'
+    );
     expect(nomination[0].hint).toMatch(/45 days/);
     for (const q of nomination.filter((n) => n.kind === 'text')) {
       expect(q.hint, q.id).toMatch(/80 to 90 words/);
@@ -467,7 +514,7 @@ describe('the Microsoft MVP nomination form (#1543)', () => {
     expect(Object.isFrozen(list)).toBe(true);
     expect(Object.isFrozen(list[0])).toBe(true);
     expect(list).toHaveLength(28);
-    expect(list.some((q) => q.id.startsWith('mvp-nom-'))).toBe(false);
+    expect(list.some((q) => q.id.startsWith(nominationPrefix))).toBe(false);
     expect(seed.applicationQuestions.slice(0, list.length)).toEqual(list);
     // The list as it was seeded before #1543. If this fails, an application
     // question changed: write the old list out literally in programs.js first.
@@ -475,7 +522,7 @@ describe('the Microsoft MVP nomination form (#1543)', () => {
     expect(digest).toBe('30b6d834a84ee24718162b209f08062c7bbcc92e7cdbb4e009fb2c09a66180a8');
   });
 
-  it('gives a stored MVP still holding the revision-2 questions the new list, once', () => {
+  it('gives a stored row still holding the revision-2 questions the new list, once', () => {
     const stored = {
       ...seed,
       applicationQuestions: before.applicationQuestions,
