@@ -174,6 +174,11 @@ register's reminder comes (every 180 days, on the
 because a scheduled roll would need a stored secret that can roll tokens,
 and that is the owner's decision
 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)).
+**Run it once at a time.** Two runs for the same target at once can each
+roll the token, and the slower write can then put the value the other run
+already retired back into the store; the script has no lock, because only
+the owner runs it, by hand. If a run stops part-way, read what it printed
+before starting another.
 Since [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)
 it knows both kinds of token:
 

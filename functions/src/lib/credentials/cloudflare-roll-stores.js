@@ -116,6 +116,8 @@ export async function checkLabVaultWritable({ execImpl } = {}) {
  * @param {string} [params.category='terraform'] 'terraform' or 'env'
  * @param {boolean} [params.sensitive=true] Sensitive flag
  * @param {string} [params.description] Optional description
+ * @param {boolean} [params.replaceOnly=false] Refuse to create the variable: a write after a
+ *   token roll replaces the value the preflight found, and never makes a new one (#1927)
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @returns {Promise<{ ok: boolean, action: 'updated'|'created', variableId: string, key: string, category: string, workspace: string }>}
  */
@@ -128,6 +130,7 @@ export async function updateTfcVariable({
   category = 'terraform',
   sensitive = true,
   description,
+  replaceOnly = false,
   fetchImpl = globalThis.fetch,
 }) {
   if (!tfcToken) throw new Error('HCP Terraform token is required');
@@ -147,6 +150,12 @@ export async function updateTfcVariable({
   const existing = variables.find(
     (v) => v.attributes?.key === key && v.attributes?.category === category
   );
+  if (!existing && replaceOnly) {
+    // The variable was there when the roll was checked and is gone now
+    // (deleted or renamed in between): creating one would leave whatever
+    // reads the real variable on the retired value, so stop instead.
+    throw new Error(`${where} no longer has the ${category} variable ${key}; the new value was not written`);
+  }
 
   const attributes = {
     key,
@@ -348,6 +357,7 @@ export const STORES = Object.freeze({
         value,
         sensitive: target.sensitive ?? true,
         description: target.description,
+        replaceOnly: true,
         fetchImpl,
       });
     },

@@ -1055,6 +1055,41 @@ describe('rollAndApplyCloudflareToken', () => {
     }
   });
 
+  it('never creates the variable after a roll, even when it disappeared after the check (#1927)', async () => {
+    const present = [{ id: 'var-1', attributes: { key: 'cloudflare_api_token', category: 'terraform' } }];
+    let listReads = 0;
+    const mockFetch = vi.fn(async (url, options = {}) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
+        };
+      }
+      if (url.endsWith('/workspaces/ws-azure/vars') && (options.method || 'GET') === 'GET') {
+        listReads += 1;
+        // The check sees the variable; every read after the roll does not.
+        return { ok: true, status: 200, json: async () => ({ data: listReads === 1 ? present : [] }) };
+      }
+      if (url.includes('/value')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, result: 'new-secret-value' }) };
+      }
+      throw new Error(`Unexpected call: ${options.method} ${url}`);
+    });
+    const error = await rollAndApplyCloudflareToken({
+      tokenId: 'tok-azure-1',
+      rollToken: 'operator-roll-token',
+      target: CLOUDFLARE_TARGETS.azure,
+      accountId: ACCOUNT_ID,
+      tfcToken: 'tfc-token-xyz',
+      fetchImpl: mockFetch,
+      sleep: async () => {},
+    }).catch((err) => err);
+    expect(error.message).toContain('no longer has the terraform variable cloudflare_api_token; the new value was not written');
+    expect(error.message).not.toContain('new-secret-value');
+    expect(mockFetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([]);
+  });
+
   it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
     const mockFetch = vi.fn();
     const calls = [];

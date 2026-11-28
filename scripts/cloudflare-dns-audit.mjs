@@ -96,6 +96,16 @@ export function withinApply(time, applyWindows) {
   return applyWindows.some((w) => t >= w.start - APPLY_LEAD_MS && t <= w.end + APPLY_TAIL_MS);
 }
 
+/**
+ * The HCP Terraform token by name, should the log ever carry it: only on an
+ * account-owned API token call, because the name is short and a user token,
+ * or an account event from another context, could carry the same one (#1927).
+ */
+function isNamedTerraformToken(change) {
+  if (change.actorType !== 'account' || change.actorContext !== 'api_token') return false;
+  return change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME;
+}
+
 /** The Caddy token, by the name the log would carry or by the address the token's IP filter pins it to. */
 function isCaddyToken(change, settings) {
   if (change.actorContext !== 'api_token') return false;
@@ -199,11 +209,7 @@ export const ALLOWLIST = [
       'an API token call is not this token (#1927).',
     active: (settings) => Array.isArray(settings.applyWindows),
     matches: (change, settings) =>
-      (change.actorType === 'account' &&
-        change.actorContext === 'api_token' &&
-        change.tokenName !== '' &&
-        change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
-      isWorkspaceApply(change, settings),
+      isNamedTerraformToken(change) || isWorkspaceApply(change, settings),
   },
   {
     id: 'terraform-owner-token',

@@ -534,7 +534,7 @@ describe('runRoll', () => {
       stderr: (line) => stderr.push(line),
     });
     expect(code).toBe(1);
-    expect(mockFetch.mock.calls.some(([url]) => url.includes('api.cloudflare.com'))).toBe(false);
+    expect(mockFetch.mock.calls.some(([url]) => url.startsWith('https://api.cloudflare.com/'))).toBe(false);
     expect(stderr.join('\n')).toContain('has no terraform variable cloudflare_api_token to replace');
   });
 
