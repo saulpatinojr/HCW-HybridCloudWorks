@@ -66,8 +66,8 @@ Some words used below, explained once:
    ([`proposal-cycle.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/developer-api/proposal-cycle.js));
    and an erasure request is honoured.
 2. **The cycle is the calendar year**, ending in December to match a
-   community program's yearly award cycle, with January as a grace month. The archive of year Y
-   is written on or after 1 February of year Y+1.
+   community program's yearly award cycle, with January as a grace month.
+   The archive of year Y is written on or after 1 February of year Y+1.
 3. **Storage is the Archive tier of the existing storage account**,
    `stsiteprodcus01`, in one new private container. The archive is **not**
    disaster recovery: no second subscription and no second region is asked
@@ -1230,6 +1230,7 @@ public text names no real community program outside the Ambassador Page's
 seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
 accepted before that rule. Decision 2 gave the reason the cycle is the
 calendar year by naming a community program's award cycle. On 2026-11-28 the
-owner asked for that wording to be changed ([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)): decision 2 now says "a
-community program's yearly award cycle". Nothing the record decides
-changed.
+owner asked for that wording to be changed
+([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)):
+decision 2 now says "a community program's yearly award cycle". Nothing the
+record decides changed.

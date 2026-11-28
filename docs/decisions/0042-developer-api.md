@@ -138,9 +138,10 @@ new container, setting or secret, and still no route that publishes.
   here until 2026-11-24; the next bullet is the decision.
 - **A proposal that was not accepted is stripped after its yearly cycle
   (owner decision, 2026-11-24).** The owner's words: "the yearly cycle ends
-  in December to match [a community program's award] cycle. If a proposal is
-  not accepted, strip it," and "keep the 'previous' year an extra month to complete
-  applications". As built:
+  in December to match [a community program's award] cycle. If a proposal
+  is not accepted, strip it," and "keep the 'previous' year an extra month
+  to complete applications" (the words in square brackets replace a name;
+  see the 2026-11-28 addendum at the end). As built:
   - *The cycle is the calendar year.* It ends on 31 December, and January is
     a month of grace, so a year's clean-up is due on 1 February of the next
     year. Dates are read in UTC, like every other time in the app.
@@ -323,7 +324,8 @@ public text names no real community program outside the Ambassador Page's
 seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
 accepted before that rule. The owner's words quoted for the yearly cycle
 named the community program whose award cycle the calendar year follows. On
-2026-11-28 the owner asked for that wording to be changed ([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)): the
-quotation now reads "[a community program's award] cycle", the square
-brackets marking the words that replace the name. Nothing the record decides
-changed.
+2026-11-28 the owner asked for that wording to be changed
+([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)):
+the quotation now reads "[a community program's award] cycle", the square
+brackets marking the words put in place of the name. Nothing the record
+decides changed.
