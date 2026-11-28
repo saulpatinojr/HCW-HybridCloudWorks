@@ -91,7 +91,7 @@ describe('repointCertification', () => {
   it('sets imageUrl and rewrites the legacy fields that named the old URL', () => {
     const doc = {
       id: 'c1',
-      name: 'MCT',
+      name: 'Example Certification',
       credentialImage: FIREBASE,
       image: [{ downloadURL: FIREBASE, name: 'badge-image.png' }],
     };

@@ -126,11 +126,11 @@ A file can open with a block between two `---` lines, as an Obsidian note does:
 
 ```markdown
 ---
-title: Cover letter for the MVP application
+title: Cover letter for the Example Program application
 category: Letter
 tags:
   - outreach
-  - mvp
+  - example
 link: https://example.com/role
 ---
 

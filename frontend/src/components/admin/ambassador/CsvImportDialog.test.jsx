@@ -10,8 +10,8 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 import CsvImportDialog from './CsvImportDialog';
 
-const source = { reader: 'mct-classes', label: 'MCT classes (CSV)', hint: 'The export.' };
-const programs = [{ id: 'p1', name: 'MCT' }];
+const source = { reader: 'example-classes', label: 'Example classes (CSV)', hint: 'The export.' };
+const programs = [{ id: 'p1', name: 'Example Program' }];
 const header = 'MTM Class ID,Course,Start Date\n';
 
 function renderDialog(props = {}) {
@@ -48,7 +48,7 @@ describe('CsvImportDialog size limit', () => {
     const onImport = renderDialog();
     const text = `${header}1,AZ-104,2026-01-02`;
     fireEvent.change(screen.getByLabelText('Or paste the CSV'), { target: { value: text } });
-    fireEvent.click(screen.getByLabelText('MCT'));
+    fireEvent.click(screen.getByLabelText('Example Program'));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /Import 1 row/ }));
     });

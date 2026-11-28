@@ -46,13 +46,13 @@ const alert = (over = {}) => ({
   ...over,
 });
 
-const docker = alert({
-  id: 'docker-dsos-application',
-  title: 'Submit the Docker-Sponsored Open Source application',
+const starter = alert({
+  id: 'example-program-application',
+  title: 'Submit the Example Program application',
   dueDate: '2026-10-30',
   daysUntilDue: 4,
-  link: 'https://www.docker.com/community/open-source/application/',
-  note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
+  link: 'https://www.example.com/program/application/',
+  note: 'Text is ready to paste in the Doc Vault note: Example Program application',
 });
 const domain = alert();
 const snoozed = alert({
@@ -114,7 +114,7 @@ beforeEach(() => {
   sendJSON.mockReset();
   toast.mockReset();
   downloadIcs.mockReset();
-  getJSON.mockResolvedValue(answer([docker, domain, snoozed, done]));
+  getJSON.mockResolvedValue(answer([starter, domain, snoozed, done]));
 });
 
 describe('the list', () => {
@@ -122,10 +122,7 @@ describe('the list', () => {
     renderPanel();
     await ready();
     expect(screen.getByRole('region', { name: 'Calendar alerts' })).toHaveAttribute('id', 'alerts');
-    expect(titles()).toEqual([
-      'Submit the Docker-Sponsored Open Source application',
-      'Renew the domain',
-    ]);
+    expect(titles()).toEqual(['Submit the Example Program application', 'Renew the domain']);
     expect(screen.getByText('Due in 4 days')).toBeInTheDocument();
     expect(screen.getByText(/Text is ready to paste in the Doc Vault note/)).toBeInTheDocument();
   });
@@ -144,17 +141,12 @@ describe('the list', () => {
   });
 
   it.each([
-    ['Due soon (1)', ['Submit the Docker-Sponsored Open Source application']],
+    ['Due soon (1)', ['Submit the Example Program application']],
     ['Snoozed (1)', ['Snoozed one']],
     ['Done (1)', ['Finished one']],
     [
       'All (4)',
-      [
-        'Finished one',
-        'Snoozed one',
-        'Submit the Docker-Sponsored Open Source application',
-        'Renew the domain',
-      ],
+      ['Finished one', 'Snoozed one', 'Submit the Example Program application', 'Renew the domain'],
     ],
   ])('the %s filter shows its alerts', async (name, expected) => {
     renderPanel();
@@ -190,7 +182,7 @@ describe('the list', () => {
   it("opens the alert's web link in a new tab, naming the site, and a portal page through the router", async () => {
     getJSON.mockResolvedValue(
       answer([
-        docker,
+        starter,
         alert({
           id: 'p',
           title: 'Check health',
@@ -202,12 +194,9 @@ describe('the list', () => {
     );
     renderPanel();
     const link = await screen.findByRole('link', {
-      name: /Open link \(docker\.com\) for “Submit the Docker/,
+      name: /Open link \(example\.com\) for “Submit the Example/,
     });
-    expect(link).toHaveAttribute(
-      'href',
-      'https://www.docker.com/community/open-source/application/'
-    );
+    expect(link).toHaveAttribute('href', 'https://www.example.com/program/application/');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     fireEvent.click(screen.getByRole('button', { name: 'Open page: “Check health”' }));
@@ -234,13 +223,13 @@ describe('the list', () => {
 describe('changing an alert', () => {
   it('marks it done, takes it off the open list and tells the page it changed', async () => {
     const onChanged = vi.fn();
-    sendJSON.mockResolvedValue({ ok: true, alert: { ...docker, status: 'done', state: 'done' } });
+    sendJSON.mockResolvedValue({ ok: true, alert: { ...starter, status: 'done', state: 'done' } });
     renderPanel({ onChanged });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Docker.*” done/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Example.*” done/ }));
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith(
-        'cms/calendar-alerts/docker-dsos-application',
+        'cms/calendar-alerts/example-program-application',
         'PATCH',
         {
           done: true,
@@ -298,14 +287,14 @@ describe('changing an alert', () => {
     sendJSON.mockRejectedValue(new Error('That alert no longer exists.'));
     renderPanel({ onChanged });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Docker.*” done/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Mark “Submit the Example.*” done/ }));
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast.mock.calls[0][0]).toMatchObject({
       title: 'That change was not saved',
       description: 'That alert no longer exists.',
       variant: 'destructive',
     });
-    expect(titles()).toContain('Submit the Docker-Sponsored Open Source application');
+    expect(titles()).toContain('Submit the Example Program application');
     expect(onChanged).not.toHaveBeenCalled();
   });
 });
@@ -449,9 +438,7 @@ describe('deleting', () => {
 
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete alert' }));
     await waitFor(() => expect(sendJSON).toHaveBeenCalledWith('cms/calendar-alerts/a1', 'DELETE'));
-    await waitFor(() =>
-      expect(titles()).toEqual(['Submit the Docker-Sponsored Open Source application'])
-    );
+    await waitFor(() => expect(titles()).toEqual(['Submit the Example Program application']));
     expect(toast).toHaveBeenCalledWith({ title: 'Alert deleted' });
   });
 
@@ -474,7 +461,7 @@ describe('the calendar download', () => {
     expect(downloadIcs).toHaveBeenCalledTimes(1);
     const [[text]] = downloadIcs.mock.calls;
     expect(text).toContain('BEGIN:VCALENDAR');
-    expect(text).toContain('UID:docker-dsos-application@');
+    expect(text).toContain('UID:example-program-application@');
     expect(text).toContain('UID:a1@');
     expect(text).not.toContain('UID:dn@');
   });

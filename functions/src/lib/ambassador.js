@@ -3,7 +3,7 @@
  * the Spotlight slice). One Cosmos container, `ambassador`, partitioned on
  * `/id`, with three document kinds told apart by `docType`:
  *
- *   program      a community program (Microsoft MVP, AWS Hero, …) with its
+ *   program      a community program (one per program the owner follows) with its
  *                requirements[]; seeded on first read, editable, disable-able
  *   application  one pursuit of one program, with a status machine, the
  *                responses, files, decision dates and a history of every

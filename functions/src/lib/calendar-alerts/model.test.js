@@ -40,6 +40,8 @@ const refused = (fn) => {
   throw new Error('expected a refusal');
 };
 
+const SEED_ID = SEED_ALERTS[0].id;
+
 describe('parseCreateBody', () => {
   it('takes a title and a day, with the rest empty', () => {
     expect(parseCreateBody(base)).toEqual({
@@ -114,7 +116,7 @@ describe('parseCreateBody', () => {
   describe('link', () => {
     it('accepts an https address and a page inside /admin', () => {
       for (const link of [
-        'https://www.docker.com/community/open-source/application/',
+        'https://www.example.com/program/application/',
         'https://example.com',
         '/admin',
         '/admin/calendar',
@@ -405,7 +407,7 @@ describe('isStoredAlert, isAlertId and readState', () => {
   });
 
   it('accepts letters, digits, - and _ up to 64 characters as an id', () => {
-    expect(isAlertId('docker-dsos_1')).toBe(true);
+    expect(isAlertId('example-alert_1')).toBe(true);
     expect(isAlertId('a'.repeat(64))).toBe(true);
     expect(isAlertId('a'.repeat(65))).toBe(false);
     for (const id of ['', 'a/b', 'a b', '../x', undefined, 7]) expect(isAlertId(id)).toBe(false);
@@ -435,7 +437,8 @@ describe('compareAlerts', () => {
 });
 
 describe('the seed alert', () => {
-  it('is the Docker-Sponsored Open Source application, due 30 October 2026, and nothing else', () => {
+  // The one seed's values are product data (model.js), pinned here on purpose.
+  it('is the one starting alert, due 30 October 2026, and nothing else', () => {
     expect(SEED_ALERTS).toHaveLength(1);
     expect(SEED_ALERTS[0]).toEqual({
       id: 'docker-dsos-application',
@@ -445,7 +448,7 @@ describe('the seed alert', () => {
       link: 'https://www.docker.com/community/open-source/application/',
       note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
     });
-    expect(isSeedId('docker-dsos-application')).toBe(true);
+    expect(isSeedId(SEED_ID)).toBe(true);
     expect(isSeedId('anything-else')).toBe(false);
   });
 
@@ -458,10 +461,10 @@ describe('the seed alert', () => {
   it('is created once, as an open alert', () => {
     const { state, changed } = applySeeds({ alerts: [], seeded: [] }, { at: AT });
     expect(changed).toBe(true);
-    expect(state.seeded).toEqual(['docker-dsos-application']);
+    expect(state.seeded).toEqual([SEED_ID]);
     expect(state.alerts).toHaveLength(1);
     expect(state.alerts[0]).toMatchObject({
-      id: 'docker-dsos-application',
+      id: SEED_ID,
       status: 'open',
       createdAt: AT,
     });
@@ -477,9 +480,9 @@ describe('the seed alert', () => {
 
   it('does not make a seed again after it was deleted', () => {
     const first = applySeeds({ alerts: [], seeded: [] }, { at: AT });
-    const deleted = withoutAlert(first.state, 'docker-dsos-application');
+    const deleted = withoutAlert(first.state, SEED_ID);
     expect(deleted.alerts).toEqual([]);
-    expect(deleted.seeded).toEqual(['docker-dsos-application']);
+    expect(deleted.seeded).toEqual([SEED_ID]);
     const again = applySeeds(deleted, { at: AT });
     expect(again.changed).toBe(false);
     expect(again.state.alerts).toEqual([]);
@@ -490,13 +493,13 @@ describe('the seed alert', () => {
     const { state, changed } = applySeeds({ alerts: [existing], seeded: [] }, { at: AT });
     expect(changed).toBe(true);
     expect(state.alerts).toEqual([existing]);
-    expect(state.seeded).toEqual(['docker-dsos-application']);
+    expect(state.seeded).toEqual([SEED_ID]);
   });
 
   it('leaves the owner\'s other alerts alone', () => {
     const mine = newAlert(parseCreateBody(base), { id: 'mine', at: AT });
     const { state } = applySeeds({ alerts: [mine], seeded: [] }, { at: AT });
-    expect(state.alerts.map((row) => row.id)).toEqual(['mine', 'docker-dsos-application']);
+    expect(state.alerts.map((row) => row.id)).toEqual(['mine', SEED_ID]);
   });
 });
 
@@ -515,7 +518,7 @@ describe('withoutAlert', () => {
 
   it('does not record a seed twice', () => {
     expect(
-      withoutAlert({ alerts: [], seeded: ['docker-dsos-application'] }, 'docker-dsos-application').seeded
-    ).toEqual(['docker-dsos-application']);
+      withoutAlert({ alerts: [], seeded: [SEED_ID] }, SEED_ID).seeded
+    ).toEqual([SEED_ID]);
   });
 });

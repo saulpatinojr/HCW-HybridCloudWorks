@@ -20,8 +20,8 @@ import {
 
 const evidence = [
   { id: 'talk', sourceModule: 'speaking', date: '2026-08-14', programIds: [] },
-  { id: 'cert', sourceModule: 'certifications', date: '2025-01-02', programIds: ['mvp'] },
-  { id: 'post', sourceModule: 'content', verificationStatus: 'verified', programIds: ['hero'] },
+  { id: 'cert', sourceModule: 'certifications', date: '2025-01-02', programIds: ['beta'] },
+  { id: 'post', sourceModule: 'content', verificationStatus: 'verified', programIds: ['alpha'] },
 ];
 
 describe('filterEvidence', () => {
@@ -39,10 +39,10 @@ describe('filterEvidence', () => {
       filterEvidence(evidence, { ...EMPTY_EVIDENCE_FILTERS, ...patch }).map((e) => e.id);
     expect(by({ source: 'speaking' })).toEqual(['talk']);
     // Evidence naming no program counts for every program.
-    expect(by({ program: 'mvp' })).toEqual(['talk', 'cert']);
+    expect(by({ program: 'beta' })).toEqual(['talk', 'cert']);
     expect(by({ year: '2025' })).toEqual(['cert']);
     expect(by({ verification: 'unverified' })).toEqual(['talk', 'cert']);
-    expect(by({ verification: 'verified', program: 'hero' })).toEqual(['post']);
+    expect(by({ verification: 'verified', program: 'alpha' })).toEqual(['post']);
     expect(anyFilterSet({ ...EMPTY_EVIDENCE_FILTERS, year: '2025' })).toBe(true);
   });
 });
@@ -56,14 +56,14 @@ describe('yearsOf', () => {
 
 describe('groupEvidence', () => {
   const byId = new Map([
-    ['mvp', { id: 'mvp', name: 'Microsoft MVP' }],
-    ['hero', { id: 'hero', name: 'AWS Hero' }],
+    ['beta', { id: 'beta', name: 'Beta Program' }],
+    ['alpha', { id: 'alpha', name: 'Alpha Program' }],
   ]);
   const both = {
     id: 'both',
     sourceModule: 'manual',
     date: '2026-01-01',
-    programIds: ['mvp', 'hero'],
+    programIds: ['beta', 'alpha'],
   };
   const shape = (groups) => groups.map((g) => [g.label, g.items.map((e) => e.id)]);
 
@@ -83,8 +83,8 @@ describe('groupEvidence', () => {
     ]);
     expect(shape(groupEvidence([...evidence, both], 'program', { byId }))).toEqual([
       ['Every program', ['talk']],
-      ['AWS Hero', ['post', 'both']],
-      ['Microsoft MVP', ['cert', 'both']],
+      ['Alpha Program', ['post', 'both']],
+      ['Beta Program', ['cert', 'both']],
     ]);
   });
 

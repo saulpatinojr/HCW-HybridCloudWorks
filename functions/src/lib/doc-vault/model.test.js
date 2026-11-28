@@ -44,7 +44,7 @@ import {
 const FIELDS = Object.freeze({
   title: 'Cover letter template',
   category: 'Template',
-  tags: ['outreach', 'mvp'],
+  tags: ['outreach', 'program'],
   body: 'Dear team,\n\nI would like to…',
   relatedLink: 'https://example.com/role',
 });
@@ -190,7 +190,7 @@ describe('validateFields', () => {
     const fields = validateFields({
       title: '  Cover   letter  template ',
       category: 'template',
-      tags: 'outreach, mvp',
+      tags: 'outreach, program',
       body: 'Line one\r\nLine two',
       relatedLink: ' https://example.com/role ',
     });
@@ -198,7 +198,7 @@ describe('validateFields', () => {
     expect(fields).toEqual({
       title: 'Cover letter template',
       category: 'Template',
-      tags: ['outreach', 'mvp'],
+      tags: ['outreach', 'program'],
       body: 'Line one\nLine two',
       relatedLink: 'https://example.com/role',
     });
@@ -328,7 +328,7 @@ describe('the stored shapes', () => {
       docType: DOC_TYPES.document,
       title: FIELDS.title,
       category: 'Template',
-      tags: ['outreach', 'mvp'],
+      tags: ['outreach', 'program'],
       body: FIELDS.body,
       bodyBytes: Buffer.byteLength(FIELDS.body, 'utf8'),
       source: 'pasted',
@@ -387,7 +387,7 @@ describe('the stored shapes', () => {
       version: 4,
       title: FIELDS.title,
       category: 'Template',
-      tags: ['outreach', 'mvp'],
+      tags: ['outreach', 'program'],
       body: FIELDS.body,
       bodyBytes: Buffer.byteLength(FIELDS.body, 'utf8'),
       source: 'pasted',
@@ -415,7 +415,7 @@ describe('the stored shapes', () => {
     const archived = buildArchivedVersion(created);
     expect(toVersionSummary(archived)).not.toHaveProperty('body');
     expect(toVersionSummary(archived)).toMatchObject({ version: 1, savedAt: NOW.toISOString() });
-    expect(toVersionView(archived)).toMatchObject({ body: FIELDS.body, tags: ['outreach', 'mvp'] });
+    expect(toVersionView(archived)).toMatchObject({ body: FIELDS.body, tags: ['outreach', 'program'] });
   });
 });
 

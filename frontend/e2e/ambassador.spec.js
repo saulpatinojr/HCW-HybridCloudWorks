@@ -14,7 +14,11 @@ test('public footer keeps site links without an ambassador credit', async ({ pag
   );
 });
 
-test('ambassador programme cards and GitKraken details fit desktop and mobile', async ({
+// The catalogue's quarterly program: the one seed with an upkeep rule, read
+// from the seed rather than named here.
+const QUARTERLY = DEFAULT_PROGRAMS.find((program) => program.upkeep?.period === 'quarter');
+
+test('ambassador programme cards and a quarterly program’s details fit desktop and mobile', async ({
   page,
   identity,
 }, testInfo) => {
@@ -22,15 +26,15 @@ test('ambassador programme cards and GitKraken details fit desktop and mobile', 
     ...program,
     enabled: true,
     order: index + 1,
-    membershipStatus: program.provider === 'GitKraken' ? 'active' : 'none',
+    membershipStatus: program.id === QUARTERLY.id ? 'active' : 'none',
   }));
   identity.answerApi('cms/calendar-alerts', { alerts: [], today: '2026-10-27' });
   identity.answerApi('cms/ambassador/programs', { items: programs });
   identity.answerApi('cms/ambassador/applications', { items: [] });
   identity.answerApi('cms/ambassador/evidence', { items: [] });
-  identity.answerApi('cms/ambassador/readiness/program-gitkraken-ambassador', {
+  identity.answerApi(`cms/ambassador/readiness/${QUARTERLY.id}`, {
     readiness: {
-      programId: 'program-gitkraken-ambassador',
+      programId: QUARTERLY.id,
       score: 0,
       requirements: [],
       missing: [],
@@ -42,13 +46,11 @@ test('ambassador programme cards and GitKraken details fit desktop and mobile', 
   const cards = page.getByTestId('program-card');
   await expect(cards.first()).toBeVisible();
   expect(await cards.count()).toBeGreaterThan(10);
-  const card = cards.filter({ hasText: 'GitKraken Ambassador' });
+  const card = cards.filter({ hasText: QUARTERLY.name });
   await expect(card.getByTestId('program-upkeep')).toContainText('0 of 2 filed here');
   await card.getByRole('button', { name: 'Details', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await expect(
-    dialog.getByRole('heading', { name: 'GitKraken Ambassador', exact: true })
-  ).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: QUARTERLY.name, exact: true })).toBeVisible();
   await expect(dialog.getByTestId('program-upkeep-details')).toContainText(
     'At least 2 every quarter'
   );
@@ -59,7 +61,7 @@ test('ambassador programme cards and GitKraken details fit desktop and mobile', 
       return bounds.x >= 0 && bounds.x + bounds.width <= page.viewportSize().width;
     })
     .toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('gitkraken-details.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('quarterly-details.png'), fullPage: true });
   await dialog.getByRole('button', { name: 'Close', exact: true }).first().click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true

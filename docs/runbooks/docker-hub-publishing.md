@@ -61,7 +61,7 @@ templates that run `hcw-lab`.
 | An OIDC connection is created in Docker Home: select the organisation, then **Identity & auth**, then **OIDC connections**, then **Create OIDC connection**. Rulesets and subject claims are required, and "Other values are optional". The connection ID is copied after **Create connection**. | VERIFIED: [Create and manage OIDC connections](https://docs.docker.com/security/authentication/oidc-connections/create-manage/) |
 | Only organisation owners and editors can create one. | VERIFIED: same page, "Organization owners and editors create and manage OIDC connections"; [core roles](https://docs.docker.com/security/roles-and-permissions/core-roles/) lists "Manage OIDC connections" for editor and owner, not member |
 | GitHub is the only supported issuer. | VERIFIED: same page, "OIDC connections support only GitHub as a trusted third party." |
-| The feature needs a Docker Team, Business or Hardened Images subscription, or the Docker-Sponsored Open Source programme. | VERIFIED: [Docker's announcement, 2026-07-31](https://www.docker.com/blog/docker-oidc-connections-for-github-actions-available-for-docker-orgs/); the docs' summary bar reads `subscription: [Team, Business]`. **Whether `hybridcloudworks` qualifies is NOT VERIFIED**: its plan is visible only when signed in. See "Before you start" |
+| The feature needs a Docker Team, Business or Hardened Images subscription, or Docker's open-source programme. | VERIFIED: [Docker's announcement, 2026-07-31](https://www.docker.com/blog/docker-oidc-connections-for-github-actions-available-for-docker-orgs/); the docs' summary bar reads `subscription: [Team, Business]`. **Whether `hybridcloudworks` qualifies is NOT VERIFIED**: its plan is visible only when signed in. See "Before you start" |
 | A ruleset has a label, rules (subject claim strings), resources (Docker Hub repositories or Docker Build Cloud) and scopes ("such as read or write access"). There can be 1 to 5 rulesets, and when several match, their resources are merged. | VERIFIED: [Rulesets and subject claims](https://docs.docker.com/security/authentication/oidc-connections/rulesets-claims/) |
 | Rules match the `sub` claim. `*` is a wildcard. | VERIFIED: same page |
 | The exact on-screen labels for resources and scopes. | NOT VERIFIED: the form is behind sign-in, and Docker's pages describe the fields without naming the controls |
@@ -77,8 +77,8 @@ templates that run `hcw-lab`.
 
 - **You are an owner or editor of `hybridcloudworks` on Docker.**
 - **The organisation's subscription allows OIDC connections.** Team,
-  Business, Hardened Images, or acceptance into Docker-Sponsored Open Source
-  (#678). If step 1 shows an upgrade prompt instead of the form, or refuses
+  Business, Hardened Images, or acceptance into Docker's open-source
+  programme (#678). If step 1 shows an upgrade prompt instead of the form, or refuses
   **Create connection**, stop there. Nothing in the repository needs
   changing: the publish job stays skipped until `DOCKERHUB_ENABLED` is
   set, and nothing is published anywhere.

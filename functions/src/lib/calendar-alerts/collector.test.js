@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { COLLECTORS, createCalendarHandlers } from '../calendar.js';
 import { createScheduledPublisher } from '../scheduled-publish.js';
 import { ALERTS_HREF, collectAlerts } from './collector.js';
-import { CALENDAR_ALERTS_DOC_ID } from './model.js';
+import { CALENDAR_ALERTS_DOC_ID, SEED_ALERTS } from './model.js';
 
 const FROM = new Date('2026-10-01T00:00:00.000Z');
 const TO = new Date('2026-11-01T00:00:00.000Z');
@@ -131,7 +131,7 @@ describe('collectAlerts', () => {
   });
 
   describe('the starting alert, before the alerts list has made it', () => {
-    const SEED = 'docker-dsos-application';
+    const SEED = SEED_ALERTS[0].id;
 
     it('shows it from a missing document, so the grid agrees with the panel on the first visit', async () => {
       const store = { readDoc: vi.fn(async () => null) };
@@ -140,7 +140,7 @@ describe('collectAlerts', () => {
         expect.objectContaining({
           id: 'alert:' + SEED,
           kind: 'alert',
-          title: 'Submit the Docker-Sponsored Open Source application',
+          title: SEED_ALERTS[0].title,
           start: '2026-10-30T00:00:00.000Z',
           allDay: true,
           status: 'open',

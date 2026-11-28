@@ -15,7 +15,7 @@ import GuidedResponses from './GuidedResponses';
 const questions = [
   { id: 'name', section: 'Profile', prompt: 'First name', kind: 'profile' },
   { id: 'why', section: 'Questions', prompt: 'Why?', kind: 'text', maxChars: 20 },
-  { id: 'mct', section: 'Questions', prompt: 'Are you an MCT?', kind: 'yesno' },
+  { id: 'member', section: 'Questions', prompt: 'Are you a member?', kind: 'yesno' },
   { id: 'cat', section: 'Questions', prompt: 'Category', kind: 'choice', options: ['A', 'B'] },
   { id: 'site', section: 'Questions', prompt: 'Website', kind: 'url' },
   {
@@ -50,7 +50,7 @@ function Harness({ initial = [], onChange = () => {}, attached = evidence }) {
       questions={questions}
       responses={responses}
       evidence={attached}
-      title="MVP 2026"
+      title="Example Program 2026"
       onChange={(next) => {
         setResponses(next);
         onChange(next);
@@ -90,7 +90,7 @@ describe('GuidedResponses', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Yes' }));
     expect(onChange).toHaveBeenLastCalledWith([
       { questionId: 'why', text: 'Because' },
-      { questionId: 'mct', text: 'Yes' },
+      { questionId: 'member', text: 'Yes' },
     ]);
 
     fireEvent.change(screen.getByLabelText('Teams'), { target: { value: 'Daily' } });
@@ -99,7 +99,7 @@ describe('GuidedResponses', () => {
     );
     // Clearing an answer removes its entry rather than leaving an empty one.
     fireEvent.change(screen.getByLabelText('Why?'), { target: { value: '' } });
-    expect(onChange.mock.calls.at(-1)[0].map((r) => r.questionId)).toEqual(['mct', 'grid']);
+    expect(onChange.mock.calls.at(-1)[0].map((r) => r.questionId)).toEqual(['member', 'grid']);
     expect(screen.getByText('2 of 9 answered', { exact: false })).toBeInTheDocument();
   });
 
@@ -193,9 +193,9 @@ describe('GuidedResponses', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Copy all answers' }));
     });
     const [packet] = writeText.mock.calls.at(-1);
-    expect(packet.startsWith('MVP 2026\n\n## Profile\n\nFirst name\nSam\n\n## Questions\n')).toBe(
-      true
-    );
+    expect(
+      packet.startsWith('Example Program 2026\n\n## Profile\n\nFirst name\nSam\n\n## Questions\n')
+    ).toBe(true);
     expect(packet).toContain('Why?\n(not answered)');
     expect(screen.getByRole('button', { name: 'Copy all answers' })).toHaveTextContent('Copied');
   });

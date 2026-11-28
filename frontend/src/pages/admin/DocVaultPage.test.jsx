@@ -39,7 +39,7 @@ function makeDoc(over = {}) {
     id: 'doc-1',
     title: 'Cover letter',
     category: 'Letter',
-    tags: ['outreach', 'mvp'],
+    tags: ['outreach', 'program'],
     source: 'pasted',
     relatedLink: 'https://example.com/role',
     version: 3,
@@ -80,13 +80,13 @@ const VERSIONS = [
 
 const PEOPLE = makeDoc({
   id: 'doc-2',
-  title: 'MVP application',
+  title: 'Example Program application',
   category: 'Application',
-  tags: ['mvp'],
+  tags: ['program'],
   relatedLink: null,
   version: 1,
   bodyBytes: 12,
-  body: 'Why I should be an MVP.',
+  body: 'Why I should join Example Program.',
   updatedAt: '2026-10-22T09:00:00.000Z',
   etag: '"e2"',
 });
@@ -258,13 +258,13 @@ describe('filter and search', () => {
     fireEvent.change(category, { target: { value: 'Application' } });
     const items = within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('button');
     expect(items).toHaveLength(1);
-    expect(items[0].textContent).toMatch(/MVP application/);
+    expect(items[0].textContent).toMatch(/Example Program application/);
   });
 
   it('narrows the list by tag', async () => {
     renderPage();
     await list();
-    fireEvent.change(screen.getByLabelText('Filter by tag'), { target: { value: 'mvp' } });
+    fireEvent.change(screen.getByLabelText('Filter by tag'), { target: { value: 'program' } });
     expect(
       within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('button')
     ).toHaveLength(2);
@@ -702,7 +702,7 @@ describe('edit', () => {
       fields: {
         title: 'Cover letter',
         category: 'Letter',
-        tags: ['outreach', 'mvp'],
+        tags: ['outreach', 'program'],
         body: 'Edited text',
         relatedLink: 'https://example.com/role',
       },

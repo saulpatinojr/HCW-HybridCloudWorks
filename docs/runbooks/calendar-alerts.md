@@ -4,8 +4,8 @@
 > 2026-10-26: "Calendar Alerts when I log into the Admin portal", then, the same
 > day: "we already have a calendar in the admin portal so maybe we can build off
 > of that". So alerts are a part of the admin **Calendar** page, not a page of
-> their own. The first alert, the Docker-Sponsored Open Source application due
-> on 2026-10-30
+> their own. The first alert, a community program application due on
+> 2026-10-30
 > ([#678](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/678)), is
 > created by the portal itself, so nobody has to type it.
 
@@ -54,7 +54,7 @@ Everything is on the Calendar page,
      back on its own when the day arrives.
    - **Open link** (or **Open page** for a page in the portal): go to the place
      the alert points at. The button names the site, for example
-     "Open link (docker.com)".
+     "Open link (example.com)".
 4. **All alerts** opens the Calendar page at the alerts panel. **Close for
    today** (or the **Esc** key) closes the window and changes nothing.
 
@@ -97,16 +97,16 @@ change in either place shows in the other.
 An alert is never scheduled, published or posted: the calendar's reschedule,
 unschedule, share and cancel actions are not offered for it.
 
-## The first alert (the Docker application)
+## The first alert
 
 The portal makes one alert for you, once:
 
 | Field | Value |
 |---|---|
-| Title | Submit the Docker-Sponsored Open Source application |
+| Title | The application it reminds you to submit (the `title` of the first entry in `SEED_ALERTS`, [`functions/src/lib/calendar-alerts/model.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/calendar-alerts/model.js)) |
 | Due | 2026-10-30 |
-| Link | <https://www.docker.com/community/open-source/application/> |
-| Note | Text is ready to paste in the Doc Vault note: Docker DSOS application |
+| Link | The program's application page, on the vendor's site |
+| Note | Which Doc Vault note holds the text ready to paste |
 
 **How it gets there.** The first time an editor or above opens the admin portal
 after the deploy, the portal asks the server for the alert list, and the server
@@ -124,7 +124,7 @@ Reading the list a second time changes nothing.
 
 1. Sign in at [`/admin`](https://hybridcloudworks.com/admin) with an editor,
    publisher or super admin account.
-2. You should see the **Calendar alerts** window with the Docker application at
+2. You should see the **Calendar alerts** window with the first alert at
    the top. If you opened the portal earlier today on this browser, the window
    stays closed (once per day), so go to step 3.
 3. Open [`/admin/calendar`](https://hybridcloudworks.com/admin/calendar),
@@ -231,7 +231,7 @@ read.
 | "The alerts changed while this was being saved" | Two tabs saved at once and five tries all lost | Reload the page and make the change again. Nothing was lost. |
 | "There are already 300 alerts" or "too large to save any more" | The list is full | Delete finished alerts (**Done** filter), then add again. |
 | The pop-up did not open | It had already opened today or in this session, or nothing is open and due within 7 days | Open the Calendar. This is by design. |
-| The Docker alert is missing | The list has not been read since the deploy; or it was deleted or finished; or the first list read could not save it (the function app's log then has the line "Calendar alerts: creating the starting alerts failed; reading the list as it stands", with an error code and no alert text) | Open the Calendar page and press **All** in the panel. A deleted one is not made again; add it by hand. If the log line is there, fix the store problem it names (see the "could not be loaded" row), then reload the Calendar: the next list read saves it. |
+| The first alert is missing | The list has not been read since the deploy; or it was deleted or finished; or the first list read could not save it (the function app's log then has the line "Calendar alerts: creating the starting alerts failed; reading the list as it stands", with an error code and no alert text) | Open the Calendar page and press **All** in the panel. A deleted one is not made again; add it by hand. If the log line is there, fix the store problem it names (see the "could not be loaded" row), then reload the Calendar: the next list read saves it. |
 
 ## Rollback
 

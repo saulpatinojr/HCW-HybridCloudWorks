@@ -8,12 +8,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { CALENDAR_ALERTS_DOC_ID } from './model.js';
+import { CALENDAR_ALERTS_DOC_ID, SEED_ALERTS } from './model.js';
 import { createCalendarAlertHandlers, AUDIT_ACTIONS, CALENDAR_ALERTS_ROLE } from './handlers.js';
 import { WRITE_ATTEMPTS } from './store.js';
 
 const NOW = new Date('2026-10-26T09:00:00.000Z');
-const SEED_ID = 'docker-dsos-application';
+const SEED_ID = SEED_ALERTS[0].id;
 const SECRET_TITLE = 'PRIVATE-TITLE-7f3a';
 const SECRET_NOTE = 'PRIVATE-NOTE-91bc';
 const SECRET_LINK = 'https://example.com/PRIVATE-LINK-44de';
@@ -124,7 +124,7 @@ describe('who may call the routes', () => {
 });
 
 describe('GET: the list and the starting alert', () => {
-  it('makes the Docker application alert on the first read and lists it', async () => {
+  it('makes the starting alert on the first read and lists it', async () => {
     const { handlers, store, context } = setup();
     const response = await handlers.list(makeRequest(), context);
     expect(response.status).toBe(200);
@@ -132,12 +132,8 @@ describe('GET: the list and the starting alert', () => {
     const body = parse(response);
     expect(body).toMatchObject({ ok: true, today: '2026-10-26', total: 1 });
     expect(body.alerts[0]).toMatchObject({
-      id: SEED_ID,
-      title: 'Submit the Docker-Sponsored Open Source application',
+      ...SEED_ALERTS[0],
       dueDate: '2026-10-30',
-      dueTime: null,
-      link: 'https://www.docker.com/community/open-source/application/',
-      note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
       status: 'open',
       state: 'open',
       daysUntilDue: 4,

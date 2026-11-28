@@ -40,9 +40,9 @@ vi.mock('react-router', () => ({
 
 const PROGRAMS = [
   {
-    id: 'program-mvp',
+    id: 'program-first',
     docType: 'program',
-    name: 'Microsoft MVP',
+    name: 'First Program',
     provider: 'Microsoft',
     category: 'community-expert',
     description: 'Community leadership.',
@@ -65,37 +65,37 @@ const PROGRAMS = [
     reminders: { daysBeforeDeadline: 14, daysBeforeRenewal: 30 },
   },
   {
-    id: 'program-star',
+    id: 'program-another',
     docType: 'program',
-    name: 'GitHub Star',
+    name: 'Another Program',
     provider: 'GitHub',
     category: 'community-expert',
-    description: 'Stars.',
+    description: 'Another.',
     enabled: false,
     order: 2,
     applicationWindow: { opens: null, closes: null, note: '' },
     requirements: [],
   },
-  // Additional to the MVP: shown, and startable, only while the MVP
-  // membership is Active (owner request 2026-10-05).
+  // Additional to the first program: shown, and startable, only while the
+  // first program's membership is Active (owner request 2026-10-05).
   {
     id: 'program-lead',
     docType: 'program',
-    name: 'MVP Regional Lead',
+    name: 'Leadership Role',
     provider: 'Microsoft',
     category: 'community-expert',
     description: 'Leads the region.',
     enabled: true,
     order: 3,
-    parentProgramId: 'program-mvp',
+    parentProgramId: 'program-first',
     applicationWindow: { opens: null, closes: null, note: '' },
     requirements: [],
   },
 ];
 
-/** The catalogue with the MVP membership Active, which opens the program additional to it. */
-const PROGRAMS_MVP_ACTIVE = PROGRAMS.map((p) =>
-  p.id === 'program-mvp' ? { ...p, membershipStatus: 'active' } : p
+/** The catalogue with the first program's membership Active, which opens the program additional to it. */
+const PROGRAMS_FIRST_ACTIVE = PROGRAMS.map((p) =>
+  p.id === 'program-first' ? { ...p, membershipStatus: 'active' } : p
 );
 
 const inDays = (n) => {
@@ -109,8 +109,8 @@ const APPLICATIONS = [
   {
     id: 'application-1',
     docType: 'application',
-    programId: 'program-mvp',
-    title: 'Microsoft MVP 2026',
+    programId: 'program-first',
+    title: 'First Program 2026',
     status: 'preparing',
     submissionDeadline: inDays(60),
     evidenceIds: [],
@@ -145,7 +145,7 @@ const EVIDENCE = [
 ];
 
 const READINESS = {
-  programId: 'program-mvp',
+  programId: 'program-first',
   score: 0,
   explanation:
     'Score is the weight of met requirements (0) over the total weight (3), as a percentage. Acceptance is decided by the program.',
@@ -171,7 +171,7 @@ const routes =
       'cms/ambassador/programs': { items: PROGRAMS },
       'cms/ambassador/applications': { items: APPLICATIONS },
       'cms/ambassador/evidence': { items: EVIDENCE },
-      'cms/ambassador/readiness/program-mvp': { readiness: READINESS },
+      'cms/ambassador/readiness/program-first': { readiness: READINESS },
       // The Pipeline pieces a program started (#1886): none unless a test says so.
       'cms/content': { success: true, items: [] },
       'cms/ambassador/evidence/sources/speaking': {
@@ -237,7 +237,7 @@ describe('Dashboard', () => {
     expect(overview.getByText('Programs').nextSibling.textContent).toBe('1');
     expect(overview.getByText('Pursued').nextSibling.textContent).toBe('1');
     expect(await panel().findByText(/1 more speaking engagements needed/)).toBeInTheDocument();
-    expect(getJSON).toHaveBeenCalledWith('cms/ambassador/readiness/program-mvp');
+    expect(getJSON).toHaveBeenCalledWith('cms/ambassador/readiness/program-first');
     expect(panel().getByText(/submission deadline/)).toBeInTheDocument();
   });
 });
@@ -247,19 +247,20 @@ describe('Programs', () => {
     searchParams = 'tab=programs';
     render(<AmbassadorPage />);
     const cards = await panel().findAllByTestId('program-card');
-    // The program additional to the MVP is not a card while the MVP membership is not Active.
+    // The program additional to the first program is not a card while that
+    // membership is not Active.
     expect(cards).toHaveLength(2);
-    expect(panel().queryByText('MVP Regional Lead')).not.toBeInTheDocument();
+    expect(panel().queryByText('Leadership Role')).not.toBeInTheDocument();
     expect(panel().getByTestId('additional-programs')).toHaveTextContent(
-      'Additional requirements — MVP Regional Lead — open when this membership is Active.'
+      'Additional requirements — Leadership Role — open when this membership is Active.'
     );
     expect(panel().getByText('Disabled')).toBeInTheDocument();
-    const mvp = within(cards.find((c) => c.textContent.includes('Microsoft MVP')));
+    const first = within(cards.find((c) => c.textContent.includes('First Program')));
     await act(async () => {
-      fireEvent.click(mvp.getByRole('button', { name: /Start application/ }));
+      fireEvent.click(first.getByRole('button', { name: /Start application/ }));
     });
     expect(postJSON).toHaveBeenCalledWith('cms/ambassador/applications', {
-      programId: 'program-mvp',
+      programId: 'program-first',
     });
     await waitFor(() =>
       expect(setSearchParams).toHaveBeenCalledWith({
@@ -269,20 +270,20 @@ describe('Programs', () => {
     );
   });
 
-  it('shows the program additional to the MVP as its own card once the MVP membership is Active', async () => {
+  it('shows the program additional to the first program as its own card once its membership is Active', async () => {
     searchParams = 'tab=programs';
     getJSON.mockImplementation(
-      routes({ 'cms/ambassador/programs': { items: PROGRAMS_MVP_ACTIVE } })
+      routes({ 'cms/ambassador/programs': { items: PROGRAMS_FIRST_ACTIVE } })
     );
     render(<AmbassadorPage />);
     const cards = await panel().findAllByTestId('program-card');
     // The additional program follows its parent, ahead of the disabled one.
-    const names = ['Microsoft MVP', 'MVP Regional Lead', 'GitHub Star'];
+    const names = ['First Program', 'Leadership Role', 'Another Program'];
     expect(cards.map((c) => names.find((n) => c.textContent.startsWith(n)))).toEqual(names);
     const lead = within(cards[1]);
-    expect(lead.getByText(/additional to Microsoft MVP/)).toBeInTheDocument();
+    expect(lead.getByText(/additional to First Program/)).toBeInTheDocument();
     expect(panel().getByTestId('additional-programs')).toHaveTextContent(
-      'Additional requirements open: MVP Regional Lead.'
+      'Additional requirements open: Leadership Role.'
     );
     await act(async () => {
       fireEvent.click(lead.getByRole('button', { name: /Start application/ }));
@@ -715,11 +716,11 @@ describe('Settings', () => {
   it('is last, and disables a program with a PATCH rather than a delete', async () => {
     searchParams = 'tab=settings';
     render(<AmbassadorPage />);
-    const row = (await panel().findByText('Microsoft MVP')).closest('tr');
+    const row = (await panel().findByText('First Program')).closest('tr');
     await act(async () => {
       fireEvent.click(within(row).getByRole('button', { name: 'Disable' }));
     });
-    expect(sendJSON).toHaveBeenCalledWith('cms/ambassador/programs/program-mvp', 'PATCH', {
+    expect(sendJSON).toHaveBeenCalledWith('cms/ambassador/programs/program-first', 'PATCH', {
       enabled: false,
     });
     expect(sendJSON).not.toHaveBeenCalledWith(expect.anything(), 'DELETE');
@@ -728,17 +729,17 @@ describe('Settings', () => {
   it('sets membership on the program and the application state as an override, from the row', async () => {
     searchParams = 'tab=settings';
     render(<AmbassadorPage />);
-    const row = (await panel().findByText('Microsoft MVP')).closest('tr');
+    const row = (await panel().findByText('First Program')).closest('tr');
     await act(async () => {
-      fireEvent.change(within(row).getByLabelText('Membership status for Microsoft MVP'), {
+      fireEvent.change(within(row).getByLabelText('Membership status for First Program'), {
         target: { value: 'working' },
       });
     });
-    expect(sendJSON).toHaveBeenCalledWith('cms/ambassador/programs/program-mvp', 'PATCH', {
+    expect(sendJSON).toHaveBeenCalledWith('cms/ambassador/programs/program-first', 'PATCH', {
       membershipStatus: 'working',
     });
     // The latest application for the program is the one set, outside the funnel.
-    const state = within(row).getByLabelText('Application state for Microsoft MVP');
+    const state = within(row).getByLabelText('Application state for First Program');
     expect(state).toHaveValue('preparing');
     await act(async () => {
       fireEvent.change(state, { target: { value: 'active' } });
@@ -750,20 +751,20 @@ describe('Settings', () => {
     });
     // A program additional to another cannot be given an application state until
     // that membership is Active; the row says so and the API would refuse it.
-    const lead = (await panel().findByText('MVP Regional Lead')).closest('tr');
+    const lead = (await panel().findByText('Leadership Role')).closest('tr');
     expect(
-      within(lead).getByText(/additional to Microsoft MVP \(opens when Active\)/)
+      within(lead).getByText(/additional to First Program \(opens when Active\)/)
     ).toBeInTheDocument();
-    expect(within(lead).getByLabelText('Application state for MVP Regional Lead')).toBeDisabled();
+    expect(within(lead).getByLabelText('Application state for Leadership Role')).toBeDisabled();
     // A program with no application starts one at the chosen state.
-    const star = (await panel().findByText('GitHub Star')).closest('tr');
+    const another = (await panel().findByText('Another Program')).closest('tr');
     await act(async () => {
-      fireEvent.change(within(star).getByLabelText('Application state for GitHub Star'), {
+      fireEvent.change(within(another).getByLabelText('Application state for Another Program'), {
         target: { value: 'denied' },
       });
     });
     expect(postJSON).toHaveBeenCalledWith('cms/ambassador/applications', {
-      programId: 'program-star',
+      programId: 'program-another',
       status: 'denied',
     });
   });
@@ -775,7 +776,7 @@ describe('saved qualification dates', () => {
       ...APPLICATIONS[0],
       qualificationPeriod: { start: '2026-01-01', end: '2026-03-31' },
     };
-    const route = 'cms/ambassador/readiness/program-mvp?period=2026-01-01..2026-03-31';
+    const route = 'cms/ambassador/readiness/program-first?period=2026-01-01..2026-03-31';
     getJSON.mockImplementation(
       routes({
         'cms/ambassador/applications': { items: [application] },

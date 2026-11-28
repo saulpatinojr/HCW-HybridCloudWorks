@@ -5,13 +5,11 @@
  *
  * ## Why this exists
  *
- * Owner decision 2026-10-20: the Docker Captain application goes in on the
- * Thought Leader track ("at least 5,000 monthly views across blogs, social
- * media, or other online avenues"), and the Microsoft MVP form asks for
- * impact metrics per contribution. The site published no traffic figure and
- * had never read the show's download count. This timer makes both a dated
- * fact in the hub, under the programmes that ask for reach, and nothing is
- * shown to visitors.
+ * Owner decision 2026-10-20: community programs ask for the reach of the
+ * owner's published work (an audience figure, and impact per contribution).
+ * The site published no traffic figure and had never read the show's
+ * download count. This timer makes both a dated fact in the hub, under the
+ * programmes that ask for reach, and nothing is shown to visitors.
  *
  * ## The two reads
  *
@@ -86,9 +84,9 @@
  *
  * The row counts toward a programme's `reach` requirement the way every
  * evidence row counts (lib/ambassador/readiness.js): by `programIds` and by
- * `sourceModule` being one of the requirement's `evidenceTypes`. Docker
- * Captain's `reach` and the MVP's `reach` list `manual` for that reason
- * (programs.js, revision 2 of both seeds).
+ * `sourceModule` being one of the requirement's `evidenceTypes`. The `reach`
+ * requirement of each program in AUDIENCE_PROGRAMS lists `manual` for that
+ * reason (programs.js, revision 2 of both seeds).
  *
  * ## Gating and telemetry
  *

@@ -132,8 +132,8 @@ export function computeReadiness(
   { period = null, today = null, parent = null } = {}
 ) {
   const requirements = Array.isArray(program?.requirements) ? program.requirements : [];
-  // Evidence filed under the parent program counts for the child too: an
-  // MCT's classes and Lounge posts are the Regional Lead's record as well.
+  // Evidence filed under the parent program counts for the child too: the
+  // work recorded for the parent membership is the child role's record as well.
   const parentId = program?.parentProgramId || null;
   const relevant = (evidence || []).filter(
     (item) =>

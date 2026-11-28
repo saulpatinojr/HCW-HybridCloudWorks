@@ -439,7 +439,7 @@ const ITEMS = [
     '/admin/ambassador',
     BadgeCheck,
     'Ambassador',
-    'Prepare and track applications to MVP, Hero, Captain and other programs, with evidence.',
+    'Prepare and track applications to community programs, with evidence.',
     { minRole: 'editor' },
   ],
 

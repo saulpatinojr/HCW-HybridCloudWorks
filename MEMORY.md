@@ -297,7 +297,7 @@ reviews. Its section "Lines a session does not cross" gathers the ones that used
 A few notes that are about this handoff rather than standing rules:
 
 - The merge signal is the first bullet of "Pull requests open ready for review" in `.claude/CLAUDE.md`. Copilot reviews only when the author has Copilot code review and AI credits; that file says how long to wait for one and when not to wait at all.
-- The Docker-Sponsored Open Source application is tracked only by the admin calendar alert for 2026-10-30. Do not list it as waiting.
+- The community program application due 2026-10-30 is tracked only by the admin calendar alert of that date. Do not list it as waiting.
 - Obsidian and the Second Brain work are not part of this workstream.
 
 ### Done on 2026-10-27 (details in the changelog and the ticket comments)

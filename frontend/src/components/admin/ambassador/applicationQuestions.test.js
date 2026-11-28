@@ -104,9 +104,9 @@ describe('answerText and packetText', () => {
   });
 
   it('lists every section and question, answered or not, and counts the answered', () => {
-    const text = packetText(questions, responses, { evidenceById, title: 'MVP 2026' });
+    const text = packetText(questions, responses, { evidenceById, title: 'Example Program 2026' });
     expect(text.split('\n')).toEqual([
-      'MVP 2026',
+      'Example Program 2026',
       '',
       '## Profile',
       '',

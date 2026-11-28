@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { createPublicReadHandlers } from '../public-reads.js';
 import { createPublicContentManifestHandlers } from '../public-content-manifest.js';
 import { createPublicPreviewHandlers } from '../public-preview.js';
-import { CALENDAR_ALERTS_DOC_ID } from './model.js';
+import { CALENDAR_ALERTS_DOC_ID, SEED_ALERTS } from './model.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -33,7 +33,7 @@ const alertsDocument = () => ({
   id: CALENDAR_ALERTS_DOC_ID,
   configScope: 'admin_config',
   docType: 'calendar_alerts',
-  seeded: ['docker-dsos-application'],
+  seeded: [SEED_ALERTS[0].id],
   alerts: [
     {
       id: 'a1',

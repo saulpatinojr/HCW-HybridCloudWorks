@@ -309,8 +309,9 @@ export function evidenceForApplication(application, evidence) {
 
 /**
  * Evidence relevant to a program: names it, names no program at all, or —
- * for a program additional to another — names the parent (an MCT's record
- * is the Regional Lead's record too; the API's readiness.js agrees).
+ * for a program additional to another — names the parent (the parent
+ * membership's record is the child role's record too; the API's
+ * readiness.js agrees).
  */
 export function evidenceRelevant(item, programId, parentProgramId = null) {
   const ids = Array.isArray(item.programIds) ? item.programIds : [];
@@ -336,11 +337,12 @@ export function evidenceCountsToward(item, requirement) {
 }
 
 /**
- * A program additional to another (`parentProgramId`; MCT Regional Lead to
- * MCT, owner request 2026-10-05) is shown, and may start an application,
- * only while the parent's membership is this status. The API refuses the
- * application otherwise (409 PARENT_NOT_ACTIVE); the tabs hide the card and
- * disable the controls so the refusal is never the first thing seen.
+ * A program additional to another (`parentProgramId`; a role open only to
+ * the parent's members, owner request 2026-10-05) is shown, and may start
+ * an application, only while the parent's membership is this status. The
+ * API refuses the application otherwise (409 PARENT_NOT_ACTIVE); the tabs
+ * hide the card and disable the controls so the refusal is never the first
+ * thing seen.
  */
 export const UNLOCKING_MEMBERSHIP = 'active';
 
