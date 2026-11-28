@@ -1329,6 +1329,30 @@ describe('DECLARED', () => {
     expect(DECLARED.some((entry) => /^app_settings\.GSC_/.test(entry.path ?? ''))).toBe(false);
   });
 
+  it('reads the audience read’s arming plans as unexpected now that the arming has applied (#1302, pruned 2026-11-28)', () => {
+    // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY read "true" live on 2026-11-28
+    // (az functionapp config appsettings list, one name), after the owner
+    // armed it at 05:14 UTC. So arming it again, disarming it, or a new
+    // setting of either value is unexpected now, and a person reads it.
+    const flag = 'FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY';
+    expect(DECLARED.filter((entry) => entry.path === `app_settings.${flag}`)).toEqual([]);
+    for (const [before, after] of [
+      [undefined, 'false'],
+      [undefined, 'true'],
+      ['false', 'true'],
+      ['true', 'false'],
+    ]) {
+      const { plan, app } = fixture();
+      if (before !== undefined) app.before.app_settings[flag] = before;
+      app.after.app_settings[flag] = after;
+      const result = checkPlan(plan);
+      expect(result.ok, `${before} -> ${after}`).toBe(false);
+      expect(result.unexpected.some((line) => line.includes(`app_settings.${flag}`)), `${before} -> ${after}`).toBe(true);
+    }
+    // The prune hides no catalogue removal: the timer is still in the tree.
+    expect(infraSource).toMatch(/^\s*AMBASSADOR_AUDIENCE_MONTHLY\s*=\s*"ambassadorAudienceMonthly — /m);
+  });
+
   it('reads #1918’s plans as unexpected now that the catalogue and the arming have both applied (pruned 2026-11-27)', () => {
     // The disarmed flag and the overdue row applied, and the owner's arming
     // after them: FEATURE_FLAG_CHECK_CLOUDFLARE_RATE_LIMIT read "true" live on
@@ -2053,11 +2077,12 @@ describe('DECLARED', () => {
     expect(checkPlan(again).unexpected).toEqual([`${address}: create`]);
   });
 
-  it('prunes what applied by 2026-11-27, keeps the four arming plans and #1929 steps 1 and 4 both ways, and nothing else', () => {
+  it('prunes what applied by 2026-11-28, keeps the three arming plans and #1929 steps 1 and 4 both ways, and nothing else', () => {
     // The plan check on run-su7kVbxufZn3LPdW matched #1923's nine entries as DECLARED (they applied in that
     // run) and printed every other entry pruned that day as "declared, not in this plan"; run-uBChZAdiYBb1Rma1's
     // plan (commit a7aa1077) matched no declaration. Each pruned change is unconditional in infra/ or was read
-    // live that day. What stays waits on the owner: four arming plans (each flag live "false"). The two role
+    // live that day. What stays waits on the owner: three arming plans (each flag live "false"; the audience read's,
+    // a fourth, applied on 2026-11-28 and was pruned that day, its own test above). The two role
     // assignments counted on storage_firewall_remover_enabled and lab_arc_run_command_enabled were pruned too,
     // once the owner confirmed on 2026-11-27 that both workspace variables are true (both assignments were
     // read live that day); docs/standards/required-inputs.md §4.1 records both as SET. Since then, #1929

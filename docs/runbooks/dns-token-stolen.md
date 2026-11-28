@@ -20,15 +20,15 @@ to the renewal script as well as to where you look in the dashboard.
 | HCP Terraform workspace | Token (dashboard name) | Kind | How sure |
 | --- | --- | --- | --- |
 | `hcw-azure` (the site, `infra/`) | `hcw` | account-owned | **Observed** 2026-11-27 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)): its "last used" time matched `hcw-azure` runs to the second several times, and adding a permission to it is what turned the [#1926](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1926) trial plan green. The daily DNS audit also sees this workspace's DNS edits as an account-owned token ([edge DNS verification runbook](edge-dns-verification.md), the `hcp-terraform` entry). |
-| `hcw-lab` (the lab, `infra-lab/`) | `hcp-terraform-cloudflare-dns` | user | **Observed** 2026-11-28 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)): the owner ran the check below, and both plan-only `hcw-lab` runs moved only this token's **Last used** time into the run's window; every other token, on both tokens pages, was last used more than an hour earlier, or before the run started. Until 2026-11-27 this repository wrongly named it as `hcw-azure`'s token. |
+| `hcw-lab` (the lab, `infra-lab/`) | `hcp-terraform-cloudflare-dns` | user | **Observed** 2026-11-28 ([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)): the owner ran the check below, and both plan-only `hcw-lab` runs moved only this token's **Last used** time into the run's window, while every other token on **My Profile → API Tokens** was last used more than an hour earlier; a session read the other tokens page (**Manage account**) the same morning, and nothing there had been used in the window either. Until 2026-11-27 this repository wrongly named it as `hcw-azure`'s token. |
 
-**To confirm the lab's token** (owner, about ten minutes, nothing changes). A matching time from some earlier run is not proof, because another use of the token could fall in the same minute. So the check causes two uses of its own and watches which token moves each time:
+**To confirm the lab's token** (owner, about ten minutes, nothing changes). Done on 2026-11-28 (above); the steps stay for re-checking, for example after the token is replaced. A matching time from some earlier run is not proof, because another use of the token could fall in the same minute. So the check causes two uses of its own and watches which token moves each time:
 
 1. Make sure nothing else is using Cloudflare: no run in progress on <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs> or <https://app.terraform.io/app/hcw/workspaces/hcw-lab/runs>.
-2. Open <https://dash.cloudflare.com/profile/api-tokens/> (**My Profile → API Tokens**) and write down **Last used** for every token listed there, including `hcp-terraform-cloudflare-dns`, the token believed to be `hcw-lab`'s.
+2. Open <https://dash.cloudflare.com/profile/api-tokens/> (**My Profile → API Tokens**) and write down **Last used** for every token listed there, including `hcp-terraform-cloudflare-dns`, the `hcw-lab` token.
 3. On the `hcw-lab` run list, start a plan-only run (**New run → Plan only**, which changes nothing) and wait for it to finish. Note the time the plan started and the time it finished.
 4. Reload the API tokens page. `hcp-terraform-cloudflare-dns` passes this round as the `hcw-lab` token only if its **Last used** moved to a time between the plan's start and finish, and no other token on the page moved into that window.
-5. Repeat steps 2 to 4 once more. If both rounds pass, it is the `hcw-lab` token: say so on [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927), and a session changes `tokenNameConfirmed` to `true` for the `lab` target in `functions/src/lib/credentials/cloudflare-roll.js`. If either round does not pass, it is not confirmed: say what you saw on #1927, and change nothing on the token (do not trim it) until a session has looked.
+5. Repeat steps 2 to 4 once more. If both rounds pass, it is the `hcw-lab` token, as the table says (`tokenNameConfirmed: true` for the `lab` target in `functions/src/lib/credentials/cloudflare-roll.js`). If either round does not pass, the table may be out of date: say what you saw on [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927), and change nothing on the token until a session has looked.
 
 Never open the workspace variable's value; its description, if it has one, is enough.
 
@@ -323,9 +323,10 @@ and Account Rulesets permissions. It was confirmed as the `hcw-lab` token on
    <https://app.terraform.io/app/hcw/workspaces/hcw-lab/runs> (**New run →
    Plan only**). **Worked:** the plan finishes with no errors and no changes
    to the `cloudflare_dns_record` resources. **If it fails with an
-   authentication error:** the token was not the lab's after all, or the lab
-   needs more; add the permissions back and say so on #1927.
+   authentication error:** add the permissions back, start the plan again to
+   check it passes, and say on #1927 which permission the lab turned out to
+   need.
 
-If it turns out **not** to be the lab's token, leave it alone and ask on
-#1927: a token nobody uses should be deleted rather than trimmed, and that is
-the owner's call.
+If a token on that page turns out to be used by nothing, leave it alone and
+ask on #1927: a token nobody uses should be deleted rather than trimmed, and
+that is the owner's call.

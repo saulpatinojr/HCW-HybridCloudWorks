@@ -699,9 +699,10 @@ export const DECLARED = [
   },
   // The audience timer's arming (#1302, FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY
   // false -> true) applied on 2026-11-28: the owner armed it at 05:14 UTC once
-  // both site hosts were proxied (#1929), and a manual trigger of the timer was
-  // accepted (202) that morning. Deleted here, as the header asks; a disarming
-  // plan (true -> false) is not declared and reads UNEXPECTED.
+  // both site hosts were proxied (#1929), and the setting read "true" live
+  // that morning (az functionapp config appsettings list, that one name).
+  // Deleted here, as the header asks; arming or disarming it again reads
+  // UNEXPECTED (its test).
   // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
   // one (false -> true) until the arming apply has run too: it is the plan the
   // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this
