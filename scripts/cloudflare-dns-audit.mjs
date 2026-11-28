@@ -193,10 +193,12 @@ export const ALLOWLIST = [
       `Terraform provider (user agent \`${TERRAFORM_USER_AGENT_PREFIX}…\`), not from the lab host (whose ` +
       "address belongs to the Caddy token's entry), WHILE an apply of the " +
       `\`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` workspace was in progress by HCP Terraform's own run ` +
-      `record, read with \`${ENV.tfcToken}\`. The token name is matched too, should the log ever carry it.`,
+      `record, read with \`${ENV.tfcToken}\`. The token name is matched too, should the log ever carry it, ` +
+      'but only on an account-owned token: the name is short and a user token could be given the same one (#1927).',
     active: (settings) => Array.isArray(settings.applyWindows),
     matches: (change, settings) =>
-      (change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) || isWorkspaceApply(change, settings),
+      (change.actorType === 'account' && change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
+      isWorkspaceApply(change, settings),
   },
   {
     id: 'terraform-owner-token',

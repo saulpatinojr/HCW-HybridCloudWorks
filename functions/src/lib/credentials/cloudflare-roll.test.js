@@ -927,6 +927,86 @@ describe('rollAndApplyCloudflareToken', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('refuses a target without `owner` instead of taking it for a user token (#1927)', async () => {
+    const mockFetch = vi.fn();
+    const { owner, ...ownerless } = CLOUDFLARE_TARGETS.caddy;
+    expect(owner).toBe('user');
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: ownerless, fetchImpl: mockFetch, execImpl: vi.fn() })
+    ).rejects.toThrow(/does not say which kind of Cloudflare token it holds/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tfc target without an HCP Terraform token, or without a workspace, BEFORE rolling', async () => {
+    const mockFetch = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.lab, fetchImpl: mockFetch })
+    ).rejects.toThrow(/HCP Terraform token is required/);
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { ...CLOUDFLARE_TARGETS.lab, workspace: '' },
+        tfcToken: 'tfc',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform workspace is required/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lab-vault target with a malformed vault key BEFORE rolling', async () => {
+    const mockFetch = vi.fn();
+    const execImpl = vi.fn();
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { ...CLOUDFLARE_TARGETS.caddy, vaultKey: 'Not A Key' },
+        fetchImpl: mockFetch,
+        execImpl,
+      })
+    ).rejects.toThrow(/Invalid lab vault key name/);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(execImpl).not.toHaveBeenCalled();
+  });
+
+  it('looks the workspace up BEFORE rolling, and rolls nothing when HCP Terraform answers 403 (#1927)', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ errors: [{ title: 'forbidden' }] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 'tok-azure-1',
+        rollToken: 'operator-roll-token',
+        target: CLOUDFLARE_TARGETS.azure,
+        accountId: ACCOUNT_ID,
+        tfcToken: 'tfc-token-xyz',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform workspace hcw\/hcw-azure lookup failed \(403\)/);
+    const cloudflareCalls = mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'));
+    expect(cloudflareCalls).toEqual([]);
+  });
+
+  it('rolls nothing when listing the workspace variables is refused', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-lab')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab' } }) };
+      }
+      if (url.endsWith('/workspaces/ws-lab/vars')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    await expect(
+      rollAndApplyCloudflareToken({ tokenId: 't1', rollToken: 'r1', target: CLOUDFLARE_TARGETS.lab, tfcToken: 'tfc', fetchImpl: mockFetch })
+    ).rejects.toThrow(/list vars failed for hcw\/hcw-lab \(403\)/);
+    expect(mockFetch.mock.calls.some(([url]) => url.startsWith('https://api.cloudflare.com/'))).toBe(false);
+  });
+
   it('rejects missing target or unsupported target type', async () => {
     await expect(
       rollAndApplyCloudflareToken({

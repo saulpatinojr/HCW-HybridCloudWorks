@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { parseArgs, printUsage, runRoll } from './roll-cloudflare-tokens.mjs';
+import { CLOUDFLARE_TARGETS } from '../functions/src/lib/credentials/cloudflare-roll.js';
 
 // A made-up account id of the right shape; never a real one in this public repository.
 const ACCOUNT_ID = '00000000000000000000000000000001';
@@ -240,6 +241,10 @@ describe('runRoll', () => {
       if (url.includes('/organizations/hcw/workspaces/')) {
         return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock' } }) };
       }
+      // The check lists the variables too, the second read a write needs (#1927).
+      if (url.endsWith('/workspaces/ws-mock/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
       throw new Error(`Unexpected URL: ${url}`);
     });
 
@@ -258,6 +263,83 @@ describe('runRoll', () => {
     expect(code).toBe(0);
     expect(stderr).toEqual([]);
     expect(stdout.join('\n')).toContain("[ok] Target 'azure': verified reachable and configured");
+  });
+
+  it('rolls nothing when an HCP Terraform workspace lookup is refused (403), so every old token still works (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ errors: [{ title: 'forbidden' }] }) };
+      }
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-lab' } }) };
+      }
+      if (url.endsWith('/workspaces/ws-lab/vars')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'all' },
+      env: {
+        CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token',
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
+        TFC_TOKEN: 'tfc-app-token',
+        CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
+        CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb',
+        CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd',
+      },
+      fetchImpl: mockFetch,
+      execImpl: vi.fn(),
+      stdout: () => {},
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    const cloudflareCalls = mockFetch.mock.calls.filter(([url]) => String(url).startsWith('https://api.cloudflare.com/'));
+    expect(cloudflareCalls).toEqual([]);
+    const err = stderr.join('\n');
+    expect(err).toContain("[fail] Target 'azure': HCP Terraform workspace not ready to write, so nothing was rolled");
+    expect(err).toContain('403');
+    expect(err).toContain('Nothing was rolled');
+    expect(err).not.toContain('tfc-app-token');
+  });
+
+  it('rolls nothing when listing a workspace\'s variables is refused', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-az' } }) };
+      }
+      if (url.endsWith('/workspaces/ws-az/vars')) {
+        return { ok: false, status: 403, statusText: 'Forbidden', json: async () => ({}) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'r', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: () => {},
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).startsWith('https://api.cloudflare.com/'))).toBe(false);
+  });
+
+  it('refuses a target that does not say which kind of token it holds, even in a dry run (#1927)', async () => {
+    const { owner, ...ownerless } = CLOUDFLARE_TARGETS.lab;
+    expect(owner).toBe('user');
+    const stderr = [];
+    const mockFetch = vi.fn();
+    const code = await runRoll({
+      options: { target: 'lab', dryRun: true },
+      targets: { lab: ownerless },
+      env: { CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb' },
+      fetchImpl: mockFetch,
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(stderr.join('\n')).toContain("Target 'lab' does not say which kind of Cloudflare token it holds");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('executes successful roll and apply across all three targets, each through its own route', async () => {

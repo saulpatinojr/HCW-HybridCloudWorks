@@ -1,6 +1,6 @@
 # Incident playbook — DNS token stolen
 
-**What this is for:** the Cloudflare API token Terraform uses for the site is compromised, leaked, or exposed in an un-sanitized log. That token is the **account-owned** token **`hcw`** (it belongs to the Cloudflare account rather than to a person, and lives under **Manage Account → Account API tokens**), held as the sensitive variable `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. The lab host's Caddy token, the `hcw-lab` workspace's token (most likely `hcp-terraform-cloudflare-dns`, see [Which token is which](#which-token-is-which)) and the site's Cloudflare admin token (`CLOUDFLARE-ADMIN-TOKEN`, used by Claude Network Guy) are separate tokens, not covered here.
+**What this is for:** the Cloudflare API token Terraform uses for the site is compromised, leaked, or exposed in an un-sanitized log. That token is the **account-owned** token **`hcw`** (it belongs to the Cloudflare account rather than to a person, and lives under **Manage account → Account API tokens**), held as the sensitive variable `cloudflare_api_token` in the HCP Terraform workspace `hcw-azure`. The lab host's Caddy token, the `hcw-lab` workspace's token (most likely `hcp-terraform-cloudflare-dns`, see [Which token is which](#which-token-is-which)) and the site's Cloudflare admin token (`CLOUDFLARE-ADMIN-TOKEN`, used by Claude Network Guy) are separate tokens, not covered here.
 
 **Impact:** an attacker possessing the token could redirect traffic for `hybridcloudworks.com`, point records to malicious servers, or change the origin secret rule that tells the API a request came through Cloudflare.
 
@@ -12,7 +12,7 @@ Cloudflare has two kinds of API token
 ([Cloudflare: account API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)):
 
 - a **user token** belongs to one person's profile and is listed under **My Profile → API Tokens**;
-- an **account-owned token** belongs to the account and is listed under **Manage Account → Account API tokens** (some Cloudflare pages call this page **Manage Account → API Tokens**; it is the one under **Manage Account**, not under **My Profile**).
+- an **account-owned token** belongs to the account and is listed under **Manage account → Account API tokens** (some Cloudflare pages call this page **Manage account → API Tokens**; it is the one under **Manage account**, not under **My Profile**).
 
 They are renewed ("rolled") through different API routes, so the kind matters
 to the renewal script as well as to where you look in the dashboard.
@@ -25,10 +25,10 @@ to the renewal script as well as to where you look in the dashboard.
 **To confirm the lab's token** (owner, about five minutes, nothing changes):
 
 1. Open the `hcw-lab` run list at <https://app.terraform.io/app/hcw/workspaces/hcw-lab/runs> and note the time of the newest run that got as far as a plan.
-2. Open <https://dash.cloudflare.com/profile/api-tokens/> (**My Profile → API Tokens**) and read **Last used** beside `hcp-terraform-cloudflare-dns`.
+2. Open <https://dash.cloudflare.com/profile/api-tokens/> (**My Profile → API Tokens**) and read **Last used** beside `hcp-terraform-cloudflare-dns`, the token believed to be `hcw-lab`'s.
 3. If the two times are the same minute, it is the lab's token: say so on [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927), and a session changes `tokenNameConfirmed` to `true` for the `lab` target in `functions/src/lib/credentials/cloudflare-roll.js`. If they differ, or `hcw-lab` has no recent run, start a plan-only run there (**New run → Plan only**, which changes nothing) and compare again. Never open the workspace variable's value; its description, if it has one, is enough.
 
-The same check works for `hcw-azure` and `hcw`, on **Manage Account → Account API tokens**.
+The same check works for `hcw-azure` and `hcw`, on **Manage account → Account API tokens**. Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
 
 ---
 
@@ -37,8 +37,8 @@ The same check works for `hcw-azure` and `hcw`, on **Manage Account → Account 
 Revoke the token immediately in the Cloudflare dashboard:
 
 1. Sign in to [Cloudflare Dashboard](https://dash.cloudflare.com) and pick the account that owns `hybridcloudworks.com`.
-2. Go to **Manage Account** -> **Account API tokens**. (Not **My Profile** -> **API Tokens**: `hcw` is account-owned, so it is not listed there.)
-3. Locate `hcw`. Leave the lab host's Caddy token, `hcp-terraform-cloudflare-dns` and the site's Cloudflare admin token alone; they are different tokens.
+2. Go to **Manage account** -> **Account API tokens**. (Not **My Profile** -> **API Tokens**: `hcw` is account-owned, so it is not listed there.) Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
+3. Locate `hcw`. Leave the lab host's Caddy token, `hcp-terraform-cloudflare-dns` (most likely the `hcw-lab` workspace's) and the site's Cloudflare admin token alone; they are different tokens.
 4. Click the three dots menu -> **Delete** (the dashboard may call it **Revoke**).
 5. Confirm. Every `hcw-azure` plan and apply now fails at sign-in until section 4 is done; nothing already in place changes.
 
@@ -48,7 +48,7 @@ Revoke the token immediately in the Cloudflare dashboard:
 
 Determine whether any unauthorized alterations occurred prior to token revocation:
 
-1. In Cloudflare, navigate to **Account Home** -> **Audit Log**.
+1. In Cloudflare, navigate to **Account Home** -> **Audit Log**. Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
 2. Filter the events for the past 72 hours:
    - Filter by Action: `dns_record_create`, `dns_record_update`, `dns_record_delete`, `zone_setting_change`, `page_rule_create`, `custom_ssl_create`.
    - Filter by Token: identify calls authenticated by the compromised token.
@@ -81,7 +81,7 @@ Make the replacement as an account-owned token again, so it keeps working
 whoever signs in to Cloudflare, and give it only what `infra/` uses
 (the list and its reasons are in [The permissions `hcw` needs](#the-permissions-hcw-needs)):
 
-1. In Cloudflare Dashboard -> **Manage Account** -> **Account API tokens** -> **Create Token**.
+1. In Cloudflare Dashboard -> **Manage account** -> **Account API tokens** -> **Create Token**. Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
 2. Select **Create Custom Token**:
    - **Token Name:** `hcw` (the name `functions/src/lib/credentials/cloudflare-roll.js`,
      the credential register and `scripts/lib/dns-audit-settings.mjs` use
@@ -100,9 +100,11 @@ whoever signs in to Cloudflare, and give it only what `infra/` uses
      - `Include` -> `Specific zone` -> `hybridcloudworks.com`
    - **Client IP Address Filtering:** leave empty. HCP Terraform's runners
      have no fixed addresses, so a filter would break every run.
-   - **TTL:** set an end date only if you will also come back to replace it;
-     nothing reminds anyone of a Cloudflare end date (the credential
-     register row has no lifetime for this token).
+   - **TTL:** leave it without an end date, or set one more than 180 days
+     out. The credential register reminds the owner to roll this token
+     every 180 days (row `tfc-azure-cloudflare-api-token`); nothing
+     reminds anyone of a Cloudflare end date, so an earlier one would
+     break `hcw-azure` before the reminder comes.
 3. Generate and copy the new token. Paste it only into the field in section 4.
 
 ---
@@ -120,8 +122,8 @@ in Key Vault and not a GitHub Actions secret (the credential register,
 2. Edit `cloudflare_api_token`, paste the new token into the value field
    (it stays marked **Sensitive**), and save. Do not paste it anywhere else,
    chat included.
-3. Check that the old token is gone from **Manage Account** -> **Account API
-   tokens** (section 1 deleted it). If it is still listed, go back to section 1.
+3. Check that the old token is gone from **Manage account** -> **Account API
+   tokens** (section 1 deleted it). Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>. If it is still listed, go back to section 1.
 4. If the new token has a new id, update `CLOUDFLARE_AZURE_TOKEN_ID` wherever
    you keep it for the roll script (below). The id is not a secret; it is
    shown on the token's page.
@@ -162,6 +164,12 @@ Verify that:
 `scripts/roll-cloudflare-tokens.mjs` rolls a token in place (Cloudflare
 issues a new value with the same permissions and retires the old one at
 once) and writes the new value straight back to the workspace variable.
+**Nothing runs it on a schedule:** a person runs it when the credential
+register's reminder comes (every 180 days, on the
+[Credentials tab](https://hybridcloudworks.com/admin/integrations?tab=credentials)),
+because a scheduled roll would need a stored secret that can roll tokens,
+and that is the owner's decision
+([#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)).
 Since [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)
 it knows both kinds of token:
 
@@ -177,6 +185,30 @@ id can never leave the workspace with a retired token. If the general roll
 token (`CLOUDFLARE_ROLL_TOKEN`) cannot roll account-owned tokens, give one
 that can in `CLOUDFLARE_ACCOUNT_ROLL_TOKEN`. `--dry-run` shows the route each
 target would take without calling anything.
+
+Before it rolls anything, the script also looks up every HCP Terraform
+workspace it will write to and lists its variables, with the same
+`TFC_TOKEN` the write will use. If either read is refused, it stops with
+nothing rolled, and the old values keep working.
+
+**If it says it rolled a token but failed to write it.** The roll cannot
+be undone: the old value has stopped working, and `hcw-azure` plans fail
+at sign-in until the variable holds the new one. Roll the token again by
+hand and store that value yourself:
+
+1. Open <https://dash.cloudflare.com>, pick the account that owns
+   `hybridcloudworks.com`, and go to **Manage account** -> **Account API
+   tokens**. Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
+2. Beside `hcw`, choose **Roll** from the three dots menu, confirm, and
+   copy the new value Cloudflare shows once.
+3. Open <https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables>,
+   edit `cloudflare_api_token`, paste the value (it stays **Sensitive**),
+   and save. Paste it nowhere else.
+4. Check it with steps 1 and 2 of section 5.
+
+For the `lab` target the same steps use **My Profile → API Tokens**
+(<https://dash.cloudflare.com/profile/api-tokens/>) and
+<https://app.terraform.io/app/hcw/workspaces/hcw-lab/variables>.
 
 ---
 
@@ -215,8 +247,8 @@ adding the permission back.
 
 1. Open <https://dash.cloudflare.com> and pick the account that owns
    `hybridcloudworks.com`.
-2. Go to **Manage Account** -> **Account API tokens**, find `hcw`, and choose
-   **Edit** from the three dots menu beside it.
+2. Go to **Manage account** -> **Account API tokens**, find `hcw`, and choose
+   **Edit** from the three dots menu beside it. Cloudflare publishes no direct link to this page; start from <https://dash.cloudflare.com>.
 3. In the **zone** permission rows, remove **WAF** (Edit) and **Origin**
    (Edit). Leave **Zone** (Read), **DNS** (Edit) and **Transform Rules**
    (Edit), and leave the zone resource as `hybridcloudworks.com`.
@@ -235,7 +267,7 @@ adding the permission back.
    [#1927](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1927)
    which one it was.
 
-### Owner steps: put `hcp-terraform-cloudflare-dns` back
+### Owner steps: put `hcp-terraform-cloudflare-dns` back, once it is confirmed as `hcw-lab`'s
 
 On 2026-11-27, when it was wrongly believed to be `hcw-azure`'s token,
 `hcp-terraform-cloudflare-dns` was given Transform Rules, Account Settings
@@ -246,7 +278,7 @@ token** ([Which token is which](#which-token-is-which)) put it back to what
 
 1. Open <https://dash.cloudflare.com/profile/api-tokens/> (**My Profile** ->
    **API Tokens**; it is a user token), and choose **Edit** beside
-   `hcp-terraform-cloudflare-dns`.
+   `hcp-terraform-cloudflare-dns`, the `hcw-lab` token.
 2. Keep exactly two permissions: **Zone → Zone → Read** and **Zone → DNS →
    Edit**, with the zone resource **Specific zone → `hybridcloudworks.com`**.
    Remove **Transform Rules**, both **Account Settings** rows and **Account

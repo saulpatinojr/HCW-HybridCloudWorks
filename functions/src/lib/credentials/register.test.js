@@ -203,6 +203,11 @@ describe('the issue’s list', () => {
         'tfc-azure-muse-reader-secret',
         // #1905: the Cloudflare page's token, made with a one-year expiry.
         'kv-cloudflare-admin-token',
+        // #1927: the three tokens scripts/roll-cloudflare-tokens.mjs rolls.
+        // Nothing schedules it, so a person runs it, on the 180-day rule.
+        'tfc-azure-cloudflare-api-token',
+        'tfc-lab-cloudflare-api-token',
+        'lab-caddy-cloudflare-api-token',
         // One per agent key the site can hold (agent-content/agent-keys.js).
         'agent-key-koda',
         'agent-key-claude',
@@ -268,6 +273,9 @@ describe('the issue’s list', () => {
       'gh-manifest-app-private-key',
       'gh-copilot-review-app-private-key',
       'lab-coder-github-oauth-secret',
+      'tfc-azure-cloudflare-api-token',
+      'tfc-lab-cloudflare-api-token',
+      'lab-caddy-cloudflare-api-token',
     ]) {
       expect(findCredential(id).lifetimeDays, id).toBe(HAND_ROTATION_DAYS);
     }
@@ -298,17 +306,20 @@ describe('the issue’s list', () => {
     }
   });
 
-  it('marks the Cloudflare API tokens as renewed by automation', () => {
+  it('marks the Cloudflare API tokens as renewed by hand, with the roll script as the tool (#1927)', () => {
+    // Nothing schedules scripts/roll-cloudflare-tokens.mjs, and a scheduled
+    // roll would need a stored secret able to roll tokens, which is the
+    // owner's call. So a person runs it, and the reminder says when.
     for (const id of [
       'tfc-azure-cloudflare-api-token',
       'tfc-lab-cloudflare-api-token',
       'lab-caddy-cloudflare-api-token',
     ]) {
       const entry = findCredential(id);
-      expect(entry.renewal, id).toBe('automation');
-      expect(entry.lifetimeDays, id).toBeNull();
-      expect(entry.rotate, id).toMatch(/roll-token|roll-cloudflare-tokens/i);
-      expect(isRecordable(entry), id).toBe(false);
+      expect(entry.renewal, id).toBe('hand');
+      expect(entry.lifetimeDays, id).toBe(HAND_ROTATION_DAYS);
+      expect(entry.rotate, id).toMatch(/scripts\/roll-cloudflare-tokens\.mjs --target (azure|lab|caddy)\b/);
+      expect(isRecordable(entry), id).toBe(true);
     }
   });
 

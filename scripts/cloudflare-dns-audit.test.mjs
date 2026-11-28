@@ -92,7 +92,7 @@ function entry({ actor, action = 'create', result = 'success', time, record, zon
   };
 }
 
-const TERRAFORM = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '203.0.113.10', token_id: 'c0ffee0123456789c0ffee0123456789', token_name: HCP_TERRAFORM_TOKEN_NAME, type: 'user' };
+const TERRAFORM = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '203.0.113.10', token_id: 'c0ffee0123456789c0ffee0123456789', token_name: HCP_TERRAFORM_TOKEN_NAME, type: 'account' };
 const CADDY = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '198.51.100.7', token_id: 'dead00beef0123456789abcdefabcdef', token_name: CADDY_TOKEN, type: 'user' };
 const OWNER_DASH = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'dash', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
 const STRANGER = { id: '0000000000000000000000000000beef', context: 'api_token', email: 'mallory@example.org', ip_address: '192.0.2.99', token_id: 'bad0bad0bad0bad0bad0bad0bad0bad0', token_name: 'totally-legit', type: 'user' };
@@ -263,6 +263,10 @@ describe('the allowlist', () => {
     expect(withinApply('not a time', [MORNING_APPLY])).toBe(false);
     // The token name, when the log carries it, needs no apply window.
     expect(classify(normalise(entry({ actor: TERRAFORM, action: 'update', record, time: '2026-10-18T22:00:00Z' })), { ...settings, applyWindows: [] }).rule).toBe('hcp-terraform');
+    // ...but only on an account-owned token (#1927): a user token that happens
+    // to carry the same short name is not the workspace's.
+    const impostor = { ...TERRAFORM, type: 'user', email: 'someone@example.com' };
+    expect(classify(normalise(entry({ actor: impostor, action: 'update', record, time: '2026-10-18T22:00:00Z' })), { ...settings, applyWindows: [] })).toEqual({ verdict: 'UNEXPECTED', rule: null });
   });
 
   it('refuses an account token without the provider user agent, and the provider user agent from the lab host', () => {

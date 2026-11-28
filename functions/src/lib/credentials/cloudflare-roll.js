@@ -7,10 +7,14 @@
  *
  * 1. ZERO VALUE LEAKAGE: Token secrets are never logged, printed, or included
  *    in error messages or return structures.
- * 2. WRITE BEFORE RETIRE: Because Cloudflare's roll endpoint immediately
- *    invalidates the old token, the new token is committed to the target store
- *    (with retries) immediately after rolling, ensuring no store is left with
- *    a dead token.
+ * 2. WRITE IMMEDIATELY AFTER THE ROLL: Cloudflare's roll endpoint retires the
+ *    old value at once, so the new value is written to the target store (with
+ *    retries) straight after the roll. That cannot be made atomic: if every
+ *    write attempt fails, the store is left holding a retired token, and the
+ *    error says so (the recovery is in docs/runbooks/dns-token-stolen.md,
+ *    "Routine renewal"). To make that unlikely, the store is checked BEFORE
+ *    the roll (#1927): an HCP Terraform workspace is looked up and its
+ *    variables listed with the same token the write will use.
  * 3. POST-WRITE VERIFICATION: The newly written token is verified against
  *    Cloudflare's verify endpoint for its kind (`/user/tokens/verify` or
  *    `/accounts/{account_id}/tokens/verify`). Any verification anomaly is
@@ -25,11 +29,13 @@
  * 7. ONE ROUTE PER TOKEN KIND (#1927): Cloudflare has two kinds of API token.
  *    A user token belongs to one person's profile (My Profile → API Tokens)
  *    and rolls through `/user/tokens/{id}/value`. An account-owned token
- *    belongs to the account (Manage Account → Account API tokens) and rolls
+ *    belongs to the account (Manage account → Account API tokens) and rolls
  *    through `/accounts/{account_id}/tokens/{id}/value`. Each target says
- *    which kind it holds (`owner`), and everything that can be known before
- *    the roll (the kind, the account id, the target type) is checked BEFORE
- *    the roll, because the roll retires the old value at once.
+ *    which kind it holds (`owner`, required: a target without one is refused,
+ *    never taken for a user token), and everything that can be checked
+ *    without retiring the old value is checked BEFORE the roll: the kind,
+ *    the account id, the target type, the HCP Terraform token, workspace and
+ *    its variables list, or the vault key's shape.
  */
 
 import { spawn } from 'node:child_process';
@@ -47,6 +53,8 @@ const CF_API = 'https://api.cloudflare.com/client/v4';
  *            https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/subresources/value/methods/update/
  *            Verify Token, GET /accounts/{account_id}/tokens/verify
  *            https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/
+ * All three routes, and the permission each roll needs, were read on
+ * 2026-11-27 from those pages and from Cloudflare's OpenAPI schema.
  * A kind not in this list cannot be renewed by this module; the register and
  * the runbook are held to it by cloudflare-token-kinds.test.js.
  */
@@ -59,7 +67,7 @@ export const TOKEN_OWNERS = Object.freeze({
     verifyPath: () => '/user/tokens/verify',
   }),
   account: Object.freeze({
-    label: 'account-owned token (Manage Account → Account API tokens)',
+    label: 'account-owned token (Manage account → Account API tokens)',
     rollPermission: 'Account API Tokens Write',
     needsAccountId: true,
     rollPath: ({ tokenId, accountId }) =>
@@ -157,6 +165,9 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
 
 /** The stores a rolled token can be written back to. */
 const WRITABLE_TARGET_TYPES = Object.freeze(['tfc', 'lab-vault']);
+
+/** The shape of a lab host Ansible Vault key `hcw-vault-set` accepts. */
+const VAULT_KEY_PATTERN = /^vault_[a-z0-9_]+$/;
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -313,6 +324,46 @@ export async function verifyCloudflareToken({
 }
 
 /**
+ * Looks an HCP Terraform workspace up and lists its variables, the two reads
+ * a variable write starts with. Throws (with the HTTP status) when either is
+ * refused. rollAndApplyCloudflareToken calls it BEFORE the roll (#1927), so
+ * a token HCP Terraform refuses fails the run while the old Cloudflare value
+ * still works.
+ *
+ * @param {object} params
+ * @param {string} params.tfcToken HCP Terraform API token
+ * @param {string} params.organization HCP Terraform organization name
+ * @param {string} params.workspace HCP Terraform workspace name
+ * @param {typeof fetch} [params.fetchImpl] Injectable fetch
+ * @returns {Promise<{ workspaceId: string, variables: object[], varsUrl: string, headers: object, where: string }>}
+ */
+export async function readTfcWorkspace({ tfcToken, organization, workspace, fetchImpl = globalThis.fetch }) {
+  if (!tfcToken) throw new Error('HCP Terraform token is required');
+  if (!organization) throw new Error('HCP Terraform organization is required');
+  if (!workspace) throw new Error('HCP Terraform workspace is required');
+
+  const headers = {
+    Authorization: `Bearer ${tfcToken}`,
+    'Content-Type': 'application/vnd.api+json',
+  };
+  const where = `${organization}/${workspace}`;
+
+  const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(organization)}/workspaces/${encodeURIComponent(workspace)}`;
+  const ws = await tfcCall(fetchImpl, wsUrl, { method: 'GET', headers });
+  if (!ws.response.ok || !ws.data?.data?.id) {
+    throw tfcFailure(ws, `HCP Terraform workspace ${where} lookup failed (${ws.response.status})`);
+  }
+  const workspaceId = ws.data.data.id;
+
+  const varsUrl = `https://app.terraform.io/api/v2/workspaces/${encodeURIComponent(workspaceId)}/vars`;
+  const vars = await tfcCall(fetchImpl, varsUrl, { method: 'GET', headers });
+  if (!vars.response.ok || !Array.isArray(vars.data?.data)) {
+    throw tfcFailure(vars, `HCP Terraform list vars failed for ${where} (${vars.response.status})`);
+  }
+  return { workspaceId, variables: vars.data.data, varsUrl, headers, where };
+}
+
+/**
  * Updates or creates a sensitive variable in an HCP Terraform workspace.
  *
  * @param {object} params
@@ -344,28 +395,15 @@ export async function updateTfcVariable({
   if (!key) throw new Error('Variable key is required');
   if (!value) throw new Error('Variable value is required');
 
-  const headers = {
-    Authorization: `Bearer ${tfcToken}`,
-    'Content-Type': 'application/vnd.api+json',
-  };
-  const where = `${organization}/${workspace}`;
+  // 1 and 2. Resolve the workspace id and list its variables.
+  const { variables, varsUrl, headers, where } = await readTfcWorkspace({
+    tfcToken,
+    organization,
+    workspace,
+    fetchImpl,
+  });
 
-  // 1. Resolve workspace ID
-  const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(organization)}/workspaces/${encodeURIComponent(workspace)}`;
-  const ws = await tfcCall(fetchImpl, wsUrl, { method: 'GET', headers });
-  if (!ws.response.ok || !ws.data?.data?.id) {
-    throw tfcFailure(ws, `HCP Terraform workspace ${where} lookup failed (${ws.response.status})`);
-  }
-  const workspaceId = ws.data.data.id;
-
-  // 2. List variables to match key and category
-  const varsUrl = `https://app.terraform.io/api/v2/workspaces/${encodeURIComponent(workspaceId)}/vars`;
-  const vars = await tfcCall(fetchImpl, varsUrl, { method: 'GET', headers });
-  if (!vars.response.ok || !Array.isArray(vars.data?.data)) {
-    throw tfcFailure(vars, `HCP Terraform list vars failed for ${where} (${vars.response.status})`);
-  }
-
-  const existing = vars.data.data.find(
+  const existing = variables.find(
     (v) => v.attributes?.key === key && v.attributes?.category === category
   );
 
@@ -484,7 +522,7 @@ export async function updateLabVaultSecret({
   secretValue,
   execImpl,
 }) {
-  if (!vaultKey || !/^vault_[a-z0-9_]+$/.test(vaultKey)) {
+  if (!vaultKey || !VAULT_KEY_PATTERN.test(vaultKey)) {
     throw new Error(
       `Invalid lab vault key name: '${vaultKey}' (expected vault_[a-z0-9_]+)`
     );
@@ -524,7 +562,7 @@ export async function updateLabVaultSecret({
  * @param {string} params.rollToken Cloudflare credential allowed to roll the target's kind of
  *   token (TOKEN_OWNERS[target.owner].rollPermission)
  * @param {object} params.target Target descriptor (from CLOUDFLARE_TARGETS or matching shape);
- *   `owner` defaults to 'user'
+ *   `owner` ('user' or 'account') is required
  * @param {string} [params.accountId] Cloudflare account id; required when target.owner is 'account'
  * @param {string} [params.tfcToken] HCP Terraform API token (required if target.type === 'tfc')
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
@@ -547,22 +585,44 @@ export async function rollAndApplyCloudflareToken({
   if (!target || typeof target !== 'object') {
     throw new Error('Target configuration is required');
   }
-  // Everything knowable is checked before the roll, which retires the old
-  // value at once: a store the new value cannot be written to, or a token
-  // kind the route table does not know, must fail with the old token intact.
+  // Everything that can be checked without retiring the old value is
+  // checked here, before the roll: the kind of token and its route, the
+  // store's type, and that the store can be written (#1927). A failure here
+  // leaves the old Cloudflare value working.
   if (!WRITABLE_TARGET_TYPES.includes(target.type)) {
     throw new Error(`Unsupported target type: ${target.type}`);
   }
-  const owner = target.owner || 'user';
+  if (!Object.hasOwn(target, 'owner')) {
+    throw new Error(
+      `Target ${target.name || target.workspace || target.vaultKey || '(unnamed)'} does not say which kind of Cloudflare token it holds (owner: ${Object.keys(TOKEN_OWNERS).join(' or ')})`
+    );
+  }
+  const { owner } = target;
   tokenOwnerRoutes({ owner, accountId });
+  if (target.type === 'tfc') {
+    if (!target.workspace) throw new Error('HCP Terraform workspace is required');
+    // Looks the workspace up and lists its variables with the same token the
+    // write will use; throws (nothing rolled) when either is refused.
+    await readTfcWorkspace({
+      tfcToken,
+      organization: target.organization || 'hcw',
+      workspace: target.workspace,
+      fetchImpl,
+    });
+  } else {
+    const vaultKey = target.vaultKey || 'vault_cloudflare_api_token';
+    if (!VAULT_KEY_PATTERN.test(vaultKey)) {
+      throw new Error(`Invalid lab vault key name: '${vaultKey}' (expected vault_[a-z0-9_]+)`);
+    }
+  }
 
   // Step 1: Roll the token in Cloudflare.
   // Note: Cloudflare's roll endpoint immediately invalidates the previous secret.
   const rolled = await rollCloudflareToken({ tokenId, rollToken, owner, accountId, fetchImpl });
   const newTokenValue = rolled.tokenValue;
 
-  // Step 2: Write back to target store immediately with retries so the active store
-  // is updated with the new valid secret.
+  // Step 2: Write the new value to the target store at once, with retries:
+  // the old value stopped working at the roll.
   let applyResult = null;
   try {
     if (target.type === 'tfc') {
@@ -596,7 +656,7 @@ export async function rollAndApplyCloudflareToken({
     }
   } catch (err) {
     throw new Error(
-      `Token was rolled in Cloudflare but failed to write to target ${target.name || target.workspace || target.vaultKey}: ${err.message}`
+      `Token was rolled in Cloudflare but failed to write to target ${target.name || target.workspace || target.vaultKey}: ${err.message}. The old value no longer works: roll it by hand in the Cloudflare dashboard and paste the new value into the store (docs/runbooks/dns-token-stolen.md, "Routine renewal")`
     );
   }
 

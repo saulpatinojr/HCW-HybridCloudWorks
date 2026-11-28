@@ -1147,7 +1147,7 @@ variable "cloudflare_web_analytics_site_tag" {
 # PUT /accounts/{account_id}/rum/site_info/{site_id}; Cloudflare's API
 # reference accepts only Account Settings Read for the GET and only Account
 # Settings Write for the PUT. So the same token (the ACCOUNT-OWNED token hcw,
-# under Manage Account → Account API tokens in the dashboard; until #1927
+# under Manage account → Account API tokens in the dashboard; until #1927
 # this comment named the user token hcp-terraform-cloudflare-dns, which is
 # most likely hcw-lab's) carries BOTH, as two rows (the dashboard calls Write
 # "Edit"), before the run that imports the site. Without Read, even a plan
