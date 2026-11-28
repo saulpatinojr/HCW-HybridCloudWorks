@@ -66,8 +66,11 @@ Options:
 
 Environment variables:
   CLOUDFLARE_ROLL_TOKEN   Cloudflare API token with 'API Tokens:Edit' permission (or CLOUDFLARE_API_TOKEN)
+  CLOUDFLARE_ACCOUNT_ROLL_TOKEN  Optional: a token with 'Account API Tokens:Edit' for account-owned
+                          tokens (azure); CLOUDFLARE_ROLL_TOKEN is used when unset
+  CLOUDFLARE_ACCOUNT_ID   The Cloudflare account id, needed for account-owned tokens (azure)
   TFC_TOKEN               HCP Terraform token for workspace variables (or TFE_TOKEN)
-  CLOUDFLARE_AZURE_TOKEN_ID   Cloudflare token ID for the Azure HCP Terraform workspace
+  CLOUDFLARE_AZURE_TOKEN_ID   Cloudflare token ID for the Azure HCP Terraform workspace (account-owned token 'hcw')
   CLOUDFLARE_LAB_TOKEN_ID     Cloudflare token ID for the Lab HCP Terraform workspace
   CLOUDFLARE_CADDY_TOKEN_ID   Cloudflare token ID for the Lab host Caddy Ansible Vault
 `);

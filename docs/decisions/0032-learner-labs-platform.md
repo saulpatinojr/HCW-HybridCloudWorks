@@ -1181,7 +1181,9 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   `.github/workflows/cloudflare-dns-audit.yml` runs
   `scripts/cloudflare-dns-audit.mjs` daily over the window since its previous
   successful scheduled run (at least 26 hours, at most 14 days), allows the
-  `hcp-terraform-cloudflare-dns` token's edits, the Caddy token's
+  HCP Terraform workspace token's edits (named `hcp-terraform-cloudflare-dns`
+  here until #1927, which found that `hcw-azure` holds the account-owned
+  token `hcw`), the Caddy token's
   `_acme-challenge.*.lab` TXT edits, the owner's own dashboard edits and
   Cloudflare's own certificate-renewal TXT on the apex (since #1421), and
   opens an issue on anything else; a run that cannot read the log fails

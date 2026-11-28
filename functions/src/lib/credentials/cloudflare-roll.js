@@ -12,7 +12,8 @@
  *    (with retries) immediately after rolling, ensuring no store is left with
  *    a dead token.
  * 3. POST-WRITE VERIFICATION: The newly written token is verified against
- *    Cloudflare's `/user/tokens/verify` endpoint. Any verification anomaly is
+ *    Cloudflare's verify endpoint for its kind (`/user/tokens/verify` or
+ *    `/accounts/{account_id}/tokens/verify`). Any verification anomaly is
  *    reported as a warning rather than aborting an already-committed rotation.
  * 4. STDIN FOR VAULT: Lab host Ansible Vault updates use `hcw-vault-set`,
  *    passing the token exclusively on stdin.
@@ -21,18 +22,103 @@
  * 6. PURE & INJECTABLE: Network operations use an injectable `fetchImpl` and
  *    shell operations use an injectable `execImpl` for testability without
  *    live external side-effects.
+ * 7. ONE ROUTE PER TOKEN KIND (#1927): Cloudflare has two kinds of API token.
+ *    A user token belongs to one person's profile (My Profile → API Tokens)
+ *    and rolls through `/user/tokens/{id}/value`. An account-owned token
+ *    belongs to the account (Manage Account → Account API tokens) and rolls
+ *    through `/accounts/{account_id}/tokens/{id}/value`. Each target says
+ *    which kind it holds (`owner`), and everything that can be known before
+ *    the roll (the kind, the account id, the target type) is checked BEFORE
+ *    the roll, because the roll retires the old value at once.
  */
 
 import { spawn } from 'node:child_process';
 import { withStatus } from '../http/error-response.js';
 
+const CF_API = 'https://api.cloudflare.com/client/v4';
+
+/**
+ * The two kinds of Cloudflare API token, and the API routes each one rolls
+ * and verifies through (#1927). Cloudflare's API reference:
+ *   user:    Roll Token, PUT /user/tokens/{token_id}/value ("API Tokens Write")
+ *            https://developers.cloudflare.com/api/resources/user/subresources/tokens/subresources/value/methods/update/
+ *   account: Roll Token, PUT /accounts/{account_id}/tokens/{token_id}/value
+ *            ("Account API Tokens Write")
+ *            https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/subresources/value/methods/update/
+ *            Verify Token, GET /accounts/{account_id}/tokens/verify
+ *            https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/
+ * A kind not in this list cannot be renewed by this module; the register and
+ * the runbook are held to it by cloudflare-token-kinds.test.js.
+ */
+export const TOKEN_OWNERS = Object.freeze({
+  user: Object.freeze({
+    label: 'user token (My Profile → API Tokens)',
+    rollPermission: 'API Tokens Write',
+    needsAccountId: false,
+    rollPath: ({ tokenId }) => `/user/tokens/${encodeURIComponent(tokenId)}/value`,
+    verifyPath: () => '/user/tokens/verify',
+  }),
+  account: Object.freeze({
+    label: 'account-owned token (Manage Account → Account API tokens)',
+    rollPermission: 'Account API Tokens Write',
+    needsAccountId: true,
+    rollPath: ({ tokenId, accountId }) =>
+      `/accounts/${encodeURIComponent(accountId)}/tokens/${encodeURIComponent(tokenId)}/value`,
+    verifyPath: ({ accountId }) => `/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
+  }),
+});
+
+/** A Cloudflare account id: 32 lowercase hex characters, an identifier and not a credential. */
+const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * The route table for a token kind, after checking that the kind is known
+ * and, for an account-owned token, that an account id of the right shape was
+ * given. Throws before anything is sent. The account id is never put in a
+ * message.
+ *
+ * @param {object} params
+ * @param {string} [params.owner='user'] 'user' or 'account'
+ * @param {string} [params.accountId] Cloudflare account id (32 lowercase hex)
+ */
+export function tokenOwnerRoutes({ owner = 'user', accountId } = {}) {
+  const routes = Object.hasOwn(TOKEN_OWNERS, owner) ? TOKEN_OWNERS[owner] : null;
+  if (!routes) {
+    throw new Error(
+      `Unknown Cloudflare token owner kind: '${owner}' (expected ${Object.keys(TOKEN_OWNERS).join(' or ')})`
+    );
+  }
+  if (routes.needsAccountId && !(typeof accountId === 'string' && ACCOUNT_ID_PATTERN.test(accountId))) {
+    throw new Error(
+      'An account-owned Cloudflare token needs the Cloudflare account id (32 lowercase hex characters; set CLOUDFLARE_ACCOUNT_ID)'
+    );
+  }
+  return routes;
+}
+
 /**
  * The three Cloudflare token targets managed by this estate (#1027).
+ *
+ * `owner` is the token's kind (TOKEN_OWNERS) and `tokenName` the name the
+ * Cloudflare dashboard shows for it, so it can be found there (#1927):
+ *   azure  the account-owned token `hcw`. Observed 2026-11-27: its "last
+ *          used" time matched hcw-azure runs to the second, and adding a
+ *          permission to it is what turned the #1926 trial plan green.
+ *   lab    most likely the user token `hcp-terraform-cloudflare-dns`: it was
+ *          last used the day #1743 changed infra-lab. NOT CONFIRMED
+ *          (`tokenNameConfirmed: false`); how to confirm it is in
+ *          docs/runbooks/dns-token-stolen.md.
+ *   caddy  a user token, as this module has always rolled it; its name is
+ *          kept out of the repository (the CLOUDFLARE_CADDY_TOKEN_NAME
+ *          repository variable holds it).
  */
 export const CLOUDFLARE_TARGETS = Object.freeze({
   azure: Object.freeze({
     id: 'tfc-azure-cloudflare-api-token',
     name: 'Azure HCP Terraform workspace (hcw/hcw-azure)',
+    owner: 'account',
+    tokenName: 'hcw',
+    tokenNameConfirmed: true,
     type: 'tfc',
     organization: 'hcw',
     workspace: 'hcw-azure',
@@ -45,6 +131,9 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
   lab: Object.freeze({
     id: 'tfc-lab-cloudflare-api-token',
     name: 'Lab HCP Terraform workspace (hcw/hcw-lab)',
+    owner: 'user',
+    tokenName: 'hcp-terraform-cloudflare-dns',
+    tokenNameConfirmed: false,
     type: 'tfc',
     organization: 'hcw',
     workspace: 'hcw-lab',
@@ -57,11 +146,17 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
   caddy: Object.freeze({
     id: 'lab-caddy-cloudflare-api-token',
     name: 'Lab host Ansible Vault (vault_cloudflare_api_token)',
+    owner: 'user',
+    tokenName: null,
+    tokenNameConfirmed: false,
     type: 'lab-vault',
     vaultKey: 'vault_cloudflare_api_token',
     envTokenId: 'CLOUDFLARE_CADDY_TOKEN_ID',
   }),
 });
+
+/** The stores a rolled token can be written back to. */
+const WRITABLE_TARGET_TYPES = Object.freeze(['tfc', 'lab-vault']);
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,21 +179,28 @@ async function retry(fn, { attempts = 3, sleep = defaultSleep } = {}) {
 }
 
 /**
- * Rolls a Cloudflare user API token using Cloudflare's roll-token endpoint:
- * PUT https://api.cloudflare.com/client/v4/user/tokens/{tokenId}/value
+ * Rolls a Cloudflare API token using Cloudflare's roll-token endpoint for its
+ * kind (TOKEN_OWNERS):
+ *   user     PUT /user/tokens/{tokenId}/value
+ *   account  PUT /accounts/{accountId}/tokens/{tokenId}/value
  *
  * Rolling immediately invalidates the old token string and generates a new
  * secret string while preserving existing permissions and policies.
  *
  * @param {object} params
  * @param {string} params.tokenId Cloudflare alphanumeric token ID
- * @param {string} params.rollToken Cloudflare API token authorized to edit tokens
+ * @param {string} params.rollToken Cloudflare API token allowed to roll tokens
+ *   of that kind (TOKEN_OWNERS[owner].rollPermission)
+ * @param {'user'|'account'} [params.owner='user'] The token's kind
+ * @param {string} [params.accountId] The Cloudflare account id; required for 'account'
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @returns {Promise<{ tokenId: string, tokenValue: string }>}
  */
 export async function rollCloudflareToken({
   tokenId,
   rollToken,
+  owner = 'user',
+  accountId,
   fetchImpl = globalThis.fetch,
 }) {
   if (!tokenId || typeof tokenId !== 'string') {
@@ -107,8 +209,9 @@ export async function rollCloudflareToken({
   if (!rollToken || typeof rollToken !== 'string') {
     throw new Error('Cloudflare rollToken is required');
   }
+  const routes = tokenOwnerRoutes({ owner, accountId });
 
-  const url = `https://api.cloudflare.com/client/v4/user/tokens/${encodeURIComponent(tokenId)}/value`;
+  const url = `${CF_API}${routes.rollPath({ tokenId, accountId })}`;
   const response = await fetchImpl(url, {
     method: 'PUT',
     headers: {
@@ -148,23 +251,29 @@ export async function rollCloudflareToken({
 }
 
 /**
- * Verifies a Cloudflare API token against:
- * GET https://api.cloudflare.com/client/v4/user/tokens/verify
+ * Verifies a Cloudflare API token against the verify endpoint for its kind:
+ *   user     GET /user/tokens/verify
+ *   account  GET /accounts/{accountId}/tokens/verify
  *
  * @param {object} params
  * @param {string} params.tokenValue The token secret string to verify
+ * @param {'user'|'account'} [params.owner='user'] The token's kind
+ * @param {string} [params.accountId] The Cloudflare account id; required for 'account'
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @returns {Promise<{ valid: boolean, id: string, status: string }>}
  */
 export async function verifyCloudflareToken({
   tokenValue,
+  owner = 'user',
+  accountId,
   fetchImpl = globalThis.fetch,
 }) {
   if (!tokenValue || typeof tokenValue !== 'string') {
     throw new Error('Cloudflare tokenValue is required');
   }
+  const routes = tokenOwnerRoutes({ owner, accountId });
 
-  const url = 'https://api.cloudflare.com/client/v4/user/tokens/verify';
+  const url = `${CF_API}${routes.verifyPath({ accountId })}`;
   const response = await fetchImpl(url, {
     method: 'GET',
     headers: {
@@ -412,8 +521,11 @@ export async function updateLabVaultSecret({
  *
  * @param {object} params
  * @param {string} params.tokenId Cloudflare token ID to roll
- * @param {string} params.rollToken Cloudflare credential with API Tokens Write permission
- * @param {object} params.target Target descriptor (from CLOUDFLARE_TARGETS or matching shape)
+ * @param {string} params.rollToken Cloudflare credential allowed to roll the target's kind of
+ *   token (TOKEN_OWNERS[target.owner].rollPermission)
+ * @param {object} params.target Target descriptor (from CLOUDFLARE_TARGETS or matching shape);
+ *   `owner` defaults to 'user'
+ * @param {string} [params.accountId] Cloudflare account id; required when target.owner is 'account'
  * @param {string} [params.tfcToken] HCP Terraform API token (required if target.type === 'tfc')
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @param {Function} [params.execImpl] Injectable runner for vault
@@ -425,6 +537,7 @@ export async function rollAndApplyCloudflareToken({
   tokenId,
   rollToken,
   target,
+  accountId,
   tfcToken,
   fetchImpl = globalThis.fetch,
   execImpl,
@@ -434,10 +547,18 @@ export async function rollAndApplyCloudflareToken({
   if (!target || typeof target !== 'object') {
     throw new Error('Target configuration is required');
   }
+  // Everything knowable is checked before the roll, which retires the old
+  // value at once: a store the new value cannot be written to, or a token
+  // kind the route table does not know, must fail with the old token intact.
+  if (!WRITABLE_TARGET_TYPES.includes(target.type)) {
+    throw new Error(`Unsupported target type: ${target.type}`);
+  }
+  const owner = target.owner || 'user';
+  tokenOwnerRoutes({ owner, accountId });
 
   // Step 1: Roll the token in Cloudflare.
   // Note: Cloudflare's roll endpoint immediately invalidates the previous secret.
-  const rolled = await rollCloudflareToken({ tokenId, rollToken, fetchImpl });
+  const rolled = await rollCloudflareToken({ tokenId, rollToken, owner, accountId, fetchImpl });
   const newTokenValue = rolled.tokenValue;
 
   // Step 2: Write back to target store immediately with retries so the active store
@@ -483,7 +604,7 @@ export async function rollAndApplyCloudflareToken({
   let verificationWarning = null;
   if (verify) {
     try {
-      await verifyCloudflareToken({ tokenValue: newTokenValue, fetchImpl });
+      await verifyCloudflareToken({ tokenValue: newTokenValue, owner, accountId, fetchImpl });
     } catch (verifyErr) {
       verificationWarning = verifyErr.message;
     }

@@ -4,9 +4,11 @@
  * Cloudflare API tokens via the roll-token endpoint (#1027).
  *
  * Targets:
- *   azure  - HCP Terraform workspace hcw/hcw-azure (cloudflare_api_token)
- *   lab    - HCP Terraform workspace hcw/hcw-lab (cloudflare_api_token)
- *   caddy  - Lab host Ansible Vault (vault_cloudflare_api_token via hcw-vault-set)
+ *   azure  - HCP Terraform workspace hcw/hcw-azure (cloudflare_api_token):
+ *            the account-owned token `hcw`, rolled through the account route,
+ *            so CLOUDFLARE_ACCOUNT_ID must be set (#1927)
+ *   lab    - HCP Terraform workspace hcw/hcw-lab (cloudflare_api_token): a user token
+ *   caddy  - Lab host Ansible Vault (vault_cloudflare_api_token via hcw-vault-set): a user token
  *   all    - All three targets (default)
  *
  * Invariants:
@@ -22,7 +24,9 @@
 import { fileURLToPath } from 'node:url';
 import {
   CLOUDFLARE_TARGETS,
+  TOKEN_OWNERS,
   rollAndApplyCloudflareToken,
+  tokenOwnerRoutes,
 } from '../functions/src/lib/credentials/cloudflare-roll.js';
 import { parseArgs, printUsage } from './lib/cloudflare-roll-args.mjs';
 // The parts below now live in their own files; they are exported from here too, so callers keep their imports.
@@ -54,6 +58,10 @@ export async function runRoll({
   }
 
   const rollToken = env.CLOUDFLARE_ROLL_TOKEN || env.CLOUDFLARE_API_TOKEN;
+  // An account-owned token is rolled with "Account API Tokens Write"; when the
+  // general roll token does not carry it, a separate one can be given (#1927).
+  const accountRollToken = env.CLOUDFLARE_ACCOUNT_ROLL_TOKEN || rollToken;
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID;
   const tfcToken = env.TFC_TOKEN || env.TFE_TOKEN;
 
   const targetKeys =
@@ -61,7 +69,7 @@ export async function runRoll({
       ? Object.keys(CLOUDFLARE_TARGETS)
       : [options.target];
 
-  const refusal = preflightRefusal({ options, targetKeys, rollToken, tfcToken });
+  const refusal = preflightRefusal({ options, targetKeys, rollToken, accountRollToken, accountId, tfcToken });
   if (refusal) {
     stderr(`[error] ${refusal.message}`);
     return refusal.code;
@@ -75,15 +83,21 @@ export async function runRoll({
   if (options.check) return checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stderr });
 
   // Dry run mode, or the real execution
+  const rollTokens = { user: rollToken, account: accountRollToken };
   return options.dryRun
     ? dryRunTargets(resolvedTargets, stdout)
-    : rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr });
+    : rollTargets({ resolvedTargets, rollTokens, accountId, tfcToken, fetchImpl, execImpl, stdout, stderr });
 }
 
-/** --dry-run: say what would be rolled and where it would be written. */
+/** The kind of token a target holds: 'user' unless it says otherwise. */
+const ownerOf = (target) => target.owner || 'user';
+
+/** --dry-run: say what would be rolled, through which route, and where it would be written. */
 function dryRunTargets(resolvedTargets, stdout) {
   for (const { target, tokenId } of resolvedTargets) {
-    stdout(`[dry-run] Would roll token ${tokenId} and update ${target.name} (${target.type})`);
+    stdout(
+      `[dry-run] Would roll token ${tokenId} (${TOKEN_OWNERS[ownerOf(target)].label}) and update ${target.name} (${target.type})`
+    );
   }
   return 0;
 }
@@ -103,10 +117,34 @@ const PREFLIGHT_CHECKS = [
     targetKeys.length > 1 && options.tokenId
       ? { message: '--token-id cannot be used when targeting multiple targets (use environment variables or run per target)', code: 1 }
       : null,
-  ({ options, rollToken }) =>
-    !options.dryRun && !options.check && !rollToken
-      ? { message: 'Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN)', code: 2 }
-      : null,
+  ({ targetKeys }) => {
+    const unknown = targetKeys.find((key) => !Object.hasOwn(TOKEN_OWNERS, ownerOf(CLOUDFLARE_TARGETS[key])));
+    return unknown === undefined
+      ? null
+      : { message: `Target '${unknown}' holds a kind of Cloudflare token this script cannot roll`, code: 1 };
+  },
+  // Checked in every mode, dry run included: without the account id the
+  // account route cannot be built, and finding that out after a roll is
+  // what "write before retire" exists to prevent.
+  ({ targetKeys, accountId }) => {
+    const needsAccount = targetKeys.filter((key) => TOKEN_OWNERS[ownerOf(CLOUDFLARE_TARGETS[key])].needsAccountId);
+    if (needsAccount.length === 0) return null;
+    try {
+      tokenOwnerRoutes({ owner: 'account', accountId });
+      return null;
+    } catch (err) {
+      return { message: `${err.message} (target ${needsAccount.join(', ')})`, code: 2 };
+    }
+  },
+  ({ options, targetKeys, rollToken, accountRollToken }) => {
+    if (options.dryRun || options.check) return null;
+    const missing = targetKeys.some((key) =>
+      ownerOf(CLOUDFLARE_TARGETS[key]) === 'account' ? !accountRollToken : !rollToken
+    );
+    return missing
+      ? { message: 'Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN; CLOUDFLARE_ACCOUNT_ROLL_TOKEN may stand in for account-owned tokens)', code: 2 }
+      : null;
+  },
   ({ options, targetKeys, tfcToken }) => {
     const needsTfc = targetKeys.some((k) => CLOUDFLARE_TARGETS[k].type === 'tfc');
     return !options.dryRun && needsTfc && !tfcToken
@@ -194,15 +232,16 @@ async function lookUpWorkspace(target, tfcToken, fetchImpl) {
 }
 
 /** Roll each target's token and write it back to its store; 1 when any target failed. */
-async function rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr }) {
+async function rollTargets({ resolvedTargets, rollTokens, accountId, tfcToken, fetchImpl, execImpl, stdout, stderr }) {
   let failed = 0;
   for (const { key, target, tokenId } of resolvedTargets) {
     try {
-      stdout(`[roll] Rolling token for target '${key}' (${target.name})...`);
+      stdout(`[roll] Rolling token for target '${key}' (${target.name}, ${TOKEN_OWNERS[ownerOf(target)].label})...`);
       const result = await rollAndApplyCloudflareToken({
         tokenId,
-        rollToken,
+        rollToken: rollTokens[ownerOf(target)],
         target,
+        accountId,
         tfcToken,
         fetchImpl,
         execImpl,

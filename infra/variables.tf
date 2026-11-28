@@ -1037,7 +1037,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site) Account Settings:Read and Account Settings:Write; the permission list is beside cloudflare_origin_secret"
+  description = "Cloudflare API token, the account-owned token hcw — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit and (for the Web Analytics site) Account Settings:Read and Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1135,17 +1135,21 @@ variable "cloudflare_web_analytics_site_tag" {
 # do it in a maintenance window, vault first.
 #
 # THE API TOKEN NEEDS MORE THAN DNS. cloudflare_ruleset requires Zone →
-# Transform Rules:Edit and Account → Rulesets:Read on top of the Zone:Read and
-# DNS:Edit the records need. A DNS-only token applies every cloudflare_dns_record
-# cleanly and fails on the ruleset alone with "Authentication error (10000)",
+# Transform Rules:Edit on top of the Zone:Read and DNS:Edit the records need.
+# (Account → Rulesets:Read was listed here until #1927; Cloudflare's API schema
+# accepts Transform Rules Write alone for every zone ruleset call, and the
+# token in use, hcw, did not carry it on 2026-11-27.) A DNS-only token applies
+# every cloudflare_dns_record cleanly and fails on the ruleset alone with "Authentication error (10000)",
 # which names neither the token nor the permission.
 #
 # AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. Since #1923 the Web Analytics
 # site (frontend.tf) is imported, read through GET and then updated through
 # PUT /accounts/{account_id}/rum/site_info/{site_id}; Cloudflare's API
 # reference accepts only Account Settings Read for the GET and only Account
-# Settings Write for the PUT. So the same token (hcp-terraform-cloudflare-dns
-# in the dashboard) carries BOTH, as two rows (the dashboard calls Write
+# Settings Write for the PUT. So the same token (the ACCOUNT-OWNED token hcw,
+# under Manage Account → Account API tokens in the dashboard; until #1927
+# this comment named the user token hcp-terraform-cloudflare-dns, which is
+# most likely hcw-lab's) carries BOTH, as two rows (the dashboard calls Write
 # "Edit"), before the run that imports the site. Without Read, even a plan
 # fails, at the import's first read, with "Authentication error (10000)"
 # (observed 2026-11-27 on the pull request's speculative plan). Without

@@ -535,16 +535,23 @@ const OTHER_ENTRIES = [
   },
 
   // ── HCP Terraform ───────────────────────────────────────────────────────
+  // The value is the ACCOUNT-OWNED token `hcw` (#1927: its "last used" time
+  // matched hcw-azure runs on 2026-11-27), not the user token the docs used
+  // to name. It rolls through Cloudflare's account route, which
+  // scripts/roll-cloudflare-tokens.mjs takes for the azure target
+  // (CLOUDFLARE_TARGETS.azure.owner, cloudflare-roll.js);
+  // cloudflare-token-kinds.test.js holds this row to that target.
   {
     id: "tfc-azure-cloudflare-api-token",
     name: "cloudflare_api_token",
     store: "tfc-azure",
-    consumer: "Cloudflare provider: DNS, the origin transform rule, and the Web Analytics site (#1923)",
-    issuer: "Cloudflare",
+    consumer:
+      "Cloudflare provider in infra/: the DNS records, the origin transform rule, and the Web Analytics site (#1923). The account-owned token `hcw`",
+    issuer: "Cloudflare account API tokens",
     renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
+      "Roll the account-owned token `hcw` with scripts/roll-cloudflare-tokens.mjs --target azure (Cloudflare's account roll-token route, so CLOUDFLARE_ACCOUNT_ID is set and the roll token holds Account API Tokens Write), which writes the new value to the sensitive workspace variable; by hand: Manage Account → Account API tokens → hcw → Roll, then paste it into the variable.",
   },
   {
     id: "tfc-azure-cloudflare-origin-secret",
@@ -611,16 +618,21 @@ const OTHER_ENTRIES = [
     rotate:
       "Issue a new token in the Hostinger panel and update the sensitive workspace variable.",
   },
+  // Most likely the user token `hcp-terraform-cloudflare-dns` (it was last
+  // used the day #1743 changed infra-lab), NOT CONFIRMED (#1927); the check
+  // is in docs/runbooks/dns-token-stolen.md. A user token rolls through the
+  // user route, which the lab target takes.
   {
     id: "tfc-lab-cloudflare-api-token",
     name: "cloudflare_api_token",
     store: "tfc-lab",
-    consumer: "infra-lab lab DNS records",
-    issuer: "Cloudflare",
+    consumer:
+      "infra-lab lab DNS records. Most likely the user token `hcp-terraform-cloudflare-dns` (not confirmed)",
+    issuer: "Cloudflare user API tokens",
     renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
+      "Roll the user token with scripts/roll-cloudflare-tokens.mjs --target lab (Cloudflare's user roll-token route; the roll token holds API Tokens Write), which writes the new value to the sensitive workspace variable; by hand: My Profile → API Tokens → the token → Roll, then paste it into the variable.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
@@ -703,12 +715,14 @@ const OTHER_ENTRIES = [
     rotate:
       'ALTER USER first, then the vault edit and a run: lab-host/README.md, "Rotating the PostgreSQL password".',
   },
+  // A user token, as scripts/roll-cloudflare-tokens.mjs has always rolled it
+  // (the user route); not re-checked against the dashboard in #1927.
   {
     id: "lab-caddy-cloudflare-api-token",
     name: "Caddy CLOUDFLARE_API_TOKEN",
     store: "lab-vault",
     consumer: "Caddy’s DNS-01 certificate renewals",
-    issuer: "Cloudflare",
+    issuer: "Cloudflare user API tokens",
     renewal: "automation",
     lifetimeDays: null,
     rotate:
