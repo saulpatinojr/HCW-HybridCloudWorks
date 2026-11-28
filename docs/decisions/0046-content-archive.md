@@ -65,9 +65,9 @@ Some words used below, explained once:
    and the review note after the yearly cycle
    ([`proposal-cycle.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/developer-api/proposal-cycle.js));
    and an erasure request is honoured.
-2. **The cycle is the calendar year**, ending in December to match the
-   Microsoft MVP cycle, with January as a grace month. The archive of year Y
-   is written on or after 1 February of year Y+1.
+2. **The cycle is the calendar year**, ending in December to match a
+   community program's yearly award cycle, with January as a grace month.
+   The archive of year Y is written on or after 1 February of year Y+1.
 3. **Storage is the Archive tier of the existing storage account**,
    `stsiteprodcus01`, in one new private container. The archive is **not**
    disaster recovery: no second subscription and no second region is asked
@@ -1228,8 +1228,9 @@ Ambassador and community programs"
 ([#1924](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1924)):
 public text names no real community program outside the Ambassador Page's
 seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
-accepted before that rule. Decision 2 gives the reason the cycle is the
-calendar year by naming a community program's award cycle. Its accepted text
-is left as it was; anything written from now on that repeats it uses general
-terms, such as "a community program's yearly cycle". Whether the accepted
-wording itself is changed is left to the owner (#1924).
+accepted before that rule. Decision 2 gave the reason the cycle is the
+calendar year by naming a community program's award cycle. On 2026-11-28 the
+owner asked for that wording to be changed
+([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)):
+decision 2 now says "a community program's yearly award cycle". Nothing the
+record decides changed.
