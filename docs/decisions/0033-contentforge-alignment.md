@@ -171,13 +171,15 @@ existing documents plus new `admin_config` documents (constant partition).
   where the value is a calendar date.
 - **Ambassador** (new container `ambassador`, partition `/id`, documents
   distinguished by `docType`: `program`, `application`, `evidence`).
-  Programs are seeded with Microsoft MVP, MCT, AWS Hero, AWS Ambassador,
-  GitHub Star, Docker Captain, VMware vExpert; all editable, disable-able.
+  Programs are seeded from a catalogue of seven community and recognition
+  programs (today `functions/src/lib/ambassador/programs.js`); all
+  editable, disable-able.
   Evidence items link by `{sourceModule, sourceId}` and keep a `snapshot`.
   Amended 2026-10-05: a program may be additional to another
   (`parentProgramId`, one level); its card, questions and application open
   only while the parent's membership is Active, and the parent's evidence
-  counts for it. MCT Regional Lead is additional to MCT.
+  counts for it. The first such pair seeded is a regional-lead program
+  that is additional to its parent program.
 - **Labs** catalogue rows gain `providers[]`, `objectives[]`,
   `prerequisites[]`, `steps[]`, `difficulty`, `validation`.
 
@@ -267,9 +269,10 @@ Ambassador and community programs"
 ([#1924](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1924)):
 public text names no real community program outside the Ambassador Page's
 seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
-accepted before that rule. Section 4 lists the programs the catalogue was
-first seeded with, and its 2026-10-05 amendment names the first parent and
-child pair. Its accepted text is left as it was; anything written from now
-on that repeats it uses general terms, such as "the seeded programs" or "a
-program additional to another". Whether the accepted wording itself is
-changed is left to the owner (#1924).
+accepted before that rule. Section 4 listed the programs the catalogue was
+first seeded with, and its 2026-10-05 amendment named the first parent and
+child pair. On 2026-11-28 the owner asked for that wording to be changed
+([#1947](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1947)): section 4 now says the programs were seeded from a catalogue of
+seven, and the amendment describes a regional-lead program additional to its
+parent. Nothing the record decides changed; the catalogue itself is where the
+programs are listed.
