@@ -51,11 +51,11 @@ describe('CLOUDFLARE_TARGETS', () => {
   it('says which kind of token each target holds (#1927)', () => {
     // hcw-azure holds the account-owned token `hcw` (observed 2026-11-27).
     expect(CLOUDFLARE_TARGETS.azure).toMatchObject({ owner: 'account', tokenName: 'hcw', tokenNameConfirmed: true });
-    // hcw-lab most likely holds a user token; not confirmed.
+    // hcw-lab holds the user token `hcp-terraform-cloudflare-dns` (confirmed 2026-11-28).
     expect(CLOUDFLARE_TARGETS.lab).toMatchObject({
       owner: 'user',
       tokenName: 'hcp-terraform-cloudflare-dns',
-      tokenNameConfirmed: false,
+      tokenNameConfirmed: true,
     });
     expect(CLOUDFLARE_TARGETS.caddy).toMatchObject({ owner: 'user', tokenName: null });
     for (const [key, target] of Object.entries(CLOUDFLARE_TARGETS)) {

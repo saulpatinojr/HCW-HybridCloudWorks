@@ -6,7 +6,7 @@ export const ZONE_NAME = 'hybridcloudworks.com';
 /**
  * The name of the hcw-azure workspace's token, as the dashboard shows it: the
  * account-owned token `hcw` (#1927; it was `hcp-terraform-cloudflare-dns`
- * here until then, a user token that is most likely hcw-lab's). The
+ * here until then, a user token that is hcw-lab's, confirmed 2026-11-28). The
  * credential tests hold it to CLOUDFLARE_TARGETS.azure.tokenName.
  */
 export const HCP_TERRAFORM_TOKEN_NAME = 'hcw';

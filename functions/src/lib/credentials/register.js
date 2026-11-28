@@ -625,10 +625,9 @@ const OTHER_ENTRIES = [
     rotate:
       "Issue a new token in the Hostinger panel and update the sensitive workspace variable.",
   },
-  // Most likely the user token `hcp-terraform-cloudflare-dns` (it was last
-  // used the day #1743 changed infra-lab), NOT CONFIRMED (#1927); the check
-  // is in docs/runbooks/dns-token-stolen.md. A user token rolls through the
-  // user route, which the lab target takes.
+  // The user token `hcp-terraform-cloudflare-dns`, confirmed 2026-11-28 by
+  // the check in docs/runbooks/dns-token-stolen.md (#1927). A user token
+  // rolls through the user route, which the lab target takes.
   // RENEWED BY HAND, on the owner's 180-day rule (#1927, decided on review):
   // nothing schedules scripts/roll-cloudflare-tokens.mjs, and a scheduled roll
   // would need a new stored secret able to roll tokens, which is the owner's
@@ -641,7 +640,7 @@ const OTHER_ENTRIES = [
     name: "cloudflare_api_token",
     store: "tfc-lab",
     consumer:
-      "infra-lab lab DNS records. Most likely the user token `hcp-terraform-cloudflare-dns` (not confirmed)",
+      "infra-lab lab DNS records. The user token `hcp-terraform-cloudflare-dns` (confirmed 2026-11-28)",
     issuer: "Cloudflare user API tokens",
     renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
