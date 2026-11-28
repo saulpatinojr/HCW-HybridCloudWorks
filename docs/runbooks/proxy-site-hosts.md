@@ -79,8 +79,8 @@ on its own as UNEXPECTED.
 | Part 3, step 1 | `none` to `www` | `cloudflare_dns_record.site_www`: `proxied` `false` -> `true`, `ttl` `60` -> `1`, `modified_on` known after apply. Step `#1929 step 1`, **declared in the same pull request as the next row** (see the CHANGELOG). |
 | Part 3, step 2 (test) and any rollback of `www` | `www` to `none` | `cloudflare_dns_record.site_www`: `proxied` `true` -> `false`, `ttl` `1` -> `60`, `modified_on` known after apply. Step `#1929 step 1 back`, **declared in the same pull request as step 1**. |
 | Part 3, step 2 (back on) | `none` to `www` | the step 1 row, still on `main` (both `www` rows stay for as long as `www` is proxied) |
-| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. The same pull request declares the next row; the two `www` rows stay. |
-| Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply |
+| Part 3, step 4 | `www` to `both` | `cloudflare_dns_record.site_apex`: `proxied` `false` -> `true`, `modified_on` known after apply. Its `ttl` is already 1 and does not change, and `www` does not change at all. Step `#1929 step 4`, **declared in the same pull request as the next row** (see the CHANGELOG); the two `www` rows stay. |
+| Any rollback of the apex | `both` to `www` | `cloudflare_dns_record.site_apex`: `proxied` `true` -> `false`, `modified_on` known after apply. Step `#1929 step 4 back`, **declared in the same pull request as step 4**. |
 
 Then, for every run:
 
