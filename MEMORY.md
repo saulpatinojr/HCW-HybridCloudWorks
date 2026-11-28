@@ -203,7 +203,7 @@ After this, no pull requests or issues are open in either repository.
 
 | Work | Merged PR | Result |
 | --- | --- | --- |
-| AI Engine and Ambassadors | [#1438](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1438) | Bounded model refresh, accurate routing/cost states, reviewed pricing and TTS recommendations, removal of the public GitKraken footer link, responsive Ambassador layouts, and qualification-period readiness fixes. |
+| AI Engine and Ambassadors | [#1438](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1438) | Bounded model refresh, accurate routing/cost states, reviewed pricing and TTS recommendations, removal of a public footer credit link, responsive Ambassador layouts, and qualification-period readiness fixes. |
 | Blogs | [#1446](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1446) | Official Kiro AWS RSS source and Blogs hub below Coder Corner; editable sources/articles, fallback images, filters, limits, pause/resume, manual intake, and run status. |
 
 Both PRs are merged. Their required checks passed, including browser checks on

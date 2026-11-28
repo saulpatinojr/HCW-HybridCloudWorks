@@ -100,6 +100,7 @@
  */
 import { CONTAINER } from '../ambassador/model.js';
 import { importedEvidenceId } from '../ambassador/evidence.js';
+import { DEFAULT_PROGRAMS } from '../ambassador/programs.js';
 import { SITE_ZONE } from '../cloudflare/protected.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { readSetting } from '../http/read-setting.js';
@@ -118,11 +119,16 @@ export const ACCOUNT_ID_SETTING = 'CF_ACCOUNT_ID';
 /** The rows are manual evidence: nothing in the import picker lists them, and the hub shows them as the owner's. */
 export const SOURCE_MODULE = 'manual';
 
-/** The programmes that ask for reach, and the requirement each row is filed under. */
-export const AUDIENCE_PROGRAMS = Object.freeze([
-  Object.freeze({ programId: 'program-docker-captain', requirementId: 'reach' }),
-  Object.freeze({ programId: 'program-microsoft-mvp', requirementId: 'reach' }),
-]);
+/**
+ * The programmes that ask for reach, and the requirement each row is filed
+ * under: every seeded programme with a `reach` requirement, in catalogue
+ * order, read from the catalogue so the two cannot drift apart.
+ */
+export const AUDIENCE_PROGRAMS = Object.freeze(
+  DEFAULT_PROGRAMS.filter((program) => program.requirements.some((r) => r.id === 'reach')).map(
+    (program) => Object.freeze({ programId: program.id, requirementId: 'reach' })
+  )
+);
 
 /**
  * The requirement a programme's row is filed under. The row stores it as

@@ -442,11 +442,11 @@ describe('the seed alert', () => {
     expect(SEED_ALERTS).toHaveLength(1);
     expect(SEED_ALERTS[0]).toEqual({
       id: 'docker-dsos-application',
-      title: 'Submit the Docker-Sponsored Open Source application',
+      title: 'Submit the community program application',
       dueDate: '2026-10-30',
       dueTime: null,
       link: 'https://www.docker.com/community/open-source/application/',
-      note: 'Text is ready to paste in the Doc Vault note: Docker DSOS application',
+      note: 'Text is ready to paste in the Doc Vault note for this application',
     });
     expect(isSeedId(SEED_ID)).toBe(true);
     expect(isSeedId('anything-else')).toBe(false);

@@ -10,6 +10,15 @@ const rule = (req) => [req.id, req.minCount, req.weight, req.evidenceTypes];
 /** A program's history as [revision, fields] steps, oldest first. */
 const stepsOf = (id) => SUPERSEDED_SEED_VALUES[id].revisions.map((s) => [s.revision, s.fields]);
 
+/**
+ * The SHA-256 of a value's JSON. A published seed value that names a program
+ * is pinned by its digest, so an edit to it (a figure, a word, an id, the
+ * order) fails here without this public file repeating it. If one of these
+ * fails after a deliberate catalogue change, recompute the digest from the
+ * new value and say in the pull request what changed.
+ */
+const digestOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
 // The seeds checked by hand below are picked by a trait only they have, and
 // the tests describe them by that shape: this repository is public and names
 // no real program outside the catalogue itself.
@@ -155,12 +164,13 @@ describe('the published rules read on 2026-10-20', () => {
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
-    expect(FOUR_TRACKS.requirements[0].description).toMatch(/[\d,]+ or more monthly views/);
-    expect(captain.criteria).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^Docker Thought Leader: [\d,]+/),
-        expect.stringMatching(/^Sail the extra mile/),
-      ])
+    // The audience requirement's published wording, its figure included.
+    expect(digestOf(FOUR_TRACKS.requirements[0].description)).toBe(
+      'eed861fe58d4552ec4cc7b7cf1418ced9826cc71880fa4cd119e1676b5c334e7'
+    );
+    // The tracks and exceptions as published, every figure included, in order.
+    expect(digestOf(FOUR_TRACKS.criteria)).toBe(
+      '6f01ea3018f1b3f9c6d123d931eb4e42f749db708e95628403a100693853fe7f'
     );
     expect(captain.eligibility).toContain('18 or older; open internationally');
     expect(captain.expirationRule).toMatch(/^One-year term/);
@@ -190,7 +200,10 @@ describe('the published rules read on 2026-10-20', () => {
         expect.stringMatching(/Accepting donations to sustain the effort is permissible/i),
       ])
     );
-    expect(sponsorship.description).toMatch(/paid Docker subscription and \w+ are mutually exclusive/);
+    // The description as published, the paid-subscription exclusion included.
+    expect(digestOf(sponsorship.description)).toBe(
+      '7a108192e7516c410cc78e48262e2e00c8ca9631c70c23ee480c17f9b69942ca'
+    );
   });
 
   it('seeds the mentorship program with the December window and its four contribution asks', () => {
@@ -238,13 +251,8 @@ describe('the published rules read on 2026-10-20', () => {
 
   it('words the quarterly seed as the published tiers, keeping the quarterly upkeep and its one counted rule', () => {
     const gk = QUARTERLY;
-    expect(gk.criteria).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^Content Creator: \d+\+ pieces of content per quarter/),
-        expect.stringMatching(/^Event Host: events for 30\+ developers/),
-        expect.stringMatching(/^Programme-wide: follow the brand guidelines, show the GitKraken logo/),
-      ])
-    );
+    // The published tiers and programme-wide asks, every figure included, in order.
+    expect(digestOf(gk.criteria)).toBe('fe2097e693b12e82b43db437c0166c434dab18cf767a8d39b67454a70be3542c');
     expect(gk.upkeep).toMatchObject({ period: 'quarter', minCount: 2, evidenceTypes: [] });
     expect(gk.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
     expect(gk.recommendedActivities).toEqual(
@@ -453,6 +461,13 @@ describe('the nomination form (#1543)', () => {
   const nomination = seed.applicationQuestions.filter((q) => q.id.startsWith(nominationPrefix));
   const [, [, before]] = stepsOf(seed.id);
 
+  it('keeps the nomination question ids, in order: answers are stored by questionId', () => {
+    expect(nomination).toHaveLength(11);
+    expect(digestOf(nomination.map((q) => q.id))).toBe(
+      '270fb10a3a4ee185549ef42b034e023eff942683f32b49c89b609595c1141eb4'
+    );
+  });
+
   it('appends the form after the application, with its labels, kinds and limits', () => {
     expect(seed.applicationQuestions.slice(-nomination.length)).toEqual(nomination);
     expect(new Set(nomination.map((q) => q.section))).toEqual(
@@ -482,7 +497,10 @@ describe('the nomination form (#1543)', () => {
       ],
     ]);
     // The process is explained where the section starts; every text area carries its advice.
-    expect(nomination[0].hint).toMatch(/full-time employee or a current \w+/);
+    // Who may nominate, as the program's own FAQ words it.
+    expect(digestOf(nomination[0].hint)).toBe(
+      '19ecb125a9e3aa98568964432a4b6768041b1a36de2ecaa5a18d676d671b3176'
+    );
     expect(nomination[0].hint).toMatch(/45 days/);
     for (const q of nomination.filter((n) => n.kind === 'text')) {
       expect(q.hint, q.id).toMatch(/80 to 90 words/);

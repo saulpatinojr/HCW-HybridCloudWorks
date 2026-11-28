@@ -135,7 +135,7 @@ export const CSV_IMPORT_MAX_CHARS = 1_000_000;
 export const CSV_IMPORTS = Object.freeze([
   {
     reader: 'mct-classes',
-    label: 'MCT classes (Metrics That Matter CSV)',
+    label: 'Delivered classes (Metrics That Matter CSV)',
     sourceModule: 'manual',
     hint: 'The classes-delivered export: class id, course, learning method, instructor, start and end date, location. One evidence row per class, once per class id.',
   },

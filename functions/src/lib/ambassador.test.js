@@ -5,6 +5,7 @@
  * explains its arithmetic and never promises acceptance, an absent container
  * is a 503 NOT_PROVISIONED and not a 500, and the role per verb holds.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
 import { MAX_PATCH_OPERATIONS } from './cosmos-client.js';
@@ -65,6 +66,12 @@ const OPEN_SEED_IDS = DEFAULT_PROGRAMS.filter((p) => !p.parentProgramId).map((p)
 const [SEED_A, SEED_B, SEED_C] = OPEN_SEED_IDS.filter((id) => id !== PARENT.id);
 /** The one CSV reader, a trainer's delivered classes; its id is product data. */
 const [CLASS_READER] = Object.keys(CSV_READERS);
+/**
+ * The SHA-256 of a value's JSON: pins a published seed value that names a
+ * program without this public file repeating it (programs.test.js does the
+ * same). After a deliberate catalogue change, recompute it from the new value.
+ */
+const digestOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 let counter = 0;
 const fixed = { now: () => NOW, uuid: () => `id-${++counter}`, log: { error: vi.fn() } };
 
@@ -272,6 +279,11 @@ describe('not provisioned', () => {
 
 describe('programs', () => {
   const SEED_NAMES = DEFAULT_PROGRAMS.map((p) => p.name);
+
+  it('ships the seed names exactly as published, in catalogue order', () => {
+    expect(SEED_NAMES).toHaveLength(15);
+    expect(digestOf(SEED_NAMES)).toBe('7c1c61d7bf878e2a9e8d18272b9c74941a9a0622f153d52f423e83d898cbfa34');
+  });
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
     const store = memStore();
@@ -1331,10 +1343,12 @@ describe('membership upkeep, and a seed with a waitlist (2026-10-11)', () => {
 
   it('seeds a program from its program page, waitlist and all', () => {
     const waitlisted = WAITLISTED;
-    expect(waitlisted).toMatchObject({
-      provider: 'AWS',
-      applicationUrl: expect.stringMatching(/^https:\/\/builder\.aws\.com\/community\//),
-    });
+    expect(waitlisted.provider).toBe('AWS');
+    // The program's name and application page, exactly as published.
+    expect(digestOf(waitlisted.name)).toBe('253c493ffe28333b04275b533c2c20ce9da617e138e0cb93e5cbfcf44aa500d9');
+    expect(digestOf(waitlisted.applicationUrl)).toBe(
+      '80d3fef77634c284abadc4ca1c6adf9012780f11c550d89532080e50e2bb5b07'
+    );
     expect(waitlisted.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
     expect(waitlisted.applicationQuestions).toBeUndefined();
   });
