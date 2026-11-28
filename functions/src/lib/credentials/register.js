@@ -546,8 +546,9 @@ const OTHER_ENTRIES = [
   // would need a new stored secret able to roll tokens, which is the owner's
   // call. Cloudflare sets no expiry on an API token unless whoever makes it
   // picks one (`expires_on` is optional when a token is created, Cloudflare's
-  // API schema read 2026-11-27); whether this one has an end date was not read
-  // in #1927. So it takes HAND_ROTATION_DAYS and gets a reminder line.
+  // API schema read 2026-11-27). `hcw` has none: the account tokens list,
+  // read 2026-11-28, shows no `expires_on` for it. So it takes
+  // HAND_ROTATION_DAYS and gets a reminder line.
   {
     id: "tfc-azure-cloudflare-api-token",
     name: "cloudflare_api_token",
@@ -631,10 +632,14 @@ const OTHER_ENTRIES = [
   // RENEWED BY HAND, on the owner's 180-day rule (#1927, decided on review):
   // nothing schedules scripts/roll-cloudflare-tokens.mjs, and a scheduled roll
   // would need a new stored secret able to roll tokens, which is the owner's
-  // call. Cloudflare sets no expiry on an API token unless whoever makes it
-  // picks one (`expires_on` is optional when a token is created, Cloudflare's
-  // API schema read 2026-11-27); whether this one has an end date was not read
-  // in #1927. So it takes HAND_ROTATION_DAYS and gets a reminder line.
+  // call. This token DOES have an end date: 2027-11-28 05:59 UTC, read
+  // 2026-11-28 from the account audit log's record of the owner's edit that
+  // day (`expires_on` on PUT /user/tokens/{id}). The 180-day reminder comes
+  // first, so it stays. Cloudflare's "Roll tokens" page
+  // (https://developers.cloudflare.com/fundamentals/api/how-to/roll-token/)
+  // says a roll keeps the token's access and permissions and does not say
+  // whether it keeps the end date, so the rotate line below has the owner
+  // check the date on the token's Edit page at each renewal.
   {
     id: "tfc-lab-cloudflare-api-token",
     name: "cloudflare_api_token",
@@ -645,7 +650,7 @@ const OTHER_ENTRIES = [
     renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      "Run scripts/roll-cloudflare-tokens.mjs --target lab yourself (it rolls the user token through Cloudflare's user route, with a roll token that holds API Tokens Write, and writes the new value to the sensitive workspace variable); or by hand: My Profile → API Tokens → the token → Roll, then paste it into the variable. Then record the date here.",
+      "Run scripts/roll-cloudflare-tokens.mjs --target lab yourself (it rolls the user token through Cloudflare's user route, with a roll token that holds API Tokens Write, and writes the new value to the sensitive workspace variable); or by hand: My Profile → API Tokens → the token → Roll, then paste it into the variable. Then open the token's Edit page and check its end date (TTL): it was 2027-11-28 when read on 2026-11-28, and on that date the lab's Terraform stops signing in, so if it is near, set a later one there, or make a new token with the same two permissions and zone. Then record the date here.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
