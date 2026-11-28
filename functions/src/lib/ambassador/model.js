@@ -126,7 +126,7 @@ export const SCORING_UNITS = Object.freeze(['credits']);
 
 /**
  * The periods a program's `upkeep` counts in: a calendar quarter or a
- * calendar year. Upkeep is what keeps a membership active once it is held,
+ * calendar year. Upkeep is a held membership's activity requirement,
  * apart from the requirements an application is scored against.
  */
 export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);

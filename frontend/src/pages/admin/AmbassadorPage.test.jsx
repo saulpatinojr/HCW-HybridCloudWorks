@@ -320,7 +320,7 @@ const FILED = [
   { ...EVIDENCE[0], id: 'evidence-general', date: day, programIds: [] },
 ];
 
-describe('Programs: keeping a membership active (2026-10-11)', () => {
+describe('Programs: a held membership’s activity requirement (2026-10-11)', () => {
   it('shows this quarter’s count and the tracker on a held membership’s card, and the rule in its details', async () => {
     searchParams = 'tab=programs';
     getJSON.mockImplementation(

@@ -350,8 +350,8 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
             />
             <SelectField
               id="program-upkeep-period"
-              label="Keeps the membership active"
-              hint="A minimum of evidence filed under this program in every calendar quarter or year, once the membership is held."
+              label="Activity requirement"
+              hint="Evidence filed under this program in every calendar quarter or year, once the membership is held."
               value={form.upkeep.period}
               onChange={setUpkeep('period')}
               options={[
@@ -362,7 +362,7 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
             />
             <TextField
               id="program-upkeep-min"
-              label="Minimum each period"
+              label="Items each period"
               type="number"
               min="1"
               value={form.upkeep.minCount}
@@ -370,7 +370,7 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
             />
             <TextAreaField
               id="program-upkeep-note"
-              label="What the program asks, to stay active"
+              label="The program’s own words on it"
               value={form.upkeep.note}
               onChange={setUpkeep('note')}
               className="md:col-span-2"

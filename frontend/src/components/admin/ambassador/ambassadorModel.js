@@ -395,7 +395,7 @@ export function programsInPlay(programs) {
  * requirements, and the attached evidence with snapshots. Private records,
  * so the export is a file the owner keeps — never a public page.
  */
-// ── upkeep: what keeps a held membership active ─────────────────────────────
+// ── upkeep: a held membership's activity requirement ─────────────────────────────
 
 /** The periods an upkeep rule counts in, as the API's UPKEEP_PERIODS. */
 export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);

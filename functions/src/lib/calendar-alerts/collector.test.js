@@ -36,7 +36,7 @@ const docOf = (alerts) => ({
   docType: 'calendar_alerts',
   alerts,
   // The starting alert has been made (and may have been deleted): not added again.
-  seeded: ['docker-dsos-application'],
+  seeded: SEED_ALERTS.map((seed) => seed.id),
   _etag: '"1"',
 });
 

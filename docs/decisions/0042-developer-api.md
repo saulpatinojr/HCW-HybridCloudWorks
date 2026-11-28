@@ -313,3 +313,16 @@ Left as they were, on purpose:
   the endpoint shape; announcement shared by the owner 2026-11-20.
 - Speaker events: `functions/src/lib/admin-identity/speaker-events.js`;
   Sessionize feed: `frontend/src/components/widgets/sessionizeFeed.js`.
+
+## Addendum, 2026-11-28: program names in this record
+
+Owner rule of 2026-11-25, in `.claude/CLAUDE.md` under "Public text about
+Ambassador and community programs"
+([#1924](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1924)):
+public text names no real community program outside the Ambassador Page's
+seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
+accepted before that rule. The owner's words quoted for the yearly cycle
+name the community program whose award cycle the calendar year follows. Its
+accepted text is left as it was; anything written from now on that repeats
+it uses general terms, such as "a community program's yearly cycle". Whether
+the accepted wording itself is changed is left to the owner (#1924).

@@ -259,3 +259,17 @@ Each slice ships with tests and a CHANGELOG entry; infra changes (the
   Lab explained.
 - Health shows real timestamps and a probe for every integration-backed
   hub; status words are the same everywhere.
+
+## Addendum, 2026-11-28: program names in this record
+
+Owner rule of 2026-11-25, in `.claude/CLAUDE.md` under "Public text about
+Ambassador and community programs"
+([#1924](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1924)):
+public text names no real community program outside the Ambassador Page's
+seed catalogue (`functions/src/lib/ambassador/programs.js`). This record was
+accepted before that rule. Section 4 lists the programs the catalogue was
+first seeded with, and its 2026-10-05 amendment names the first parent and
+child pair. Its accepted text is left as it was; anything written from now
+on that repeats it uses general terms, such as "the seeded programs" or "a
+program additional to another". Whether the accepted wording itself is
+changed is left to the owner (#1924).

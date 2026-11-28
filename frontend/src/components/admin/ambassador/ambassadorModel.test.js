@@ -356,7 +356,7 @@ describe('membership status (owner request 2026-10-05)', () => {
   });
 });
 
-describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
+describe('upkeep: a held membership’s activity requirement (2026-10-11)', () => {
   it('names the calendar quarter or year a day falls in, and the one before', () => {
     expect(upkeepWindow('2026-10-11', 'quarter')).toEqual({
       start: '2026-10-01',
@@ -435,7 +435,7 @@ describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
       /Contribution tracker URL/
     );
     expect(programPayload({ ...form, upkeep: { ...form.upkeep, minCount: '0' } }).error).toMatch(
-      /minimum of at least 1/
+      /at least 1 item each period/
     );
   });
 });

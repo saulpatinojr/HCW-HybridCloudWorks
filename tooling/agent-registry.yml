@@ -50,7 +50,7 @@ agents:
     enabled_by_default: true
   - id: microsoft-certified-trainer
     agent_name: microsoft-certified-trainer
-    capability: "Microsoft Certified Trainer specialist for official Microsoft curriculum delivery, course design, labs, demonstrations, assessment, and Microsoft 365 Copilot le"
+    capability: "Trainer specialist for official Microsoft curriculum delivery, course design, labs, demonstrations, assessment, and Microsoft 365 Copilot le"
     enabled_by_default: true
   - id: microsoft-copilot-learning-reviewer
     agent_name: microsoft-copilot-learning-reviewer

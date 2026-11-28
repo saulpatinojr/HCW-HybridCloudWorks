@@ -107,7 +107,7 @@ function upkeepPayload(rule = EMPTY_PROGRAM_FORM.upkeep) {
   if (!UPKEEP_PERIODS.includes(rule.period)) return { value: null };
   const minCount = Math.floor(Number(rule.minCount) || 0);
   if (minCount < 1) {
-    return { error: 'Keeping the membership active needs a minimum of at least 1.' };
+    return { error: 'The activity requirement needs at least 1 item each period.' };
   }
   return {
     value: {

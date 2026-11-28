@@ -5,7 +5,7 @@ Docker app from Hybrid Cloud Works (HCW) must look like so that its images can
 qualify for Docker's free open-source programme, plus a fill-in dossier that
 records the proof for each product. Owner: the repository owner. Last
 reviewed: 2026-10-25. Next review: 2027-01-25, or sooner if Docker changes the
-two pages quoted in section 2.
+pages named in section 2.
 
 Nothing on this page applies to Docker, sends anything to Docker or changes any
 image. It is a checklist and a record. The related ticket is
@@ -17,9 +17,10 @@ like.
 
 Words used on this page:
 
-- **DSOS** is the Docker-Sponsored Open Source programme: Docker gives
-  qualifying open-source projects extra features on Docker Hub for a year at a
-  time, renewable ([Docker's programme page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/)).
+- **The programme** is Docker's open-source programme: Docker gives
+  qualifying open-source projects extra features on Docker Hub
+  ([Docker's trusted content page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/)
+  describes it; the terms are in section 2).
 - **Docker Hub** is [Docker's public website](https://hub.docker.com/) for
   sharing container images; the server behind it that stores the images is a
   **registry**. An **image** is a packaged application that Docker can run, a
@@ -78,7 +79,7 @@ Words used on this page:
 3. Work down the checklist in section 3. For each rule, run the check, and write
    the link to the proof and the date you read it into the dossier. A rule that
    fails stays in the dossier as a gap with a named person and a ticket.
-4. When every rule reads "met", the product is DSOS-ready. Applying to Docker is
+4. When every rule reads "met", the product is ready for the programme. Applying to Docker is
    a separate, owner-only step: this page never submits anything.
 5. Re-read the checklist before the yearly renewal (section 2) and whenever the
    product changes licence, publisher or image names.
@@ -88,22 +89,23 @@ values.
 
 ## 2. What Docker asks for
 
-Read on 2026-10-25 from Docker's two pages: the
-[programme page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/)
-and the [application page](https://www.docker.com/community/open-source/application/).
+Read on 2026-10-25 from Docker's
+[application page](https://www.docker.com/community/open-source/application/).
+Docker's [trusted content page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/),
+opened on 2026-11-27, gives an overview of the programme.
 
 Docker's wording of the four rules (the numbers are this page's own; Docker's
 page lists the rules without numbers):
 
 | # | Rule | Docker's words | Page |
 | --- | --- | --- | --- |
-| 1 | Public images and public source | "Be shared in public repositories on Docker Hub, and the source code must also be publicly accessible on its respective repository." The programme page puts it as "a publisher must share the project namespace in public repositories". | [application](https://www.docker.com/community/open-source/application/), [programme](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/) |
+| 1 | Public images and public source | "Be shared in public repositories on Docker Hub, and the source code must also be publicly accessible on its respective repository." | [application](https://www.docker.com/community/open-source/application/) |
 | 2 | Open source | "Meet the Open Source Initiative definition." | [application](https://www.docker.com/community/open-source/application/) |
 | 3 | Active development | "Be in active development on Docker Hub, which means image updates are pushed regularly within the past 6 months or dependencies are updated regularly, even if the project source code is stable." | [application](https://www.docker.com/community/open-source/application/) |
 | 4 | No pathway to commercialization | "Not having a pathway to commercialization. Your organization must not seek to make a profit through services or by charging for higher tiers. Accepting donations to sustain your efforts is permissible." | [application](https://www.docker.com/community/open-source/application/) |
 
-What a project gets, in Docker's words: a repository logo, a "Verified
-Docker-Sponsored Open Source badge", insights and analytics, "Access to Docker
+What a project gets, in Docker's words: a repository logo, a verified
+open-source badge, insights and analytics, "Access to Docker
 Scout" (free on up to 100 repositories), "Removal of rate limiting for
 developers" and "Improved discoverability on Docker Hub". The application page
 adds that core contributors get "a free, one-year Docker Team subscription".
@@ -141,7 +143,7 @@ Not read: the application form itself. The application page links it
 ("Apply here") but this page does not describe its fields. The owner keeps the
 answers to the form in private notes.
 
-## 3. The HCW rules for a DSOS-ready app
+## 3. The HCW rules for an app ready for the programme
 
 Each rule is a checkbox. Tick it in the product's dossier only after running the
 check and saving the link and date. The commands are PowerShell, one line each,
@@ -500,7 +502,7 @@ Evidence per rule (link, date read, status: met | part | not met):
 Open gaps (rule, what is missing, who closes it, ticket):
   <rule> <gap> <person> <link>
 
-DSOS application:
+Programme application:
   Status:                 <not submitted | submitted | approved | refused | renewed>
   Date:                   <YYYY-MM-DD>
   Docker's reply:         <date and a one-line summary of the application decision; the full reply stays in the owner's private notes>
@@ -532,7 +534,7 @@ day.
 | Who benefits | Cloud and network engineers who follow Hybrid Cloud Works, and students learning how a network assessment works (the owner's wording for the application form). |
 | First image published | 2026-10-25 (Docker Hub lists both repositories as created that day) |
 | Related ticket | [#678](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/678) |
-| DSOS application | Not submitted. The answers are prepared in the owner's private notes. |
+| Programme application | Not submitted. The answers are prepared in the owner's private notes. |
 | Docker's reply | None yet. |
 | Renewal date | None yet (it starts one year after approval). |
 
