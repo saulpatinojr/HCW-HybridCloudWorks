@@ -147,24 +147,24 @@ describe('the published rules read on 2026-10-20', () => {
   });
 
   it('counts the four-track seed against its tracks: the audience figure, content, community, labs', () => {
-    const tracks = FOUR_TRACKS;
-    expect(tracks.applicationUrl).toBe('https://app.advocu.com/dockercaptains/join');
-    expect(tracks.requirements.map(rule)).toEqual([
+    const captain = byId('program-docker-captain');
+    expect(captain.applicationUrl).toBe('https://app.advocu.com/dockercaptains/join');
+    expect(captain.requirements.map(rule)).toEqual([
       ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
-    expect(tracks.requirements[0].description).toMatch(/[\d,]+ or more monthly views/);
-    expect(tracks.criteria).toEqual(
+    expect(FOUR_TRACKS.requirements[0].description).toMatch(/[\d,]+ or more monthly views/);
+    expect(captain.criteria).toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^Docker Thought Leader: [\d,]+/),
         expect.stringMatching(/^Sail the extra mile/),
       ])
     );
-    expect(tracks.eligibility).toContain('18 or older; open internationally');
-    expect(tracks.expirationRule).toMatch(/^One-year term/);
-    expect(tracks.applicationWindow).toEqual({
+    expect(captain.eligibility).toContain('18 or older; open internationally');
+    expect(captain.expirationRule).toMatch(/^One-year term/);
+    expect(captain.applicationWindow).toEqual({
       opens: null,
       closes: null,
       note: expect.stringMatching(/Rolling applications through the Advocu join form/),
@@ -284,35 +284,35 @@ describe('the published rules read on 2026-10-20', () => {
     expect(second.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
     expect(second.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
 
-    const [[tracksRevision, tracks], [tracksLabsRevision, tracksLabs], [tracksBackRevision, tracksBack]] =
+    const [[captainRevision, captain], [captainLabsRevision, captainLabs], [captainBackRevision, captainBack]] =
       stepsOf(FOUR_TRACKS.id);
-    expect(tracksRevision).toBe(2);
-    expect(tracks.description).toBe(
+    expect(captainRevision).toBe(2);
+    expect(captain.description).toBe(
       'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.'
     );
-    expect(tracks.applicationUrl).toBe('https://www.docker.com/community/captains/');
-    expect(tracks.requirements.map(rule)).toEqual([
+    expect(captain.applicationUrl).toBe('https://www.docker.com/community/captains/');
+    expect(captain.requirements.map(rule)).toEqual([
       ['content', 4, 3, ['content', 'newsletter']],
       ['talks', 2, 2, ['speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
     // Revision 3 (#1302) took `manual` off `labs` and changed nothing else.
-    expect(tracksLabsRevision).toBe(3);
-    expect(Object.keys(tracksLabs)).toEqual(['requirements']);
-    expect(tracksLabs.requirements.map(rule)).toEqual([
+    expect(captainLabsRevision).toBe(3);
+    expect(Object.keys(captainLabs)).toEqual(['requirements']);
+    expect(captainLabs.requirements.map(rule)).toEqual([
       ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
-    expect(tracksLabs.requirements.map((r) => [r.label, r.description])).toEqual(
+    expect(captainLabs.requirements.map((r) => [r.label, r.description])).toEqual(
       FOUR_TRACKS.requirements.map((r) => [r.label, r.description])
     );
     // Revision 4 (#1313) put `manual` back on `labs` once the audience rows name
     // `reach`, and records the list it replaced: revision 3's, without it.
-    expect(tracksBackRevision).toBe(4);
-    expect(Object.keys(tracksBack)).toEqual(['requirements']);
-    expect(tracksBack.requirements.map(rule)).toEqual([
+    expect(captainBackRevision).toBe(4);
+    expect(Object.keys(captainBack)).toEqual(['requirements']);
+    expect(captainBack.requirements.map(rule)).toEqual([
       ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
