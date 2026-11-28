@@ -194,10 +194,15 @@ export const ALLOWLIST = [
       "address belongs to the Caddy token's entry), WHILE an apply of the " +
       `\`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` workspace was in progress by HCP Terraform's own run ` +
       `record, read with \`${ENV.tfcToken}\`. The token name is matched too, should the log ever carry it, ` +
-      'but only on an account-owned token: the name is short and a user token could be given the same one (#1927).',
+      'but only on an account-owned API token (`actor.type` `account` and `actor.context` `api_token`): ' +
+      'the name is short, a user token could be given the same one, and an account event that is not ' +
+      'an API token call is not this token (#1927).',
     active: (settings) => Array.isArray(settings.applyWindows),
     matches: (change, settings) =>
-      (change.actorType === 'account' && change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
+      (change.actorType === 'account' &&
+        change.actorContext === 'api_token' &&
+        change.tokenName !== '' &&
+        change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
       isWorkspaceApply(change, settings),
   },
   {

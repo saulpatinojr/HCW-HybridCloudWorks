@@ -298,6 +298,27 @@ function tfcWorkspaceOf(target) {
   return { organization: target.organization || 'hcw', workspace: target.workspace };
 }
 
+/** The variable a `tfc` target writes, with its key and category defaulted. */
+function tfcVariableOf(target) {
+  return { key: target.key || 'cloudflare_api_token', category: target.category || 'terraform' };
+}
+
+/**
+ * Before a roll, the variable the roll will replace must already be in the
+ * workspace. A roll is a replacement: if the variable is missing, the
+ * workspace (or the target) is wrong, and creating it after the roll would
+ * leave whatever really holds the old token with a retired value (#1927).
+ */
+function requireExistingVariable(read, target) {
+  const { key, category } = tfcVariableOf(target);
+  const found = read.variables.some((v) => v.attributes?.key === key && v.attributes?.category === category);
+  if (!found) {
+    throw new Error(
+      `${read.where} has no ${category} variable ${key} to replace; check the target's workspace and key. Nothing was rolled`
+    );
+  }
+}
+
 /** The vault key a `lab-vault` target names, defaulted. */
 function vaultKeyOf(target) {
   return target.vaultKey || DEFAULT_VAULT_KEY;
@@ -311,19 +332,20 @@ function vaultKeyOf(target) {
  */
 export const STORES = Object.freeze({
   tfc: Object.freeze({
-    // Looks the workspace up, lists its variables and requires HCP
-    // Terraform's can-update-variable for this token.
+    // Looks the workspace up, lists its variables, requires HCP Terraform's
+    // can-update-variable for this token, and requires the variable the
+    // roll replaces to be there already.
     async check(target, { tfcToken, fetchImpl }) {
       if (!target.workspace) throw new Error('HCP Terraform workspace is required');
-      await checkTfcVariablesWritable({ tfcToken, ...tfcWorkspaceOf(target), fetchImpl });
+      const read = await checkTfcVariablesWritable({ tfcToken, ...tfcWorkspaceOf(target), fetchImpl });
+      requireExistingVariable(read, target);
     },
     write(target, value, { tfcToken, fetchImpl }) {
       return updateTfcVariable({
         tfcToken,
         ...tfcWorkspaceOf(target),
-        key: target.key || 'cloudflare_api_token',
+        ...tfcVariableOf(target),
         value,
-        category: target.category || 'terraform',
         sensitive: target.sensitive ?? true,
         description: target.description,
         fetchImpl,

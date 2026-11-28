@@ -497,10 +497,10 @@ describe('runRoll', () => {
         return { ok: true, status: 200, json: async () => ({ data: { id: 'ws', attributes: { permissions: { 'can-update-variable': true } } } }) };
       }
       if (url.includes('/vars') && options.method === 'GET') {
-        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+        return { ok: true, status: 200, json: async () => ({ data: [{ id: 'var-1', attributes: { key: 'cloudflare_api_token', category: 'terraform' } }] }) };
       }
-      if (url.includes('/vars') && options.method === 'POST') {
-        return { ok: true, status: 201, json: async () => ({ data: { id: 'var-new' } }) };
+      if (url.includes('/vars/var-1') && options.method === 'PATCH') {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'var-1' } }) };
       }
       throw new Error(`Unexpected URL: ${url}`);
     });
@@ -513,6 +513,29 @@ describe('runRoll', () => {
     });
     expect(code).toBe(0);
     expect(auths).toEqual(['Bearer general-roll']);
+  });
+
+  it('rolls nothing when the workspace has no variable to replace (#1927)', async () => {
+    const stderr = [];
+    const mockFetch = vi.fn(async (url, options) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws', attributes: { permissions: { 'can-update-variable': true } } } }) };
+      }
+      if (url.includes('/vars') && options.method === 'GET') {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const code = await runRoll({
+      options: { target: 'azure' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'general-roll', CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID, TFC_TOKEN: 't', CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az' },
+      fetchImpl: mockFetch,
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+    });
+    expect(code).toBe(1);
+    expect(mockFetch.mock.calls.some(([url]) => url.includes('api.cloudflare.com'))).toBe(false);
+    expect(stderr.join('\n')).toContain('has no terraform variable cloudflare_api_token to replace');
   });
 
   it('exits with 1 when a target fails to roll', async () => {

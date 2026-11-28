@@ -11,7 +11,7 @@
  * CLOUDFLARE_TARGETS is the one place that says which token each store holds
  * and which kind it is; everything below is held to it.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 import { describe, it, expect } from 'vitest';
 
@@ -89,14 +89,6 @@ function claimUnits(text, path) {
   return units;
 }
 
-/** The roll script is run by a workflow, so "automation" could be true. */
-function rollScriptIsScheduled() {
-  const dir = repoUrl('.github/workflows/');
-  return readdirSync(dir).some((file) =>
-    /\.ya?ml$/.test(file) ? readFileSync(new URL(file, dir), 'utf8').includes('roll-cloudflare-tokens') : false
-  );
-}
-
 describe('Cloudflare token kinds (#1927)', () => {
   it('has a register word and a docs word for exactly the kinds the roll code knows', () => {
     expect(Object.keys(ISSUER_BY_OWNER).sort()).toEqual(Object.keys(TOKEN_OWNERS).sort());
@@ -131,10 +123,12 @@ describe('Cloudflare token kinds (#1927)', () => {
     }
   });
 
-  it('claims automatic renewal for a Cloudflare token only when a workflow runs the roll script', () => {
-    if (rollScriptIsScheduled()) return;
+  // Nothing schedules the roll script (#1927, decision on the issue), so no
+  // Cloudflare token row may say a job renews it. A change that adds a
+  // scheduled roll changes this test on purpose, in the same pull request.
+  it('claims automatic renewal for no Cloudflare token: nothing schedules the roll script', () => {
     for (const row of CREDENTIAL_REGISTER.filter((r) => Object.hasOwn(OWNER_BY_ISSUER, r.issuer))) {
-      expect(row.renewal, `${row.id}: nothing in .github/workflows runs the roll script`).not.toBe('automation');
+      expect(row.renewal, `${row.id}: nothing schedules the roll script`).not.toBe('automation');
     }
   });
 

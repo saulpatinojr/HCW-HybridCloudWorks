@@ -505,16 +505,15 @@ jobs:
       # infra-lab/ (#1905): the Cloudflare page's protected-list test reads
       # every .tf file there (lab DNS records and any rule set), so a lab
       # record or rule set added there fails this row until the list names it.
-      # The five docs and .github/workflows/ (#1927): the Cloudflare token
-      # guard, cloudflare-token-kinds.test.js, holds those runbooks and
-      # standards pages to the token each workspace holds, and reads every
-      # workflow to refuse "renewed by automation" unless one runs the roll
-      # script, so a change to any of them runs this row.
+      # The five docs (#1927): the Cloudflare token guard,
+      # cloudflare-token-kinds.test.js, holds those runbooks and standards
+      # pages to the token each workspace holds, so a change to any of them
+      # runs this row.
       - name: Detect changes for the functions (azure) row
         id: functions
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|infra-lab/|docs/content/|docs/runbooks/(dns-token-stolen|edge-dns-verification|cold-rebuild)\.md$|docs/standards/(required-inputs|variables-and-secrets)\.md$|\.github/workflows/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+          FILTER: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|infra-lab/|docs/content/|docs/runbooks/(dns-token-stolen|edge-dns-verification|cold-rebuild)\.md$|docs/standards/(required-inputs|variables-and-secrets)\.md$|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
           # As for the frontend row.
           WORKFLOW_SELF_TRIGGER: 'true'
         run: |

@@ -267,6 +267,12 @@ describe('the allowlist', () => {
     // to carry the same short name is not the workspace's.
     const impostor = { ...TERRAFORM, type: 'user', email: 'someone@example.com' };
     expect(classify(normalise(entry({ actor: impostor, action: 'update', record, time: '2026-10-18T22:00:00Z' })), { ...settings, applyWindows: [] })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    // ...and only on an API token call: an account event from another
+    // context that carries the name is not the token's either.
+    for (const context of ['dash', 'system', '']) {
+      const notApi = { ...TERRAFORM, context };
+      expect(classify(normalise(entry({ actor: notApi, action: 'update', record, time: '2026-10-18T22:00:00Z' })), { ...settings, applyWindows: [] }), context).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    }
   });
 
   it('refuses an account token without the provider user agent, and the provider user agent from the lab host', () => {

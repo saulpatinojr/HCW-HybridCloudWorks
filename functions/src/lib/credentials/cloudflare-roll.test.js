@@ -1025,6 +1025,36 @@ describe('rollAndApplyCloudflareToken', () => {
     }
   });
 
+  it('rolls nothing when the workspace has no variable for the roll to replace (#1927)', async () => {
+    // A same-named variable in the other category does not count either.
+    for (const variables of [[], [{ id: 'var-env', attributes: { key: 'cloudflare_api_token', category: 'env' } }]]) {
+      const mockFetch = vi.fn(async (url) => {
+        if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: { id: 'ws-azure', attributes: { permissions: { 'can-update-variable': true } } } }),
+          };
+        }
+        if (url.endsWith('/workspaces/ws-azure/vars')) {
+          return { ok: true, status: 200, json: async () => ({ data: variables }) };
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      await expect(
+        rollAndApplyCloudflareToken({
+          tokenId: 'tok-azure-1',
+          rollToken: 'operator-roll-token',
+          target: CLOUDFLARE_TARGETS.azure,
+          accountId: ACCOUNT_ID,
+          tfcToken: 'tfc-token-xyz',
+          fetchImpl: mockFetch,
+        })
+      ).rejects.toThrow('hcw/hcw-azure has no terraform variable cloudflare_api_token to replace');
+      expect(mockFetch.mock.calls.filter(([url]) => url.startsWith('https://api.cloudflare.com/'))).toEqual([]);
+    }
+  });
+
   it('rolls nothing when sudo does not allow hcw-vault-set for the caddy target (#1927)', async () => {
     const mockFetch = vi.fn();
     const calls = [];
